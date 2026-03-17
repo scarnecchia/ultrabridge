@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -117,12 +118,9 @@ func envIntOrDefault(key string, def int) int {
 	if v == "" {
 		return def
 	}
-	n := 0
-	for _, c := range v {
-		if c < '0' || c > '9' {
-			return def
-		}
-		n = n*10 + int(c-'0')
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
 	}
 	return n
 }
