@@ -9,6 +9,7 @@ import (
 	"time"
 
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
+	"github.com/sysop/ultrabridge/internal/auth"
 	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
 	"github.com/sysop/ultrabridge/internal/taskstore"
@@ -47,14 +48,18 @@ func main() {
 		Prefix:  "/caldav",
 	}
 
+	authMW := auth.New(cfg.Username, cfg.PasswordHash)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
 	})
-	mux.Handle("/caldav/", caldavHandler)
+	mux.Handle("/caldav/", authMW.Wrap(caldavHandler))
 	mux.HandleFunc("/.well-known/caldav", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/caldav/", http.StatusMovedPermanently)
+		authMW.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/caldav/", http.StatusMovedPermanently)
+		})).ServeHTTP(w, r)
 	})
 
 	log.Printf("ultrabridge starting on %s", cfg.ListenAddr)
