@@ -10,64 +10,31 @@ UltraBridge is a CalDAV/WebDAV bridge for the Supernote Private Cloud, enabling 
 
 ## Quick Start
 
-### 1. Copy and configure `.ultrabridge.env`
+The interactive installer handles everything — configuration, password hashing, Docker image build, and startup:
 
 ```bash
-cd /path/to/ultrabridge
-cp .ultrabridge.env.example .ultrabridge.env
+./install.sh
 ```
 
-Edit `.ultrabridge.env` and set your credentials:
+It will prompt for username, password, port, and collection name, then build and start the container. Safe to re-run to change configuration.
+
+After making code changes, rebuild and restart without reconfiguring:
 
 ```bash
-UB_USERNAME=admin
-UB_PASSWORD_HASH=<hash>  # See below
+./rebuild.sh
 ```
 
-Generate a password hash with `htpasswd`:
+Both scripts auto-detect the Supernote stack at `/mnt/supernote/`. Pass a different path as an argument if needed: `./install.sh /path/to/supernote`.
 
-```bash
-htpasswd -nbBC 10 "" "yourpassword" | cut -d: -f2
-```
+### Manual setup
 
-Replace the hash in `.ultrabridge.env`.
+If you prefer to configure manually instead of using the installer:
 
-### 2. Add to Supernote stack
+1. Copy `.ultrabridge.env.example` to `/mnt/supernote/.ultrabridge.env` and set `UB_USERNAME` and `UB_PASSWORD_HASH` (generate with `docker run --rm ultrabridge:dev hash-password "yourpassword"`)
+2. Create a `docker-compose.override.yml` in `/mnt/supernote/` (see `.ultrabridge.env.example` for the template)
+3. `sudo docker compose up -d ultrabridge`
 
-Copy this `docker-compose.override.yml` to `/mnt/supernote/`:
-
-```yaml
-services:
-  ultrabridge:
-    build:
-      context: /path/to/ultrabridge
-      dockerfile: Dockerfile
-    container_name: ultrabridge
-    ports:
-      - "8443:8443"
-    env_file:
-      - .ultrabridge.env
-      - .dbenv
-    depends_on:
-      - mariadb
-    restart: unless-stopped
-```
-
-### 3. Start the service
-
-```bash
-cd /mnt/supernote
-docker compose up -d ultrabridge
-docker compose logs -f ultrabridge
-```
-
-Verify it started successfully:
-
-```bash
-curl -u admin:yourpassword http://localhost:8443/health
-```
-
-Should return: `{"status":"ok"}`
+Verify: `curl -u admin:yourpassword http://localhost:8443/health` should return `{"status":"ok"}`
 
 ## CalDAV Client Setup
 
@@ -187,10 +154,18 @@ TEST_DBENV_PATH=/mnt/supernote/.dbenv go test -tags integration ./tests/ -v
 
 Expected output: All tests pass.
 
-### Build Docker image
+### Build and restart
 
 ```bash
-docker build -t ultrabridge:dev .
+./rebuild.sh
+```
+
+Or manually: `docker build -t ultrabridge:dev .`
+
+### Generate a password hash
+
+```bash
+docker run --rm ultrabridge:dev hash-password "yourpassword"
 ```
 
 ## Known Limitations
