@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
+	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
 
@@ -18,20 +19,22 @@ import (
 var templateFS embed.FS
 
 type Handler struct {
-	store    ubcaldav.TaskStore
-	notifier ubcaldav.SyncNotifier
-	tmpl     *template.Template
-	mux      *http.ServeMux
-	logger   *slog.Logger
+	store       ubcaldav.TaskStore
+	notifier    ubcaldav.SyncNotifier
+	tmpl        *template.Template
+	mux         *http.ServeMux
+	logger      *slog.Logger
+	broadcaster *logging.LogBroadcaster
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger *slog.Logger) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
-		store:    store,
-		notifier: notifier,
-		logger:   logger,
-		mux:      http.NewServeMux(),
+		store:       store,
+		notifier:    notifier,
+		logger:      logger,
+		mux:         http.NewServeMux(),
+		broadcaster: broadcaster,
 	}
 
 	// Parse the embedded templates
@@ -49,6 +52,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger
 	h.mux.HandleFunc("GET /", h.handleIndex)
 	h.mux.HandleFunc("POST /tasks", h.handleCreateTask)
 	h.mux.HandleFunc("POST /tasks/{id}/complete", h.handleCompleteTask)
+	h.registerLogStreamHandler(broadcaster)
 
 	return h
 }
