@@ -181,6 +181,7 @@ fi
 cat > "$SUPERNOTE_DIR/docker-compose.override.yml" <<EOF
 services:
   ultrabridge:
+    image: ultrabridge:dev
     build:
       context: $SCRIPT_DIR
       dockerfile: Dockerfile

@@ -14,14 +14,11 @@ if [[ ! -f "$SUPERNOTE_DIR/docker-compose.override.yml" ]]; then
     fail "No docker-compose.override.yml found. Run install.sh first."
 fi
 
-info "Building UltraBridge..."
-docker build -t ultrabridge:dev "$SCRIPT_DIR" || fail "Build failed"
-ok "Image built"
+COMPOSE="sudo docker compose -f $SUPERNOTE_DIR/docker-compose.yml -f $SUPERNOTE_DIR/docker-compose.override.yml"
 
-info "Restarting container..."
-sudo docker compose -f "$SUPERNOTE_DIR/docker-compose.yml" \
-                    -f "$SUPERNOTE_DIR/docker-compose.override.yml" \
-                    up -d --force-recreate ultrabridge || fail "Restart failed"
+info "Building and restarting UltraBridge..."
+$COMPOSE up -d --build --force-recreate ultrabridge || fail "Build/restart failed"
+ok "Container running"
 
 sleep 2
 PORT=$(grep -oP '"\K\d+(?=:8443")' "$SUPERNOTE_DIR/docker-compose.override.yml" || echo "8443")
