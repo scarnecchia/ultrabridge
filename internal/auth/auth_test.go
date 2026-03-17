@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
@@ -97,7 +98,7 @@ func TestWrapNoAuthHeader(t *testing.T) {
 		t.Error("expected response body")
 	}
 	// Ensure no sensitive info in response
-	if contains(body, "password") || contains(body, "hash") || contains(body, "testuser") {
+	if strings.Contains(body, "password") || strings.Contains(body, "hash") || strings.Contains(body, "testuser") {
 		t.Errorf("response body contains credential hints: %q", body)
 	}
 }
@@ -141,7 +142,7 @@ func TestWrapWrongUsername(t *testing.T) {
 
 	// Verify no credential hints
 	body := rec.Body.String()
-	if contains(body, "testuser") || contains(body, "wronguser") {
+	if strings.Contains(body, "testuser") || strings.Contains(body, "wronguser") {
 		t.Errorf("response body contains credential hints: %q", body)
 	}
 }
@@ -185,7 +186,7 @@ func TestWrapWrongPassword(t *testing.T) {
 
 	// Verify no credential hints (especially no hash info)
 	body := rec.Body.String()
-	if contains(body, "hash") || contains(body, "correct_password") || contains(body, "wrong_password") {
+	if strings.Contains(body, "hash") || strings.Contains(body, "correct_password") || strings.Contains(body, "wrong_password") {
 		t.Errorf("response body contains credential hints: %q", body)
 	}
 }
@@ -232,10 +233,4 @@ func TestTimingSafeUsernameComparison(t *testing.T) {
 			}
 		})
 	}
-}
-
-// contains is a helper to check if a string contains a substring (case-insensitive for safe check)
-func contains(s, substr string) bool {
-	// Simple case-sensitive check for detecting credential leaks
-	return len(s) >= len(substr) && (s == substr || s[len(s)-len(substr):] == substr || s[:len(substr)] == substr)
 }
