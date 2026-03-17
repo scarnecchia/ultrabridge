@@ -1,0 +1,180 @@
+package web
+
+import (
+	"context"
+	"database/sql"
+	"embed"
+	"html/template"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
+	"github.com/sysop/ultrabridge/internal/taskstore"
+)
+
+//go:embed templates
+var templateFS embed.FS
+
+type Handler struct {
+	store    ubcaldav.TaskStore
+	notifier ubcaldav.SyncNotifier
+	tmpl     *template.Template
+	mux      *http.ServeMux
+	logger   *slog.Logger
+}
+
+// NewHandler creates a new web handler with embedded templates.
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger *slog.Logger) *Handler {
+	h := &Handler{
+		store:    store,
+		notifier: notifier,
+		logger:   logger,
+		mux:      http.NewServeMux(),
+	}
+
+	// Parse the embedded templates
+	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
+	if err != nil {
+		if logger != nil {
+			logger.Error("failed to parse templates", "error", err)
+		}
+		// Fallback: create a minimal template
+		tmpl = template.New("index.html")
+	}
+	h.tmpl = tmpl
+
+	// Register routes
+	h.mux.HandleFunc("GET /", h.handleIndex)
+	h.mux.HandleFunc("POST /tasks", h.handleCreateTask)
+	h.mux.HandleFunc("POST /tasks/{id}/complete", h.handleCompleteTask)
+
+	return h
+}
+
+// ServeHTTP implements http.Handler
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mux.ServeHTTP(w, r)
+}
+
+// handleIndex renders the task list page
+func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	tasks, err := h.store.List(ctx)
+	if err != nil {
+		h.logger.Error("failed to list tasks", "error", err)
+		http.Error(w, "failed to load tasks", http.StatusInternalServerError)
+		return
+	}
+
+	data := map[string]interface{}{
+		"tasks": tasks,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
+		h.logger.Error("failed to render template", "error", err)
+		http.Error(w, "failed to render page", http.StatusInternalServerError)
+	}
+}
+
+// handleCreateTask creates a new task from form data
+func (h *Handler) handleCreateTask(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.logger.Warn("failed to parse form", "error", err)
+		http.Error(w, "failed to parse form", http.StatusBadRequest)
+		return
+	}
+
+	title := strings.TrimSpace(r.FormValue("title"))
+	if title == "" {
+		h.logger.Warn("create task: title is required")
+		http.Error(w, "title is required", http.StatusBadRequest)
+		return
+	}
+
+	dueDateStr := strings.TrimSpace(r.FormValue("due_date"))
+	var dueTime int64 = 0
+	if dueDateStr != "" {
+		// Parse HTML date format: 2006-01-02
+		t, err := time.Parse("2006-01-02", dueDateStr)
+		if err != nil {
+			h.logger.Warn("invalid due date", "error", err, "value", dueDateStr)
+			http.Error(w, "invalid due date format", http.StatusBadRequest)
+			return
+		}
+		// Convert to milliseconds UTC
+		dueTime = t.UTC().UnixMilli()
+	}
+
+	now := time.Now().UnixMilli()
+	task := &taskstore.Task{
+		TaskID: taskstore.GenerateTaskID(title, now),
+		Title:  taskstore.SqlStr(title),
+		Status: taskstore.SqlStr("needsAction"),
+		DueTime: dueTime,
+		IsDeleted: "N",
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	if err := h.store.Create(ctx, task); err != nil {
+		h.logger.Error("failed to create task", "error", err, "task_id", task.TaskID)
+		http.Error(w, "failed to create task", http.StatusInternalServerError)
+		return
+	}
+
+	// Notify device of sync
+	if h.notifier != nil {
+		if err := h.notifier.Notify(ctx); err != nil {
+			h.logger.Warn("failed to notify", "error", err)
+		}
+	}
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// handleCompleteTask marks a task as completed
+func (h *Handler) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
+	taskID := r.PathValue("id")
+	if taskID == "" {
+		h.logger.Warn("complete task: task ID is required")
+		http.Error(w, "task ID is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	task, err := h.store.Get(ctx, taskID)
+	if err != nil {
+		h.logger.Error("failed to get task", "error", err, "task_id", taskID)
+		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
+
+	// Mark as completed
+	task.Status = taskstore.SqlStr("completed")
+	if !task.CompletedTime.Valid {
+		task.CompletedTime = sql.NullInt64{Int64: time.Now().UnixMilli(), Valid: true}
+	}
+
+	if err := h.store.Update(ctx, task); err != nil {
+		h.logger.Error("failed to update task", "error", err, "task_id", taskID)
+		http.Error(w, "failed to complete task", http.StatusInternalServerError)
+		return
+	}
+
+	// Notify device of sync
+	if h.notifier != nil {
+		if err := h.notifier.Notify(ctx); err != nil {
+			h.logger.Warn("failed to notify", "error", err)
+		}
+	}
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
