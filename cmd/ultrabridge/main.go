@@ -8,8 +8,11 @@ import (
 	"os"
 	"time"
 
+	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
+	"github.com/sysop/ultrabridge/internal/taskstore"
+	gocaldav "github.com/emersion/go-webdav/caldav"
 )
 
 func main() {
@@ -36,10 +39,22 @@ func main() {
 	}
 	log.Printf("discovered user_id: %d", userID)
 
+	store := taskstore.New(database, userID)
+
+	backend := ubcaldav.NewBackend(store, "/caldav", cfg.CalDAVCollectionName, cfg.DueTimeMode, nil)
+	caldavHandler := &gocaldav.Handler{
+		Backend: backend,
+		Prefix:  "/caldav",
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.Handle("/caldav/", caldavHandler)
+	mux.HandleFunc("/.well-known/caldav", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/caldav/", http.StatusMovedPermanently)
 	})
 
 	log.Printf("ultrabridge starting on %s", cfg.ListenAddr)
