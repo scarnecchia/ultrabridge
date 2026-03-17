@@ -46,7 +46,7 @@ func NewBackend(store TaskStore, prefix, collectionName, dueTimeMode string, not
 }
 
 func (b *Backend) CurrentUserPrincipal(ctx context.Context) (string, error) {
-	return "/user/", nil
+	return b.prefix + "/user/", nil
 }
 
 func (b *Backend) CalendarHomeSetPath(ctx context.Context) (string, error) {
