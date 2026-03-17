@@ -161,3 +161,206 @@ func TestBroadcasterMultipleMessages(t *testing.T) {
 		}
 	}
 }
+
+// TestRingBufferBackfillBasic verifies that new subscribers receive recent entries via backfill
+// This tests the basic backfill case where the ring buffer is not yet full
+func TestRingBufferBackfillBasic(t *testing.T) {
+	broadcaster := NewLogBroadcaster()
+
+	// Broadcast N entries before subscribing
+	numEntries := 10
+	expectedMessages := make([]string, numEntries)
+	for i := 0; i < numEntries; i++ {
+		msg := "[INFO] message " + string(rune('0'+i))
+		expectedMessages[i] = msg
+		broadcaster.Broadcast(msg)
+	}
+
+	// Subscribe a new client - should receive backfill
+	_, ch := broadcaster.Subscribe()
+
+	// Verify channel receives backfill entries in chronological order
+	timeout := 1 * time.Second
+	receivedMessages := make([]string, 0, numEntries)
+
+	for i := 0; i < numEntries; i++ {
+		select {
+		case msg := <-ch:
+			receivedMessages = append(receivedMessages, msg)
+		case <-time.After(timeout):
+			t.Fatalf("Timeout waiting for backfill entry %d", i)
+		}
+	}
+
+	// Verify all expected messages were received in order
+	if len(receivedMessages) != numEntries {
+		t.Errorf("Expected %d backfill messages, got %d", numEntries, len(receivedMessages))
+	}
+
+	for i, msg := range receivedMessages {
+		if msg != expectedMessages[i] {
+			t.Errorf("Backfill message %d: got %q, want %q", i, msg, expectedMessages[i])
+		}
+	}
+}
+
+// TestRingBufferBackfillFullWrap verifies backfill with ring buffer wraparound
+// This tests that when the ring buffer is full and has wrapped around,
+// new subscribers get the last 100 entries in chronological order
+func TestRingBufferBackfillFullWrap(t *testing.T) {
+	broadcaster := NewLogBroadcaster()
+
+	// Broadcast more than ringBufferSize (100) entries to trigger wraparound
+	numEntries := 150
+	for i := 0; i < numEntries; i++ {
+		msg := "[INFO] message " + formatIndex(i)
+		broadcaster.Broadcast(msg)
+	}
+
+	// Subscribe a new client - should receive the last 100 entries (50-149)
+	_, ch := broadcaster.Subscribe()
+
+	// Collect backfilled entries
+	timeout := 1 * time.Second
+	receivedMessages := make([]string, 0, 100)
+
+	for i := 0; i < 100; i++ {
+		select {
+		case msg := <-ch:
+			receivedMessages = append(receivedMessages, msg)
+		case <-time.After(timeout):
+			t.Fatalf("Timeout waiting for backfill entry %d", i)
+		}
+	}
+
+	// Verify exactly 100 entries were received
+	if len(receivedMessages) != 100 {
+		t.Errorf("Expected 100 backfill messages, got %d", len(receivedMessages))
+	}
+
+	// Verify they are the last 100 entries (indices 50-149) in order
+	for i, msg := range receivedMessages {
+		expectedIndex := 50 + i
+		expectedMsg := "[INFO] message " + formatIndex(expectedIndex)
+		if msg != expectedMsg {
+			t.Errorf("Backfill message %d: got %q, want %q", i, msg, expectedMsg)
+		}
+	}
+
+	// Verify no extra messages are in the channel (should time out trying to read more)
+	select {
+	case msg := <-ch:
+		t.Errorf("Unexpected message in channel after backfill: %q", msg)
+	case <-time.After(100 * time.Millisecond):
+		// Expected: no more backfill messages
+	}
+}
+
+// TestRingBufferBackfillMultipleSubscribers verifies that multiple subscribers
+// each receive independent backfill from the ring buffer
+func TestRingBufferBackfillMultipleSubscribers(t *testing.T) {
+	broadcaster := NewLogBroadcaster()
+
+	// Broadcast some initial entries
+	numInitial := 5
+	for i := 0; i < numInitial; i++ {
+		broadcaster.Broadcast("[INFO] initial " + formatIndex(i))
+	}
+
+	// Subscribe first client - gets backfill
+	id1, ch1 := broadcaster.Subscribe()
+	defer broadcaster.Unsubscribe(id1)
+
+	// Broadcast more entries
+	numBetween := 3
+	for i := 0; i < numBetween; i++ {
+		broadcaster.Broadcast("[INFO] between " + formatIndex(i))
+	}
+
+	// Subscribe second client - gets backfill with all entries so far (5 + 3 = 8)
+	id2, ch2 := broadcaster.Subscribe()
+	defer broadcaster.Unsubscribe(id2)
+
+	timeout := 1 * time.Second
+
+	// Verify ch1 received initial backfill
+	for i := 0; i < numInitial; i++ {
+		select {
+		case msg := <-ch1:
+			if msg != "[INFO] initial "+formatIndex(i) {
+				t.Errorf("ch1 backfill %d: got %q", i, msg)
+			}
+		case <-time.After(timeout):
+			t.Errorf("ch1 timeout on backfill message %d", i)
+		}
+	}
+
+	// Verify ch1 received "between" entries as live messages
+	for i := 0; i < numBetween; i++ {
+		select {
+		case msg := <-ch1:
+			if msg != "[INFO] between "+formatIndex(i) {
+				t.Errorf("ch1 live %d: got %q", i, msg)
+			}
+		case <-time.After(timeout):
+			t.Errorf("ch1 timeout on live message %d", i)
+		}
+	}
+
+	// Verify ch2 received all entries as backfill (5 initial + 3 between = 8)
+	// First 5 should be initial entries
+	for i := 0; i < numInitial; i++ {
+		select {
+		case msg := <-ch2:
+			if msg != "[INFO] initial "+formatIndex(i) {
+				t.Errorf("ch2 backfill initial %d: got %q", i, msg)
+			}
+		case <-time.After(timeout):
+			t.Errorf("ch2 timeout on backfill initial message %d", i)
+		}
+	}
+
+	// Next 3 should be between entries
+	for i := 0; i < numBetween; i++ {
+		select {
+		case msg := <-ch2:
+			if msg != "[INFO] between "+formatIndex(i) {
+				t.Errorf("ch2 backfill between %d: got %q", i, msg)
+			}
+		case <-time.After(timeout):
+			t.Errorf("ch2 timeout on backfill between message %d", i)
+		}
+	}
+
+	// Broadcast an entry after ch2 subscribes
+	broadcaster.Broadcast("[INFO] after second subscribe")
+
+	// Both should receive this new message
+	select {
+	case msg := <-ch1:
+		if msg != "[INFO] after second subscribe" {
+			t.Errorf("ch1 new message: got %q", msg)
+		}
+	case <-time.After(timeout):
+		t.Errorf("ch1 timeout on new message")
+	}
+
+	select {
+	case msg := <-ch2:
+		if msg != "[INFO] after second subscribe" {
+			t.Errorf("ch2 new message: got %q", msg)
+		}
+	case <-time.After(timeout):
+		t.Errorf("ch2 timeout on new message")
+	}
+}
+
+// Helper function to format index with zero-padding for consistent sorting
+func formatIndex(i int) string {
+	if i < 10 {
+		return "00" + string(rune('0'+i))
+	} else if i < 100 {
+		return "0" + string(rune('0'+i/10)) + string(rune('0'+i%10))
+	}
+	return string(rune('0'+i/100)) + string(rune('0'+(i/10)%10)) + string(rune('0'+i%10))
+}
