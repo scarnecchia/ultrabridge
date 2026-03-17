@@ -37,6 +37,15 @@ func formatDueTime(ms int64) string {
 	return t.Format("2006-01-02")
 }
 
+// formatCreated converts the CompletedTime (which per Supernote quirk holds creation time)
+// to a human-readable date.
+func formatCreated(ct sql.NullInt64) string {
+	if !ct.Valid || ct.Int64 == 0 {
+		return "-"
+	}
+	return time.UnixMilli(ct.Int64).UTC().Format("2006-01-02")
+}
+
 // NewHandler creates a new web handler with embedded templates.
 func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
@@ -49,7 +58,8 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger
 
 	// Parse the embedded templates with custom function map
 	funcMap := template.FuncMap{
-		"formatDueTime": formatDueTime,
+		"formatDueTime":  formatDueTime,
+		"formatCreated":  formatCreated,
 	}
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html")
 	if err != nil {

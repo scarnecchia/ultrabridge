@@ -234,32 +234,40 @@
 
             <!-- Task List -->
             <div class="card">
-                <h2>Task List</h2>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h2>Task List</h2>
+                    <label style="font-weight: normal; font-size: 14px; color: #666; cursor: pointer;">
+                        <input type="checkbox" id="show-completed" onchange="toggleCompleted()">
+                        Show completed
+                    </label>
+                </div>
                 {{if .tasks}}
                 <div class="table-container">
-                    <table>
+                    <table id="task-table">
                         <thead>
                             <tr>
                                 <th>Title</th>
                                 <th>Status</th>
+                                <th>Created</th>
                                 <th>Due Date</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             {{range .tasks}}
-                            <tr>
+                            <tr data-status="{{.Status.String}}">
                                 <td class="task-title">{{.Title.String}}</td>
                                 <td>
                                     <span class="task-status {{if eq .Status.String "completed"}}status-completed{{else}}status-needsaction{{end}}">
-                                        {{if eq .Status.String "completed"}}✓ Completed{{else}}Needs Action{{end}}
+                                        {{if eq .Status.String "completed"}}Completed{{else}}Needs Action{{end}}
                                     </span>
                                 </td>
+                                <td class="task-due-date">{{.CompletedTime | formatCreated}}</td>
                                 <td class="task-due-date">
                                     {{if gt .DueTime 0}}
                                         {{.DueTime | formatDueTime}}
                                     {{else}}
-                                        No due date
+                                        -
                                     {{end}}
                                 </td>
                                 <td class="task-actions">
@@ -302,6 +310,19 @@
     </div>
 
     <script>
+        // Hide completed tasks by default on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            toggleCompleted();
+        });
+
+        function toggleCompleted() {
+            const show = document.getElementById('show-completed').checked;
+            const rows = document.querySelectorAll('#task-table tbody tr[data-status="completed"]');
+            rows.forEach(function(row) {
+                row.style.display = show ? '' : 'none';
+            });
+        }
+
         function switchTab(tabName) {
             // Hide all tabs
             const tabs = document.querySelectorAll('.tab-content');
