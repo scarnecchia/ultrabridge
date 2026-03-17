@@ -15,6 +15,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/sync"
 	"github.com/sysop/ultrabridge/internal/taskstore"
+	"github.com/sysop/ultrabridge/internal/web"
 )
 
 func main() {
@@ -65,6 +66,9 @@ func main() {
 
 	authMW := auth.New(cfg.Username, cfg.PasswordHash)
 
+	// Create log broadcaster for web UI
+	broadcaster := logging.NewLogBroadcaster()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -76,6 +80,12 @@ func main() {
 			http.Redirect(w, r, "/caldav/", http.StatusMovedPermanently)
 		})).ServeHTTP(w, r)
 	})
+
+	// Wire web UI if enabled
+	if cfg.WebEnabled {
+		webHandler := web.NewHandler(store, notifier, logger, broadcaster)
+		mux.Handle("/", authMW.Wrap(webHandler))
+	}
 
 	handler := logging.RequestID(logger)(mux)
 	logger.Info("ultrabridge starting", "addr", cfg.ListenAddr)
