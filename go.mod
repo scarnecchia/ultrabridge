@@ -8,6 +8,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gorilla/websocket v1.5.3
 	golang.org/x/crypto v0.24.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (
