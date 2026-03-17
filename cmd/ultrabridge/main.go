@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
-	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -14,6 +12,7 @@ import (
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
+	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/sync"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
@@ -25,9 +24,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	logger := logging.Setup(logging.Config{
+		Level:         cfg.LogLevel,
+		Format:        cfg.LogFormat,
+		File:          cfg.LogFile,
+		FileMaxMB:     cfg.LogFileMaxMB,
+		FileMaxAge:    cfg.LogFileMaxAge,
+		FileMaxBackup: cfg.LogFileMaxBackup,
+		SyslogAddr:    cfg.LogSyslogAddr,
+	})
+
 	database, err := db.Connect(cfg.DSN())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ultrabridge: database connection failed: %v\n", err)
+		logger.Error("database connection failed", "error", err)
 		os.Exit(1)
 	}
 	defer database.Close()
@@ -37,14 +46,14 @@ func main() {
 
 	userID, err := db.DiscoverUserID(ctx, database)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ultrabridge: user discovery failed: %v\n", err)
+		logger.Error("user discovery failed", "error", err)
 		os.Exit(1)
 	}
-	log.Printf("discovered user_id: %d", userID)
+	logger.Info("discovered user_id", "user_id", userID)
 
 	store := taskstore.New(database, userID)
 
-	notifier := sync.NewNotifier(cfg.SocketIOURL, slog.Default())
+	notifier := sync.NewNotifier(cfg.SocketIOURL, logger)
 	notifier.Connect(context.Background())
 	defer notifier.Close()
 
@@ -68,9 +77,10 @@ func main() {
 		})).ServeHTTP(w, r)
 	})
 
-	log.Printf("ultrabridge starting on %s", cfg.ListenAddr)
-	if err := http.ListenAndServe(cfg.ListenAddr, mux); err != nil {
-		fmt.Fprintf(os.Stderr, "ultrabridge: %v\n", err)
+	handler := logging.RequestID(logger)(mux)
+	logger.Info("ultrabridge starting", "addr", cfg.ListenAddr)
+	if err := http.ListenAndServe(cfg.ListenAddr, handler); err != nil {
+		logger.Error("server error", "error", err)
 		os.Exit(1)
 	}
 }
