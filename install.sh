@@ -131,6 +131,10 @@ if [[ ! "$UB_PASSWORD_HASH" =~ ^\$2 ]]; then
 fi
 ok "Password hashed"
 
+# Docker Compose env_file interprets $ as variable substitution.
+# Escape $ as $$ so the bcrypt hash survives.
+UB_PASSWORD_HASH_ESCAPED="${UB_PASSWORD_HASH//\$/\$\$}"
+
 # --- write .ultrabridge.env ---
 
 info "Writing $SUPERNOTE_DIR/.ultrabridge.env"
@@ -141,7 +145,7 @@ cat > "$SUPERNOTE_DIR/.ultrabridge.env" <<EOF
 
 # Auth
 UB_USERNAME=$UB_USERNAME
-UB_PASSWORD_HASH=$UB_PASSWORD_HASH
+UB_PASSWORD_HASH=$UB_PASSWORD_HASH_ESCAPED
 
 # CalDAV
 UB_CALDAV_COLLECTION_NAME=$UB_COLLECTION_NAME
@@ -185,8 +189,7 @@ services:
       - "${UB_PORT}:8443"
     env_file:
       - .ultrabridge.env
-    volumes:
-      - ./.dbenv:/run/secrets/dbenv:ro
+      - .dbenv
     depends_on:
       - mariadb
     restart: unless-stopped

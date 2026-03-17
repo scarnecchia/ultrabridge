@@ -47,8 +47,7 @@ services:
       - "8443:8443"
     env_file:
       - .ultrabridge.env
-    volumes:
-      - ./.dbenv:/run/secrets/dbenv:ro
+      - .dbenv
     depends_on:
       - mariadb
     restart: unless-stopped

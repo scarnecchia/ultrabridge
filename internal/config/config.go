@@ -73,8 +73,30 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) loadDBEnv() error {
+	// Prefer environment variables (set via Docker env_file: .dbenv).
+	// Fall back to parsing the file directly for backward compatibility.
+	if v := os.Getenv("MYSQL_DATABASE"); v != "" {
+		c.DBName = v
+	}
+	if v := os.Getenv("MYSQL_USER"); v != "" {
+		c.DBUser = v
+	}
+	if v := os.Getenv("MYSQL_PASSWORD"); v != "" {
+		c.DBPassword = v
+	}
+
+	// If we got all three from env, skip file parsing
+	if c.DBName != "" && c.DBUser != "" && c.DBPassword != "" {
+		return nil
+	}
+
+	// Try file as fallback
 	f, err := os.Open(c.DBEnvPath)
 	if err != nil {
+		if c.DBName != "" || c.DBUser != "" {
+			// Got partial config from env, file is optional
+			return nil
+		}
 		return fmt.Errorf("open %s: %w", c.DBEnvPath, err)
 	}
 	defer f.Close()
@@ -91,11 +113,17 @@ func (c *Config) loadDBEnv() error {
 		}
 		switch key {
 		case "MYSQL_DATABASE":
-			c.DBName = val
+			if c.DBName == "" {
+				c.DBName = val
+			}
 		case "MYSQL_USER":
-			c.DBUser = val
+			if c.DBUser == "" {
+				c.DBUser = val
+			}
 		case "MYSQL_PASSWORD":
-			c.DBPassword = val
+			if c.DBPassword == "" {
+				c.DBPassword = val
+			}
 		}
 	}
 	return scanner.Err()
