@@ -44,12 +44,9 @@ func (h *Handler) handleWebSocketLogs(w http.ResponseWriter, r *http.Request, br
 	}
 	defer conn.Close()
 
-	// Subscribe to log entries
-	logChan := broadcaster.Subscribe()
-	defer func() {
-		// Note: We can't directly unsubscribe here without tracking the ID,
-		// but the channel will be closed when no longer needed
-	}()
+	// Subscribe to log entries and unsubscribe on disconnect
+	subscriberID, logChan := broadcaster.Subscribe()
+	defer broadcaster.Unsubscribe(subscriberID)
 
 	// Send log entries to the WebSocket client
 	for entry := range logChan {
@@ -95,7 +92,11 @@ func shouldIncludeLogEntry(entry string, minLevel slog.Level) bool {
 		return true
 	}
 
-	levelStr := strings.ToUpper(entry[1 : closingIdx+1])
+	levelStr := strings.ToUpper(strings.TrimSpace(entry[1 : closingIdx+1]))
+	if levelStr == "" {
+		return true
+	}
+
 	entryLevel := parseLogLevel(levelStr)
 
 	// Include if entry level >= minLevel

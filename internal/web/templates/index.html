@@ -338,7 +338,7 @@
 
             logWebSocket.onmessage = function(event) {
                 const logOutput = document.getElementById('log-output');
-                const lines = logOutput.textContent.split('\n');
+                let lines = logOutput.textContent.split('\n');
 
                 // Keep only last 100 lines
                 if (lines.length > 100) {

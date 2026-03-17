@@ -9,16 +9,21 @@ import (
 func TestSubscribeReturnsChannel(t *testing.T) {
 	broadcaster := NewLogBroadcaster()
 
-	ch := broadcaster.Subscribe()
+	id, ch := broadcaster.Subscribe()
+	if id < 0 {
+		t.Errorf("Subscribe returned invalid ID: %d", id)
+	}
 	if ch == nil {
 		t.Errorf("Subscribe returned nil channel")
 	}
+	broadcaster.Unsubscribe(id)
 }
 
 // TestBroadcastSingleSubscriber verifies entry broadcast to a single subscriber
 func TestBroadcastSingleSubscriber(t *testing.T) {
 	broadcaster := NewLogBroadcaster()
-	ch := broadcaster.Subscribe()
+	id, ch := broadcaster.Subscribe()
+	defer broadcaster.Unsubscribe(id)
 
 	// Broadcast an entry
 	broadcaster.Broadcast("[INFO] test message")
@@ -39,9 +44,12 @@ func TestBroadcastMultipleSubscribers(t *testing.T) {
 	broadcaster := NewLogBroadcaster()
 
 	// Create 3 subscribers
-	ch1 := broadcaster.Subscribe()
-	ch2 := broadcaster.Subscribe()
-	ch3 := broadcaster.Subscribe()
+	id1, ch1 := broadcaster.Subscribe()
+	id2, ch2 := broadcaster.Subscribe()
+	id3, ch3 := broadcaster.Subscribe()
+	defer broadcaster.Unsubscribe(id1)
+	defer broadcaster.Unsubscribe(id2)
+	defer broadcaster.Unsubscribe(id3)
 
 	// Broadcast an entry
 	testMessage := "[WARN] multiple subscribers"
@@ -65,9 +73,9 @@ func TestBroadcastMultipleSubscribers(t *testing.T) {
 func TestUnsubscribe(t *testing.T) {
 	broadcaster := NewLogBroadcaster()
 
-	// Subscribe and get ID
-	ch1 := broadcaster.Subscribe()
-	ch2 := broadcaster.Subscribe()
+	// Subscribe and get IDs
+	id1, ch1 := broadcaster.Subscribe()
+	id2, ch2 := broadcaster.Subscribe()
 
 	// Broadcast first message
 	broadcaster.Broadcast("[INFO] first message")
@@ -92,8 +100,8 @@ func TestUnsubscribe(t *testing.T) {
 		t.Errorf("ch2 should receive first message")
 	}
 
-	// Unsubscribe ch1 (ID 0)
-	broadcaster.Unsubscribe(0)
+	// Unsubscribe ch1
+	broadcaster.Unsubscribe(id1)
 
 	// Broadcast second message
 	broadcaster.Broadcast("[INFO] second message")
@@ -119,12 +127,15 @@ func TestUnsubscribe(t *testing.T) {
 	case <-time.After(timeout):
 		// Expected: ch1 is closed and won't receive
 	}
+
+	broadcaster.Unsubscribe(id2)
 }
 
 // TestBroadcasterMultipleMessages verifies broadcasting several messages in sequence
 func TestBroadcasterMultipleMessages(t *testing.T) {
 	broadcaster := NewLogBroadcaster()
-	ch := broadcaster.Subscribe()
+	id, ch := broadcaster.Subscribe()
+	defer broadcaster.Unsubscribe(id)
 
 	// Broadcast multiple messages quickly
 	messages := []string{"[INFO] msg1", "[INFO] msg2", "[INFO] msg3"}

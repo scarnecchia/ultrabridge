@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -27,6 +28,15 @@ type Handler struct {
 	broadcaster *logging.LogBroadcaster
 }
 
+// formatDueTime converts a millisecond Unix timestamp to a formatted date string.
+func formatDueTime(ms int64) string {
+	if ms == 0 {
+		return "No due date"
+	}
+	t := time.UnixMilli(ms).UTC()
+	return t.Format("2006-01-02")
+}
+
 // NewHandler creates a new web handler with embedded templates.
 func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
@@ -37,14 +47,13 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger
 		broadcaster: broadcaster,
 	}
 
-	// Parse the embedded templates
-	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
+	// Parse the embedded templates with custom function map
+	funcMap := template.FuncMap{
+		"formatDueTime": formatDueTime,
+	}
+	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
-		if logger != nil {
-			logger.Error("failed to parse templates", "error", err)
-		}
-		// Fallback: create a minimal template
-		tmpl = template.New("index.html")
+		panic(fmt.Sprintf("failed to parse templates: %v", err))
 	}
 	h.tmpl = tmpl
 

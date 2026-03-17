@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -68,6 +69,10 @@ func main() {
 
 	// Create log broadcaster for web UI
 	broadcaster := logging.NewLogBroadcaster()
+
+	// Wire the broadcasting handler to capture logs
+	broadcastHandler := logging.NewBroadcastingHandler(logger.Handler(), broadcaster)
+	logger = slog.New(broadcastHandler)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

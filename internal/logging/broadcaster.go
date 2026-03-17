@@ -27,60 +27,43 @@ func NewLogBroadcaster() *LogBroadcaster {
 	}
 }
 
-// Subscribe registers a new subscriber and returns a channel that will
-// receive log entries. The channel is pre-populated with recent entries
-// from the ring buffer.
-func (lb *LogBroadcaster) Subscribe() <-chan string {
+// Subscribe registers a new subscriber and returns a channel and subscriber ID.
+// The channel is pre-populated with recent entries from the ring buffer.
+// The subscriber ID must be used to unsubscribe later.
+func (lb *LogBroadcaster) Subscribe() (int, <-chan string) {
 	lb.mu.Lock()
-	defer lb.mu.Unlock()
 
-	ch := make(chan string, 10)
+	ch := make(chan string, ringBufferSize+10) // Increase buffer to hold backfill
 	id := lb.nextID
 	lb.nextID++
 
 	lb.subscribers[id] = ch
 
-	// Send recent entries to the new subscriber as backfill
-	go func() {
-		lb.mu.RLock()
-		defer lb.mu.RUnlock()
-
-		// Send entries from the ring buffer in chronological order
-		if lb.ringCount < ringBufferSize {
-			// Ring buffer not full yet - send from index 0 to ringIndex
-			for i := 0; i < lb.ringIndex; i++ {
-				if lb.ringBuffer[i] != "" {
-					select {
-					case ch <- lb.ringBuffer[i]:
-					default:
-						// Channel full, skip
-					}
-				}
-			}
-		} else {
-			// Ring buffer is full - send from ringIndex to end, then start to ringIndex
-			for i := lb.ringIndex; i < ringBufferSize; i++ {
-				if lb.ringBuffer[i] != "" {
-					select {
-					case ch <- lb.ringBuffer[i]:
-					default:
-						// Channel full, skip
-					}
-				}
-			}
-			for i := 0; i < lb.ringIndex; i++ {
-				if lb.ringBuffer[i] != "" {
-					select {
-					case ch <- lb.ringBuffer[i]:
-					default:
-						// Channel full, skip
-					}
-				}
+	// Send recent entries to the new subscriber as backfill (synchronously)
+	// Send entries from the ring buffer in chronological order
+	if lb.ringCount < ringBufferSize {
+		// Ring buffer not full yet - send from index 0 to ringIndex
+		for i := 0; i < lb.ringIndex; i++ {
+			if lb.ringBuffer[i] != "" {
+				ch <- lb.ringBuffer[i]
 			}
 		}
-	}()
+	} else {
+		// Ring buffer is full - send from ringIndex to end, then start to ringIndex
+		for i := lb.ringIndex; i < ringBufferSize; i++ {
+			if lb.ringBuffer[i] != "" {
+				ch <- lb.ringBuffer[i]
+			}
+		}
+		for i := 0; i < lb.ringIndex; i++ {
+			if lb.ringBuffer[i] != "" {
+				ch <- lb.ringBuffer[i]
+			}
+		}
+	}
 
-	return ch
+	lb.mu.Unlock()
+	return id, ch
 }
 
 // Unsubscribe removes a subscriber. Note: we need the ID which is not directly

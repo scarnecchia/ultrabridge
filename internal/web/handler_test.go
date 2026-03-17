@@ -156,6 +156,56 @@ func TestListTasksEmpty(t *testing.T) {
 	}
 }
 
+// TestGetIndexResponseBodyVerifiesAC41 verifies AC4.1: HTTP response contains task titles
+func TestGetIndexResponseBodyVerifiesAC41(t *testing.T) {
+	store := newMockTaskStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(store, nil, logger, broadcaster)
+
+	// Pre-populate with multiple tasks
+	task1 := &taskstore.Task{
+		TaskID:    "task-1",
+		Title:     taskstore.SqlStr("Buy groceries"),
+		Status:    taskstore.SqlStr("needsAction"),
+		IsDeleted: "N",
+	}
+	task2 := &taskstore.Task{
+		TaskID:    "task-2",
+		Title:     taskstore.SqlStr("Write report"),
+		Status:    taskstore.SqlStr("completed"),
+		IsDeleted: "N",
+	}
+	store.tasks[task1.TaskID] = task1
+	store.tasks[task2.TaskID] = task2
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	// Verify HTTP response is 200 OK
+	if w.Code != http.StatusOK {
+		t.Errorf("GET / returned status %d, want 200", w.Code)
+	}
+
+	// Verify response body contains both task titles
+	body := w.Body.String()
+	if !strings.Contains(body, "Buy groceries") {
+		t.Errorf("Response should contain 'Buy groceries', got:\n%s", body)
+	}
+	if !strings.Contains(body, "Write report") {
+		t.Errorf("Response should contain 'Write report', got:\n%s", body)
+	}
+
+	// Verify response contains the task statuses
+	if !strings.Contains(body, "Needs Action") {
+		t.Errorf("Response should contain 'Needs Action' status")
+	}
+	if !strings.Contains(body, "Completed") {
+		t.Errorf("Response should contain 'Completed' status")
+	}
+}
+
 // TestGetIndexFiltersDeletedTasks verifies that deleted tasks (IsDeleted="Y") are not shown
 func TestGetIndexFiltersDeletedTasks(t *testing.T) {
 	store := newMockTaskStore()
@@ -185,19 +235,20 @@ func TestGetIndexFiltersDeletedTasks(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// Verify that we only get non-deleted tasks from store.List
-	ctx := context.Background()
-	tasks, err := store.List(ctx)
-	if err != nil {
-		t.Fatalf("Failed to list tasks: %v", err)
+	// Verify HTTP response is 200 OK
+	if w.Code != http.StatusOK {
+		t.Errorf("GET / returned status %d, want %d", w.Code, http.StatusOK)
 	}
 
-	// Verify store correctly filters deleted tasks
-	if len(tasks) != 1 {
-		t.Errorf("store.List should return 1 non-deleted task, got %d", len(tasks))
+	// Verify response body contains the active task
+	body := w.Body.String()
+	if !strings.Contains(body, "Active task") {
+		t.Errorf("Response should contain 'Active task', got:\n%s", body)
 	}
-	if len(tasks) > 0 && taskstore.NullStr(tasks[0].Title) != "Active task" {
-		t.Errorf("Non-deleted task should be 'Active task', got %q", taskstore.NullStr(tasks[0].Title))
+
+	// Verify response body does NOT contain the deleted task
+	if strings.Contains(body, "Deleted task") {
+		t.Errorf("Response should NOT contain 'Deleted task', got:\n%s", body)
 	}
 }
 
