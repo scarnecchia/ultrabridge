@@ -169,6 +169,14 @@ func (b *Backend) PutCalendarObject(ctx context.Context, urlPath string, cal *ic
 		}
 	}
 
+	// Notify device of sync after successful store operation
+	if b.notifier != nil {
+		if err := b.notifier.Notify(ctx); err != nil {
+			// Log warning but don't fail the operation (graceful degradation)
+			// Logging will be wired in Phase 6
+		}
+	}
+
 	// Re-fetch to get updated fields
 	updated, err := b.store.Get(ctx, task.TaskID)
 	if err != nil {
@@ -182,7 +190,19 @@ func (b *Backend) DeleteCalendarObject(ctx context.Context, urlPath string) erro
 	if taskID == "" {
 		return fmt.Errorf("invalid path")
 	}
-	return b.store.Delete(ctx, taskID)
+	if err := b.store.Delete(ctx, taskID); err != nil {
+		return err
+	}
+
+	// Notify device of sync after successful store operation
+	if b.notifier != nil {
+		if err := b.notifier.Notify(ctx); err != nil {
+			// Log warning but don't fail the operation (graceful degradation)
+			// Logging will be wired in Phase 6
+		}
+	}
+
+	return nil
 }
 
 func (b *Backend) collection() gocaldav.Calendar {

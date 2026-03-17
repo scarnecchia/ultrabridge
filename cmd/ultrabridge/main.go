@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -13,6 +14,7 @@ import (
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
+	"github.com/sysop/ultrabridge/internal/sync"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
 
@@ -42,7 +44,11 @@ func main() {
 
 	store := taskstore.New(database, userID)
 
-	backend := ubcaldav.NewBackend(store, "/caldav", cfg.CalDAVCollectionName, cfg.DueTimeMode, nil)
+	notifier := sync.NewNotifier(cfg.SocketIOURL, slog.Default())
+	notifier.Connect(context.Background())
+	defer notifier.Close()
+
+	backend := ubcaldav.NewBackend(store, "/caldav", cfg.CalDAVCollectionName, cfg.DueTimeMode, notifier)
 	caldavHandler := &gocaldav.Handler{
 		Backend: backend,
 		Prefix:  "/caldav",
