@@ -199,12 +199,15 @@ ok "Docker Compose override written"
 
 # --- build and start ---
 
-echo
-info "Starting UltraBridge..."
+# The Supernote stack's .dbenv is root-owned (600), so docker compose
+# needs sudo to read it via env_file. This matches how the Supernote
+# stack itself is managed.
+COMPOSE="sudo docker compose -f $SUPERNOTE_DIR/docker-compose.yml -f $SUPERNOTE_DIR/docker-compose.override.yml"
 
-docker compose -f "$SUPERNOTE_DIR/docker-compose.yml" \
-               -f "$SUPERNOTE_DIR/docker-compose.override.yml" \
-               up -d ultrabridge || fail "Failed to start container"
+echo
+info "Starting UltraBridge (sudo required to read .dbenv)..."
+
+$COMPOSE up -d ultrabridge || fail "Failed to start container"
 
 # --- verify ---
 
@@ -221,7 +224,7 @@ else
         ok "Health check passed: $HEALTH_URL"
     else
         warn "Health check failed. Check logs:"
-        echo "  docker compose -f $SUPERNOTE_DIR/docker-compose.yml -f $SUPERNOTE_DIR/docker-compose.override.yml logs ultrabridge"
+        echo "  $COMPOSE logs ultrabridge"
         echo
         echo "  Common causes:"
         echo "  - MariaDB not running"
