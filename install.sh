@@ -111,16 +111,20 @@ prompt UB_COLLECTION_NAME "CalDAV collection name" "Supernote Tasks"
 
 echo
 
-# --- generate bcrypt hash ---
+# --- build image first (needed for password hashing) ---
+
+info "Building UltraBridge Docker image..."
+
+docker build -t ultrabridge:dev "$SCRIPT_DIR" || fail "Docker build failed"
+
+ok "Image built"
+
+# --- generate bcrypt hash using the binary we just built ---
 
 info "Generating password hash..."
 
-# We use a lightweight Alpine container to run htpasswd, avoiding any
-# dependency on the host having apache2-utils installed.
-UB_PASSWORD_HASH=$(docker run --rm alpine:3.20 sh -c "
-    apk add --no-cache apache2-utils >/dev/null 2>&1
-    htpasswd -nbBC 10 '' '$UB_PASSWORD' | cut -d: -f2
-") || fail "Failed to generate bcrypt hash"
+UB_PASSWORD_HASH=$(docker run --rm ultrabridge:dev hash-password "$UB_PASSWORD") \
+    || fail "Failed to generate bcrypt hash"
 
 if [[ ! "$UB_PASSWORD_HASH" =~ ^\$2 ]]; then
     fail "Generated hash doesn't look like bcrypt: $UB_PASSWORD_HASH"
@@ -198,14 +202,6 @@ mkdir -p "$SUPERNOTE_DIR/sndata/logs/ultrabridge"
 # --- build and start ---
 
 echo
-info "Building UltraBridge Docker image..."
-
-docker compose -f "$SUPERNOTE_DIR/docker-compose.yml" \
-               -f "$SUPERNOTE_DIR/docker-compose.override.yml" \
-               build ultrabridge || fail "Docker build failed"
-
-ok "Image built"
-
 info "Starting UltraBridge..."
 
 docker compose -f "$SUPERNOTE_DIR/docker-compose.yml" \

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	gocaldav "github.com/emersion/go-webdav/caldav"
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/sysop/ultrabridge/internal/auth"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/config"
@@ -20,6 +22,16 @@ import (
 )
 
 func main() {
+	if len(os.Args) >= 3 && os.Args[1] == "hash-password" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(os.Args[2]), 10)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ultrabridge: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(string(hash))
+		return
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ultrabridge: %v\n", err)
