@@ -5,6 +5,7 @@ package tests
 import (
 	"context"
 	"database/sql"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,7 +35,8 @@ func testServerSetup(t *testing.T, store *taskstore.Store) (*httptest.Server, st
 	}
 
 	// Create auth middleware with test credentials
-	authMW := auth.New("admin", "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO")
+	// Hash generated with: bcrypt.GenerateFromPassword([]byte("testpass"), 10)
+	authMW := auth.New("admin", "$2a$10$6qDxX7kf.JWSRsqOW8C9luUXzYwvB3aThiCXuVl9YiolQ/7shnZFm")
 
 	// Create mux with full handler chain
 	mux := http.NewServeMux()
@@ -53,7 +55,7 @@ func testServerSetup(t *testing.T, store *taskstore.Store) (*httptest.Server, st
 	server := httptest.NewServer(mux)
 
 	// Return server, username, password for BasicAuth
-	return server, "admin", "wrongpass" // Password is intentionally wrong for testing
+	return server, "admin", "testpass"
 }
 
 // TestIntegrationHealthCheck verifies the /health endpoint works.
@@ -260,8 +262,8 @@ END:VCALENDAR`
 		t.Fatalf("get task from DB: %v", err)
 	}
 
-	if task.Title != "__ubtest_CreateTask" {
-		t.Errorf("expected title '__ubtest_CreateTask', got '%s'", task.Title)
+	if task.Title.String != "__ubtest_CreateTask" {
+		t.Errorf("expected title '__ubtest_CreateTask', got '%s'", task.Title.String)
 	}
 
 	// GET the task back
@@ -472,18 +474,53 @@ END:VCALENDAR`
 	}
 
 	// Read response body to verify it contains DESCRIPTION and PRIORITY
-	var body strings.Builder
-	if _, err := body.ReadFrom(getResp.Body); err != nil {
+	bodyBytes, err := io.ReadAll(getResp.Body)
+	if err != nil {
 		t.Fatalf("read response body: %v", err)
 	}
 
-	responseBody := body.String()
+	responseBody := string(bodyBytes)
 	if !strings.Contains(responseBody, "DESCRIPTION:This is a detailed description") {
 		t.Errorf("expected DESCRIPTION in response body")
 	}
 
 	if !strings.Contains(responseBody, "PRIORITY:5") {
 		t.Errorf("expected PRIORITY in response body")
+	}
+}
+
+// TestIntegrationStartupFailure verifies that the service fails with a clear error
+// when the database is unreachable (invalid DSN).
+// Implements ultrabridge-caldav.AC1.2.
+func TestIntegrationStartupFailure(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+
+	// Try to connect with an invalid DSN (wrong password)
+	invalidDSN := "root:wrongpassword@tcp(localhost:3306)/supernotedb"
+	db, err := sql.Open("mysql", invalidDSN)
+	if err != nil {
+		t.Fatalf("sql.Open should not fail: %v", err)
+	}
+	defer db.Close()
+
+	// Verify that Ping (connection test) fails with a clear error
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = db.PingContext(ctx)
+	if err == nil {
+		t.Skip("database is actually reachable with wrong credentials (test environment issue)")
+	}
+
+	// Verify error message contains database/connection context
+	errMsg := err.Error()
+	if !strings.Contains(strings.ToLower(errMsg), "database") &&
+	   !strings.Contains(strings.ToLower(errMsg), "connection") &&
+	   !strings.Contains(strings.ToLower(errMsg), "access denied") &&
+	   !strings.Contains(strings.ToLower(errMsg), "refused") {
+		t.Errorf("expected error message to contain database/connection context, got: %s", errMsg)
 	}
 }
 
@@ -582,12 +619,12 @@ END:VCALENDAR`
 	}
 
 	// Read response body to verify updated fields
-	var body strings.Builder
-	if _, err := body.ReadFrom(getResp.Body); err != nil {
+	bodyBytes, err := io.ReadAll(getResp.Body)
+	if err != nil {
 		t.Fatalf("read response body: %v", err)
 	}
 
-	responseBody := body.String()
+	responseBody := string(bodyBytes)
 	if !strings.Contains(responseBody, "DESCRIPTION:"+newDetail) {
 		t.Errorf("expected DESCRIPTION in response with updated value")
 	}

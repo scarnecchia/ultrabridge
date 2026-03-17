@@ -114,7 +114,7 @@ func createTestTask(t *testing.T, db *sql.DB, userID int64, title string) string
 		 links, is_deleted)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		taskID, 0, userID, title, "", now,
-		"", "N", "needsAction", "", nil, now,
+		"", "N", "needsAction", "", 0, now,
 		"", "N")
 	if err != nil {
 		t.Fatalf("create test task: %v", err)

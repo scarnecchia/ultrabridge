@@ -13,7 +13,7 @@ UltraBridge is a CalDAV/WebDAV bridge for the Supernote Private Cloud, enabling 
 ### 1. Copy and configure `.ultrabridge.env`
 
 ```bash
-cd /home/sysop/src/ultrabridge/.worktrees/ultrabridge-caldav
+cd /path/to/ultrabridge
 cp .ultrabridge.env.example .ultrabridge.env
 ```
 
