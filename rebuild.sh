@@ -21,7 +21,7 @@ ok "Image built"
 info "Restarting container..."
 sudo docker compose -f "$SUPERNOTE_DIR/docker-compose.yml" \
                     -f "$SUPERNOTE_DIR/docker-compose.override.yml" \
-                    up -d ultrabridge || fail "Restart failed"
+                    up -d --force-recreate ultrabridge || fail "Restart failed"
 
 sleep 2
 PORT=$(grep -oP '"\K\d+(?=:8443")' "$SUPERNOTE_DIR/docker-compose.override.yml" || echo "8443")

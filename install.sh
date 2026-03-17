@@ -207,7 +207,7 @@ COMPOSE="sudo docker compose -f $SUPERNOTE_DIR/docker-compose.yml -f $SUPERNOTE_
 echo
 info "Starting UltraBridge (sudo required to read .dbenv)..."
 
-$COMPOSE up -d ultrabridge || fail "Failed to start container"
+$COMPOSE up -d --force-recreate ultrabridge || fail "Failed to start container"
 
 # --- verify ---
 
