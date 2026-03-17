@@ -105,7 +105,7 @@ echo "  Your password will be hashed with bcrypt — the plaintext is never stor
 echo
 
 prompt UB_USERNAME "Username" "$DEFAULT_USERNAME"
-prompt_password UB_PASSWORD ""
+prompt_password UB_PASSWORD "Password"
 prompt UB_PORT "Port to expose on host" "$DEFAULT_PORT"
 prompt UB_COLLECTION_NAME "CalDAV collection name" "Supernote Tasks"
 
@@ -186,7 +186,6 @@ services:
     env_file:
       - .ultrabridge.env
     volumes:
-      - ./sndata/logs/ultrabridge:/var/log/ultrabridge
       - ./.dbenv:/run/secrets/dbenv:ro
     depends_on:
       - mariadb
@@ -194,10 +193,6 @@ services:
 EOF
 
 ok "Docker Compose override written"
-
-# --- create log directory ---
-
-mkdir -p "$SUPERNOTE_DIR/sndata/logs/ultrabridge"
 
 # --- build and start ---
 
