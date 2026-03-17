@@ -40,7 +40,7 @@ Copy this `docker-compose.override.yml` to `/mnt/supernote/`:
 services:
   ultrabridge:
     build:
-      context: /home/sysop/src/ultrabridge/.worktrees/ultrabridge-caldav
+      context: /path/to/ultrabridge
       dockerfile: Dockerfile
     container_name: ultrabridge
     ports:
@@ -48,7 +48,6 @@ services:
     env_file:
       - .ultrabridge.env
     volumes:
-      - ./sndata/logs/ultrabridge:/var/log/ultrabridge
       - ./.dbenv:/run/secrets/dbenv:ro
     depends_on:
       - mariadb
