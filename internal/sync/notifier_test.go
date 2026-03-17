@@ -133,7 +133,62 @@ func TestNotifierConnect(t *testing.T) {
 // TestNotifierPingPong verifies ping/pong keepalive handling
 func TestNotifierPingPong(t *testing.T) {
 	mockServer := newMockWebSocketServer()
-	server := httptest.NewServer(mockServer)
+	// We need a custom handler to send ping from server side
+	testDone := make(chan struct{})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := mockServer.upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		// Send Engine.IO open packet (type 0)
+		openPacket := `0{"sid":"test-sid","upgrades":[],"pingInterval":25000,"pingTimeout":60000}`
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(openPacket)); err != nil {
+			return
+		}
+
+		// Read Socket.IO connect (expect "40")
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		if string(msg) != "40" {
+			return
+		}
+
+		// Signal connection established
+		mockServer.mu.Lock()
+		select {
+		case mockServer.connectedChan <- struct{}{}:
+		default:
+		}
+		mockServer.mu.Unlock()
+
+		// Send a ping from server and wait for pong response
+		if err := conn.WriteMessage(websocket.TextMessage, []byte("2")); err != nil {
+			return
+		}
+
+		// Wait for pong response
+		_, msg, err = conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		if string(msg) == "3" {
+			// Pong received correctly
+			mockServer.mu.Lock()
+			select {
+			case mockServer.pingResponseChan <- struct{}{}:
+			default:
+			}
+			mockServer.mu.Unlock()
+		}
+
+		close(testDone)
+	})
+
+	server := httptest.NewServer(handler)
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
@@ -156,23 +211,16 @@ func TestNotifierPingPong(t *testing.T) {
 		t.Fatalf("connection timeout")
 	}
 
-	// Give connection time to fully establish
-	time.Sleep(100 * time.Millisecond)
-
-	// Simulate server sending a ping and check client responds with pong
-	if notifier.conn != nil {
-		notifier.conn.WriteMessage(websocket.TextMessage, []byte("2"))
-
-		// Wait for pong response
-		select {
-		case <-mockServer.pingResponseChan:
-			// Pong received
-		case <-ctx.Done():
-			t.Fatalf("pong response timeout")
-		}
+	// Wait for pong response from server side
+	select {
+	case <-mockServer.pingResponseChan:
+		// Pong received
+	case <-ctx.Done():
+		t.Fatalf("pong response timeout")
 	}
 
 	notifier.Close()
+	<-testDone
 }
 
 // TestNotifySuccess verifies STARTSYNC message is sent with correct format (AC3.5)
@@ -200,9 +248,6 @@ func TestNotifySuccess(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatalf("connection timeout")
 	}
-
-	// Give connection time to fully establish
-	time.Sleep(100 * time.Millisecond)
 
 	// Call Notify
 	err := notifier.Notify(ctx)
@@ -312,4 +357,107 @@ func TestNotifyNotConnectedDoesNotPanic(t *testing.T) {
 	}()
 
 	_ = notifier.Notify(ctx)
+}
+
+// TestNotifierReconnect verifies notifier reconnects after connection drop
+func TestNotifierReconnect(t *testing.T) {
+	mockServer := newMockWebSocketServer()
+	connCount := 0
+	connCountMu := sync.Mutex{}
+	reconnectChan := make(chan struct{}, 5)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connCountMu.Lock()
+		connCount++
+		connCountMu.Unlock()
+
+		conn, err := mockServer.upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		// Send Engine.IO open packet (type 0)
+		openPacket := `0{"sid":"test-sid","upgrades":[],"pingInterval":25000,"pingTimeout":60000}`
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(openPacket)); err != nil {
+			return
+		}
+
+		// Read Socket.IO connect (expect "40")
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		if string(msg) != "40" {
+			return
+		}
+
+		// Signal connection established
+		mockServer.mu.Lock()
+		select {
+		case mockServer.connectedChan <- struct{}{}:
+		default:
+		}
+		select {
+		case reconnectChan <- struct{}{}:
+		default:
+		}
+		mockServer.mu.Unlock()
+
+		// On first connection, close immediately to simulate drop
+		connCountMu.Lock()
+		isFirstConn := connCount == 1
+		connCountMu.Unlock()
+
+		if isFirstConn {
+			return // Close connection immediately
+		}
+
+		// On reconnection, stay open and read messages
+		for {
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				break
+			}
+		}
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	if !strings.Contains(wsURL, "/socket.io/") {
+		wsURL += "/socket.io/"
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	notifier := NewNotifier(wsURL, logger)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	notifier.Connect(ctx)
+
+	// Wait for first connection
+	select {
+	case <-reconnectChan:
+	case <-ctx.Done():
+		t.Fatalf("initial connection timeout")
+	}
+
+	// Wait for reconnection (should happen within ~5 seconds due to reconnect delay)
+	select {
+	case <-reconnectChan:
+		// Reconnection successful
+	case <-ctx.Done():
+		t.Fatalf("reconnect timeout")
+	}
+
+	connCountMu.Lock()
+	if connCount < 2 {
+		t.Errorf("notifier did not reconnect: connCount=%d, want >= 2", connCount)
+	}
+	connCountMu.Unlock()
+
+	notifier.Close()
 }

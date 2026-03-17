@@ -17,13 +17,17 @@ type Notifier struct {
 	url    string
 	logger *slog.Logger
 
-	mu   sync.Mutex
-	conn *websocket.Conn
+	mu      sync.Mutex       // Protects conn field
+	conn    *websocket.Conn
+	writeMu sync.Mutex       // Serializes all WriteMessage calls
 }
 
 func NewNotifier(socketIOURL string, logger *slog.Logger) *Notifier {
 	// Convert ws://host:port/socket.io/ to ws://host:port/socket.io/?EIO=3&transport=websocket
-	u, _ := url.Parse(socketIOURL)
+	u, err := url.Parse(socketIOURL)
+	if err != nil {
+		panic(fmt.Sprintf("invalid socket.io URL: %q: %v", socketIOURL, err))
+	}
 	q := u.Query()
 	q.Set("EIO", "3")
 	q.Set("transport", "websocket")
@@ -101,7 +105,14 @@ func (n *Notifier) dial(ctx context.Context) error {
 		}
 		if len(msg) > 0 && msg[0] == '2' {
 			// Ping — respond with pong
-			if err := conn.WriteMessage(websocket.TextMessage, []byte("3")); err != nil {
+			n.writeMu.Lock()
+			err := conn.WriteMessage(websocket.TextMessage, []byte("3"))
+			n.writeMu.Unlock()
+			if err != nil {
+				n.mu.Lock()
+				n.conn = nil
+				n.mu.Unlock()
+				conn.Close()
 				return fmt.Errorf("send pong: %w", err)
 			}
 		}
@@ -131,7 +142,10 @@ func (n *Notifier) Notify(ctx context.Context) error {
 	payloadJSON, _ := json.Marshal(payload)
 	msg := fmt.Sprintf(`42["ServerMessage",%s]`, payloadJSON)
 
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
+	n.writeMu.Lock()
+	err := conn.WriteMessage(websocket.TextMessage, []byte(msg))
+	n.writeMu.Unlock()
+	if err != nil {
 		n.logger.Warn("STARTSYNC send failed", "error", err)
 		return fmt.Errorf("send STARTSYNC: %w", err)
 	}
