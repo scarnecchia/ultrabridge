@@ -8,12 +8,12 @@ import (
 	"os"
 	"time"
 
-	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
+	gocaldav "github.com/emersion/go-webdav/caldav"
 	"github.com/sysop/ultrabridge/internal/auth"
+	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
 	"github.com/sysop/ultrabridge/internal/taskstore"
-	gocaldav "github.com/emersion/go-webdav/caldav"
 )
 
 func main() {
