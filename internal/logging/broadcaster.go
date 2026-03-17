@@ -2,7 +2,9 @@ package logging
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 )
 
@@ -157,12 +159,22 @@ func (bh *BroadcastingHandler) Enabled(ctx context.Context, level slog.Level) bo
 	return bh.handler.Enabled(ctx, level)
 }
 
-// formatLogEntry formats a log record as a simple string for broadcasting.
+// formatLogEntry formats a log record with all attributes for broadcasting.
 func formatLogEntry(record slog.Record) string {
-	level := record.Level.String()
-	msg := record.Message
+	var b strings.Builder
+	b.WriteString(record.Time.UTC().Format("15:04:05"))
+	b.WriteString(" [")
+	b.WriteString(record.Level.String())
+	b.WriteString("] ")
+	b.WriteString(record.Message)
 
-	// Build a simple output format: [TIME] LEVEL: MESSAGE
-	// For simplicity, just use level and message (timestamp can be added by handler)
-	return "[" + level + "] " + msg
+	record.Attrs(func(a slog.Attr) bool {
+		b.WriteString("  ")
+		b.WriteString(a.Key)
+		b.WriteString("=")
+		b.WriteString(fmt.Sprintf("%v", a.Value.Any()))
+		return true
+	})
+
+	return b.String()
 }
