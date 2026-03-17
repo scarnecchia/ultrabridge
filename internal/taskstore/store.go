@@ -3,9 +3,18 @@ package taskstore
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
+
+// ErrNotFound is returned when a task is not found.
+var ErrNotFound = errors.New("task not found")
+
+// IsNotFound returns true if the error is ErrNotFound.
+func IsNotFound(err error) bool {
+	return errors.Is(err, ErrNotFound)
+}
 
 type Store struct {
 	db     *sql.DB
@@ -48,6 +57,9 @@ func (s *Store) Get(ctx context.Context, taskID string) (*Task, error) {
 		taskID, s.userID)
 	var t Task
 	if err := scanTaskRow(row, &t); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrNotFound
+		}
 		return nil, fmt.Errorf("get task %s: %w", taskID, err)
 	}
 	return &t, nil

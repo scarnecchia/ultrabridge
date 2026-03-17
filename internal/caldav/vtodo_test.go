@@ -328,6 +328,17 @@ func TestRoundTripVTODOTask(t *testing.T) {
 			},
 			dueTimeMode: "preserve",
 		},
+		{
+			name: "round trip task with date_only mode",
+			task: &taskstore.Task{
+				TaskID:       "id-789",
+				Title:        sql.NullString{String: "Date Only Task", Valid: true},
+				Status:       sql.NullString{String: "needsAction", Valid: true},
+				DueTime:      taskstore.TimeToMs(time.Date(2025, 6, 15, 14, 30, 45, 0, time.UTC)),
+				LastModified: sql.NullInt64{Int64: taskstore.TimeToMs(time.Date(2025, 3, 17, 15, 0, 0, 0, time.UTC)), Valid: true},
+			},
+			dueTimeMode: "date_only",
+		},
 	}
 
 	for _, tt := range tests {
@@ -356,6 +367,25 @@ func TestRoundTripVTODOTask(t *testing.T) {
 			}
 			if taskstore.NullStr(resultTask.Importance) != taskstore.NullStr(tt.task.Importance) {
 				t.Errorf("Importance mismatch after round trip")
+			}
+			// Verify DueTime preservation
+			if resultTask.DueTime != tt.task.DueTime {
+				// In date_only mode, the time component is stripped, so compare as dates
+				if tt.dueTimeMode == "date_only" {
+					expectedTime := time.Date(
+						time.Unix(0, tt.task.DueTime*1e6).UTC().Year(),
+						time.Unix(0, tt.task.DueTime*1e6).UTC().Month(),
+						time.Unix(0, tt.task.DueTime*1e6).UTC().Day(),
+						0, 0, 0, 0, time.UTC,
+					)
+					resultTime := time.Unix(0, resultTask.DueTime*1e6).UTC()
+					resultDate := time.Date(resultTime.Year(), resultTime.Month(), resultTime.Day(), 0, 0, 0, 0, time.UTC)
+					if expectedTime != resultDate {
+						t.Errorf("DueTime mismatch after round trip in date_only mode: got %v, want %v", resultDate, expectedTime)
+					}
+				} else {
+					t.Errorf("DueTime mismatch after round trip: got %d, want %d", resultTask.DueTime, tt.task.DueTime)
+				}
 			}
 		})
 	}

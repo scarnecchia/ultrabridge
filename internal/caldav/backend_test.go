@@ -35,7 +35,7 @@ func (m *mockTaskStore) Get(ctx context.Context, taskID string) (*taskstore.Task
 	if t, ok := m.tasks[taskID]; ok {
 		return t, nil
 	}
-	return nil, fmt.Errorf("task not found")
+	return nil, taskstore.ErrNotFound
 }
 
 func (m *mockTaskStore) Create(ctx context.Context, t *taskstore.Task) error {
@@ -45,7 +45,8 @@ func (m *mockTaskStore) Create(ctx context.Context, t *taskstore.Task) error {
 	if !t.LastModified.Valid {
 		t.LastModified = sql.NullInt64{Int64: time.Now().UnixMilli(), Valid: true}
 	}
-	if !t.CompletedTime.Valid {
+	// Only set CompletedTime when task status is "completed"
+	if t.Status.Valid && t.Status.String == "completed" && !t.CompletedTime.Valid {
 		t.CompletedTime = sql.NullInt64{Int64: time.Now().UnixMilli(), Valid: true}
 	}
 	m.tasks[t.TaskID] = t
@@ -182,7 +183,10 @@ func TestPutCalendarObjectCreateAndUpdateCTag(t *testing.T) {
 	cal2.Props.SetText("VERSION", "2.0")
 	cal2.Children = append(cal2.Children, todo2)
 
-	time.Sleep(1 * time.Millisecond) // Ensure time difference
+	// Sleep 1ms to ensure the updated task's last_modified timestamp differs from the original.
+	// Since Create sets LastModified to time.Now().UnixMilli(), we need a visible time difference
+	// before Update runs to get a different millisecond value for CTag computation.
+	time.Sleep(1 * time.Millisecond)
 	_, err = backend.PutCalendarObject(ctx, "/caldav/tasks/test-task-1.ics", cal2, nil)
 	if err != nil {
 		t.Fatalf("PutCalendarObject (update) failed: %v", err)

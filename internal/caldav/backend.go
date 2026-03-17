@@ -149,7 +149,12 @@ func (b *Backend) PutCalendarObject(ctx context.Context, urlPath string, cal *ic
 	// Check if task exists
 	existing, getErr := b.store.Get(ctx, taskID)
 	if getErr != nil {
-		// New task
+		// Check if it's a "not found" error or a real error
+		if !taskstore.IsNotFound(getErr) {
+			// Real error, not just missing task
+			return nil, getErr
+		}
+		// Task doesn't exist, create new one
 		if task.TaskID == "" {
 			task.TaskID = taskID
 		}
