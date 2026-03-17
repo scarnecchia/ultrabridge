@@ -1,0 +1,62 @@
+package logging
+
+import (
+	"context"
+	"crypto/rand"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"time"
+)
+
+type contextKey string
+
+const requestIDKey contextKey = "request_id"
+
+// RequestIDFromContext extracts the request ID from context.
+func RequestIDFromContext(ctx context.Context) string {
+	if id, ok := ctx.Value(requestIDKey).(string); ok {
+		return id
+	}
+	return ""
+}
+
+// RequestID returns middleware that injects a request ID and logs requests.
+func RequestID(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id := generateID()
+			ctx := context.WithValue(r.Context(), requestIDKey, id)
+			r = r.WithContext(ctx)
+
+			rw := &responseWriter{ResponseWriter: w, status: 200}
+			start := time.Now()
+
+			next.ServeHTTP(rw, r)
+
+			logger.Info("request",
+				"request_id", id,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", rw.status,
+				"duration_ms", time.Since(start).Milliseconds(),
+			)
+		})
+	}
+}
+
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.status = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func generateID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
