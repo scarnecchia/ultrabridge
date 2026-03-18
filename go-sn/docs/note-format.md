@@ -234,10 +234,47 @@ The physical units are approximately 1/100 mm:
 
 ### Non-Stroke Objects (Digest, Text Box, Sticker)
 
-Objects without `others\x00\x00` at +48 are non-stroke objects. The
-format of these objects has not been fully decoded but each follows the
-same size-prefixed block pattern. Digest objects (screen clips) contain
-bounding box coordinates and a reference to the clipped bitmap.
+Objects without `others\x00\x00` at +48 are non-stroke objects. They
+share the same 216-byte fixed header structure and use the same
+coordinate transform as pen strokes.
+
+**Discriminator** — `uint32 LE` at offset **+8** within the object data:
+
+| Value | Type       | Relation to page metadata |
+|-------|------------|---------------------------|
+| 100   | Digest     | One per entry in DISABLE tag (screen clip region) |
+| 200   | Text Box   | Present when PAGETEXTBOX=1 |
+
+**Bounding box** — the bounding polygon is stored at the same location
+as stroke point data:
+
+```
+[212:216]       point_count (uint32 LE) — always 5 for a rectangle
+[216:216+5*8]   5 closed-polygon corners (rawX, rawY uint32 LE pairs)
+```
+
+The 5 points form a closed rectangle (first == last). Apply the same
+coordinate transform as strokes to get portrait pixel coordinates:
+
+```
+pixel_Y = rawX × pageH / tpPageH
+pixel_X = (tpPageW − rawY) × pageW / tpPageW
+```
+
+**Additional fields in header** (partially decoded):
+
+```
+[100:104]   pixel_X_min (matches DISABLE x value for digests)
+[104:108]   pixel_Y_min (matches DISABLE y value for digests)
+[108:116]   unknown (zeros observed)
+[116:120]   unknown non-zero value
+[120:124]   unknown non-zero value
+[124:128]   0xFFFFFFFF sentinel
+```
+
+Sticker objects were not observed in the test corpus. Sticker artwork
+appears to be encoded as dense pen stroke sequences (large stroke objects
+with thousands of closely-spaced points forming a filled shape).
 
 ---
 

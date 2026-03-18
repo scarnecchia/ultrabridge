@@ -22,34 +22,69 @@ type RenderOpts struct {
 	Background color.Color
 	// Ink color. Defaults to black.
 	Ink color.Color
+	// TextBoxColor is the outline color for text box bounding boxes.
+	// Defaults to blue. Set to nil to suppress rendering.
+	TextBoxColor color.Color
+	// DigestColor is the outline color for digest bounding boxes.
+	// Defaults to red. Set to nil to suppress rendering.
+	DigestColor color.Color
 }
 
 var defaultOpts = RenderOpts{
-	Background: color.White,
-	Ink:        color.Black,
+	Background:   color.White,
+	Ink:          color.Black,
+	TextBoxColor: color.RGBA{R: 0, G: 0, B: 200, A: 255},
+	DigestColor:  color.RGBA{R: 200, G: 0, B: 0, A: 255},
 }
 
 // Render draws strokes onto a new RGBA image of the given size.
 // If opts is nil, defaults are used.
 func Render(strokes []Stroke, w, h int, opts *RenderOpts) *image.RGBA {
+	return RenderObjects(&PageObjects{Strokes: strokes}, w, h, opts)
+}
+
+// RenderObjects draws all page objects (strokes + non-stroke bounding boxes)
+// onto a new RGBA image of the given size. If opts is nil, defaults are used.
+// Individual nil color fields fall back to their defaults.
+func RenderObjects(objs *PageObjects, w, h int, opts *RenderOpts) *image.RGBA {
 	if opts == nil {
 		opts = &defaultOpts
+	}
+	bg := opts.Background
+	if bg == nil {
+		bg = defaultOpts.Background
+	}
+	ink := opts.Ink
+	if ink == nil {
+		ink = defaultOpts.Ink
 	}
 
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 
 	// Fill background
-	bg := toRGBA(opts.Background)
+	bgRGBA := toRGBA(bg)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			img.SetRGBA(x, y, bg)
+			img.SetRGBA(x, y, bgRGBA)
 		}
 	}
 
-	ink := toRGBA(opts.Ink)
+	inkRGBA := toRGBA(ink)
+	for _, s := range objs.Strokes {
+		renderStroke(img, s, inkRGBA)
+	}
 
-	for _, s := range strokes {
-		renderStroke(img, s, ink)
+	for _, ns := range objs.NonStrokes {
+		var c color.Color
+		switch ns.Type {
+		case ObjectTypeTextBox:
+			c = opts.TextBoxColor
+		case ObjectTypeDigest:
+			c = opts.DigestColor
+		}
+		if c != nil {
+			drawRect(img, ns.Bounds, toRGBA(c))
+		}
 	}
 
 	return img
@@ -153,6 +188,30 @@ func drawThickLine(img *image.RGBA, x0, y0, x1, y1, r0, r1 float64, c color.RGBA
 				blendPixel(img, px, py, c, alpha)
 			}
 		}
+	}
+}
+
+// drawRect draws a 1-pixel-wide rectangle outline for the given Rect.
+func drawRect(img *image.RGBA, r Rect, c color.RGBA) {
+	x0 := int(math.Round(r.MinX))
+	y0 := int(math.Round(r.MinY))
+	x1 := int(math.Round(r.MaxX))
+	y1 := int(math.Round(r.MaxY))
+	b := img.Bounds()
+
+	setPixel := func(x, y int) {
+		if x >= b.Min.X && x < b.Max.X && y >= b.Min.Y && y < b.Max.Y {
+			img.SetRGBA(x, y, c)
+		}
+	}
+
+	for x := x0; x <= x1; x++ {
+		setPixel(x, y0)
+		setPixel(x, y1)
+	}
+	for y := y0; y <= y1; y++ {
+		setPixel(x0, y)
+		setPixel(x1, y)
 	}
 }
 
