@@ -17,6 +17,13 @@ func TaskToVTODO(t *taskstore.Task, dueTimeMode string) *ical.Calendar {
 	todo := ical.NewComponent("VTODO")
 	todo.Props.SetText("UID", t.TaskID)
 
+	// DTSTAMP is required by RFC 5545
+	if t.LastModified.Valid {
+		todo.Props.SetDateTime("DTSTAMP", taskstore.MsToTime(t.LastModified.Int64))
+	} else {
+		todo.Props.SetDateTime("DTSTAMP", time.Now().UTC())
+	}
+
 	if t.Title.Valid && t.Title.String != "" {
 		todo.Props.SetText("SUMMARY", t.Title.String)
 	}
