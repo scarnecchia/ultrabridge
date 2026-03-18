@@ -1,3 +1,7 @@
 .worktrees/
 /ultrabridge
 .ultrabridge.env
+# rendered output from snrender (root-level only, not go-sn/examples/)
+/*.jpg
+# test .note files live on main, not feature branches
+*.note
