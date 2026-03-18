@@ -88,7 +88,7 @@ func TestCalendarHomeSetPath(t *testing.T) {
 		t.Fatalf("CalendarHomeSetPath failed: %v", err)
 	}
 
-	expected := "/caldav/"
+	expected := "/caldav/user/calendars/"
 	if path != expected {
 		t.Errorf("CalendarHomeSetPath: got %q, want %q", path, expected)
 	}
@@ -164,7 +164,7 @@ func TestPutCalendarObjectCreateAndUpdateCTag(t *testing.T) {
 	todo.Props.SetText("STATUS", "NEEDS-ACTION")
 	cal.Children = append(cal.Children, todo)
 
-	_, err := backend.PutCalendarObject(ctx, "/caldav/tasks/test-task-1.ics", cal, nil)
+	_, err := backend.PutCalendarObject(ctx, "/caldav/user/calendars/tasks/test-task-1.ics", cal, nil)
 	if err != nil {
 		t.Fatalf("PutCalendarObject (create) failed: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestPutCalendarObjectCreateAndUpdateCTag(t *testing.T) {
 	// Since Create sets LastModified to time.Now().UnixMilli(), we need a visible time difference
 	// before Update runs to get a different millisecond value for CTag computation.
 	time.Sleep(1 * time.Millisecond)
-	_, err = backend.PutCalendarObject(ctx, "/caldav/tasks/test-task-1.ics", cal2, nil)
+	_, err = backend.PutCalendarObject(ctx, "/caldav/user/calendars/tasks/test-task-1.ics", cal2, nil)
 	if err != nil {
 		t.Fatalf("PutCalendarObject (update) failed: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestPutCalendarObjectRejectVEVENT(t *testing.T) {
 	event.Props.SetText("SUMMARY", "Test Event")
 	cal.Children = append(cal.Children, event)
 
-	_, err := backend.PutCalendarObject(ctx, "/caldav/tasks/event-1.ics", cal, nil)
+	_, err := backend.PutCalendarObject(ctx, "/caldav/user/calendars/tasks/event-1.ics", cal, nil)
 	if err == nil {
 		t.Errorf("PutCalendarObject should reject VEVENT, but succeeded")
 	}
@@ -239,13 +239,13 @@ func TestGetCalendarObjectExists(t *testing.T) {
 	}
 	store.tasks[task.TaskID] = task
 
-	obj, err := backend.GetCalendarObject(ctx, "/caldav/tasks/test-task-1.ics", nil)
+	obj, err := backend.GetCalendarObject(ctx, "/caldav/user/calendars/tasks/test-task-1.ics", nil)
 	if err != nil {
 		t.Fatalf("GetCalendarObject failed: %v", err)
 	}
 
-	if obj.Path != "/caldav/tasks/test-task-1.ics" {
-		t.Errorf("GetCalendarObject: path got %q, want %q", obj.Path, "/caldav/tasks/test-task-1.ics")
+	if obj.Path != "/caldav/user/calendars/tasks/test-task-1.ics" {
+		t.Errorf("GetCalendarObject: path got %q, want %q", obj.Path, "/caldav/user/calendars/tasks/test-task-1.ics")
 	}
 
 	if obj.Data == nil {
@@ -259,7 +259,7 @@ func TestGetCalendarObjectNotFound(t *testing.T) {
 	backend := NewBackend(store, "/caldav", "Test Collection", "preserve", nil)
 	ctx := context.Background()
 
-	_, err := backend.GetCalendarObject(ctx, "/caldav/tasks/nonexistent.ics", nil)
+	_, err := backend.GetCalendarObject(ctx, "/caldav/user/calendars/tasks/nonexistent.ics", nil)
 	if err == nil {
 		t.Errorf("GetCalendarObject should return error for missing task, but succeeded")
 	}
@@ -271,7 +271,7 @@ func TestListCalendarObjectsEmpty(t *testing.T) {
 	backend := NewBackend(store, "/caldav", "Test Collection", "preserve", nil)
 	ctx := context.Background()
 
-	objects, err := backend.ListCalendarObjects(ctx, "/caldav/tasks/", nil)
+	objects, err := backend.ListCalendarObjects(ctx, "/caldav/user/calendars/tasks/", nil)
 	if err != nil {
 		t.Fatalf("ListCalendarObjects failed: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestListCalendarObjectsWithTasks(t *testing.T) {
 		store.tasks[task.TaskID] = task
 	}
 
-	objects, err := backend.ListCalendarObjects(ctx, "/caldav/tasks/", nil)
+	objects, err := backend.ListCalendarObjects(ctx, "/caldav/user/calendars/tasks/", nil)
 	if err != nil {
 		t.Fatalf("ListCalendarObjects failed: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestDeleteCalendarObject(t *testing.T) {
 	store.tasks[task.TaskID] = task
 
 	// Delete it
-	err := backend.DeleteCalendarObject(ctx, "/caldav/tasks/test-task-1.ics")
+	err := backend.DeleteCalendarObject(ctx, "/caldav/user/calendars/tasks/test-task-1.ics")
 	if err != nil {
 		t.Fatalf("DeleteCalendarObject failed: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestPutCalendarObjectCreateNewTask(t *testing.T) {
 	todo.Props.SetText("STATUS", "NEEDS-ACTION")
 	cal.Children = append(cal.Children, todo)
 
-	obj, err := backend.PutCalendarObject(ctx, "/caldav/tasks/new-task.ics", cal, nil)
+	obj, err := backend.PutCalendarObject(ctx, "/caldav/user/calendars/tasks/new-task.ics", cal, nil)
 	if err != nil {
 		t.Fatalf("PutCalendarObject failed: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestPutCalendarObjectUpdateExistingTask(t *testing.T) {
 	cal.Children = append(cal.Children, todo)
 
 	time.Sleep(1 * time.Millisecond)
-	_, err := backend.PutCalendarObject(ctx, "/caldav/tasks/existing-task.ics", cal, nil)
+	_, err := backend.PutCalendarObject(ctx, "/caldav/user/calendars/tasks/existing-task.ics", cal, nil)
 	if err != nil {
 		t.Fatalf("PutCalendarObject failed: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestQueryCalendarObjects(t *testing.T) {
 	query := &gocaldav.CalendarQuery{
 		CompFilter: gocaldav.CompFilter{},
 	}
-	objects, err := backend.QueryCalendarObjects(ctx, "/caldav/tasks/", query)
+	objects, err := backend.QueryCalendarObjects(ctx, "/caldav/user/calendars/tasks/", query)
 	if err != nil {
 		t.Fatalf("QueryCalendarObjects failed: %v", err)
 	}

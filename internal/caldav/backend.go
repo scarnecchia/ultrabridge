@@ -50,7 +50,7 @@ func (b *Backend) CurrentUserPrincipal(ctx context.Context) (string, error) {
 }
 
 func (b *Backend) CalendarHomeSetPath(ctx context.Context) (string, error) {
-	return b.prefix + "/", nil
+	return b.prefix + "/user/calendars/", nil
 }
 
 func (b *Backend) CreateCalendar(ctx context.Context, calendar *gocaldav.Calendar) error {
@@ -207,7 +207,7 @@ func (b *Backend) DeleteCalendarObject(ctx context.Context, urlPath string) erro
 
 func (b *Backend) collection() gocaldav.Calendar {
 	return gocaldav.Calendar{
-		Path:                  b.prefix + "/tasks/",
+		Path:                  b.prefix + "/user/calendars/tasks/",
 		Name:                  b.collectionName,
 		Description:           "Supernote tasks via UltraBridge",
 		SupportedComponentSet: []string{"VTODO"},
@@ -217,7 +217,7 @@ func (b *Backend) collection() gocaldav.Calendar {
 func (b *Backend) taskToCalendarObject(t *taskstore.Task) *gocaldav.CalendarObject {
 	cal := TaskToVTODO(t, b.dueTimeMode)
 	return &gocaldav.CalendarObject{
-		Path:    b.prefix + "/tasks/" + t.TaskID + ".ics",
+		Path:    b.prefix + "/user/calendars/tasks/" + t.TaskID + ".ics",
 		ModTime: taskstore.MsToTime(t.LastModified.Int64),
 		ETag:    taskstore.ComputeETag(t),
 		Data:    cal,
