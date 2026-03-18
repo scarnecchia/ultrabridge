@@ -71,6 +71,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger
 	h.mux.HandleFunc("GET /", h.handleIndex)
 	h.mux.HandleFunc("POST /tasks", h.handleCreateTask)
 	h.mux.HandleFunc("POST /tasks/{id}/complete", h.handleCompleteTask)
+	h.mux.HandleFunc("POST /tasks/bulk", h.handleBulkAction)
 	h.registerLogStreamHandler(broadcaster)
 
 	return h
@@ -193,6 +194,66 @@ func (h *Handler) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Notify device of sync
+	if h.notifier != nil {
+		if err := h.notifier.Notify(ctx); err != nil {
+			h.logger.Warn("failed to notify", "error", err)
+		}
+	}
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// handleBulkAction completes or deletes multiple tasks at once
+func (h *Handler) handleBulkAction(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "failed to parse form", http.StatusBadRequest)
+		return
+	}
+
+	action := r.FormValue("action")
+	taskIDs := r.Form["task_ids"]
+
+	if len(taskIDs) == 0 {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	var failed int
+	for _, taskID := range taskIDs {
+		switch action {
+		case "complete":
+			task, err := h.store.Get(ctx, taskID)
+			if err != nil {
+				h.logger.Error("bulk complete: get failed", "task_id", taskID, "error", err)
+				failed++
+				continue
+			}
+			task.Status = taskstore.SqlStr("completed")
+			if !task.CompletedTime.Valid {
+				task.CompletedTime = sql.NullInt64{Int64: time.Now().UnixMilli(), Valid: true}
+			}
+			if err := h.store.Update(ctx, task); err != nil {
+				h.logger.Error("bulk complete: update failed", "task_id", taskID, "error", err)
+				failed++
+			}
+		case "delete":
+			if err := h.store.Delete(ctx, taskID); err != nil {
+				h.logger.Error("bulk delete: failed", "task_id", taskID, "error", err)
+				failed++
+			}
+		default:
+			http.Error(w, "unknown action", http.StatusBadRequest)
+			return
+		}
+	}
+
+	if failed > 0 {
+		h.logger.Warn("bulk action partial failure", "action", action, "total", len(taskIDs), "failed", failed)
+	}
+
 	if h.notifier != nil {
 		if err := h.notifier.Notify(ctx); err != nil {
 			h.logger.Warn("failed to notify", "error", err)

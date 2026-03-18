@@ -242,10 +242,17 @@
                     </label>
                 </div>
                 {{if .tasks}}
+                <form id="bulk-form" method="POST" action="/tasks/bulk">
+                <div id="bulk-actions" style="display: none; margin-bottom: 15px; padding: 10px; background: #f0f4ff; border-radius: 4px;">
+                    <span id="selected-count" style="font-size: 14px; color: #333; margin-right: 15px;">0 selected</span>
+                    <button type="submit" name="action" value="complete" class="btn-small" style="margin-right: 8px;">Complete Selected</button>
+                    <button type="submit" name="action" value="delete" class="btn-small" style="background: #dc3545;" onclick="return confirm('Delete selected tasks? This cannot be undone.')">Delete Selected</button>
+                </div>
                 <div class="table-container">
                     <table id="task-table">
                         <thead>
                             <tr>
+                                <th style="width: 30px;"><input type="checkbox" id="select-all" onchange="toggleSelectAll()"></th>
                                 <th>Title</th>
                                 <th>Status</th>
                                 <th>Created</th>
@@ -256,6 +263,7 @@
                         <tbody>
                             {{range .tasks}}
                             <tr data-status="{{.Status.String}}">
+                                <td><input type="checkbox" name="task_ids" value="{{.TaskID}}" class="task-checkbox" onchange="updateBulkActions()"></td>
                                 <td class="task-title">{{.Title.String}}</td>
                                 <td>
                                     <span class="task-status {{if eq .Status.String "completed"}}status-completed{{else}}status-needsaction{{end}}">
@@ -272,9 +280,7 @@
                                 </td>
                                 <td class="task-actions">
                                     {{if ne .Status.String "completed"}}
-                                    <form method="POST" action="/tasks/{{.TaskID}}/complete" style="display: inline;">
-                                        <button type="submit" class="btn-small">Mark Complete</button>
-                                    </form>
+                                    <button type="submit" formaction="/tasks/{{.TaskID}}/complete" class="btn-small">Complete</button>
                                     {{end}}
                                 </td>
                             </tr>
@@ -282,6 +288,7 @@
                         </tbody>
                     </table>
                 </div>
+                </form>
                 {{else}}
                 <div class="empty-state">
                     <p>No tasks yet.</p>
@@ -320,7 +327,35 @@
             const rows = document.querySelectorAll('#task-table tbody tr[data-status="completed"]');
             rows.forEach(function(row) {
                 row.style.display = show ? '' : 'none';
+                if (!show) {
+                    var cb = row.querySelector('.task-checkbox');
+                    if (cb) cb.checked = false;
+                }
             });
+            updateBulkActions();
+        }
+
+        function toggleSelectAll() {
+            const checked = document.getElementById('select-all').checked;
+            document.querySelectorAll('#task-table tbody tr').forEach(function(row) {
+                if (row.style.display !== 'none') {
+                    var cb = row.querySelector('.task-checkbox');
+                    if (cb) cb.checked = checked;
+                }
+            });
+            updateBulkActions();
+        }
+
+        function updateBulkActions() {
+            const checked = document.querySelectorAll('.task-checkbox:checked');
+            const bar = document.getElementById('bulk-actions');
+            const count = document.getElementById('selected-count');
+            if (checked.length > 0) {
+                bar.style.display = 'block';
+                count.textContent = checked.length + ' selected';
+            } else {
+                bar.style.display = 'none';
+            }
         }
 
         function switchTab(tabName) {
