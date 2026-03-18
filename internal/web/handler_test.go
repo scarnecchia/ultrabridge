@@ -546,3 +546,98 @@ func TestPostCreateTaskWithWhitespace(t *testing.T) {
 		}
 	}
 }
+
+func TestBulkCompleteMultipleTasks(t *testing.T) {
+	store := newMockTaskStore()
+	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", Title: taskstore.SqlStr("Task 1"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
+	store.tasks["t2"] = &taskstore.Task{TaskID: "t2", Title: taskstore.SqlStr("Task 2"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
+	store.tasks["t3"] = &taskstore.Task{TaskID: "t3", Title: taskstore.SqlStr("Task 3"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
+	handler := NewHandler(store, nil, slog.Default(), logging.NewLogBroadcaster())
+
+	form := url.Values{}
+	form.Set("action", "complete")
+	form.Add("task_ids", "t1")
+	form.Add("task_ids", "t3")
+	req := httptest.NewRequest("POST", "/tasks/bulk", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", w.Code)
+	}
+	if store.tasks["t1"].Status.String != "completed" {
+		t.Errorf("t1 should be completed, got %q", store.tasks["t1"].Status.String)
+	}
+	if store.tasks["t2"].Status.String != "needsAction" {
+		t.Errorf("t2 should be unchanged, got %q", store.tasks["t2"].Status.String)
+	}
+	if store.tasks["t3"].Status.String != "completed" {
+		t.Errorf("t3 should be completed, got %q", store.tasks["t3"].Status.String)
+	}
+}
+
+func TestBulkDeleteMultipleTasks(t *testing.T) {
+	store := newMockTaskStore()
+	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", Title: taskstore.SqlStr("Task 1"), IsDeleted: "N"}
+	store.tasks["t2"] = &taskstore.Task{TaskID: "t2", Title: taskstore.SqlStr("Task 2"), IsDeleted: "N"}
+	store.tasks["t3"] = &taskstore.Task{TaskID: "t3", Title: taskstore.SqlStr("Task 3"), IsDeleted: "N"}
+	handler := NewHandler(store, nil, slog.Default(), logging.NewLogBroadcaster())
+
+	form := url.Values{}
+	form.Set("action", "delete")
+	form.Add("task_ids", "t1")
+	form.Add("task_ids", "t2")
+	req := httptest.NewRequest("POST", "/tasks/bulk", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", w.Code)
+	}
+	if store.tasks["t1"].IsDeleted != "Y" {
+		t.Errorf("t1 should be deleted")
+	}
+	if store.tasks["t2"].IsDeleted != "Y" {
+		t.Errorf("t2 should be deleted")
+	}
+	if store.tasks["t3"].IsDeleted != "N" {
+		t.Errorf("t3 should be unchanged")
+	}
+}
+
+func TestBulkActionNoSelection(t *testing.T) {
+	store := newMockTaskStore()
+	handler := NewHandler(store, nil, slog.Default(), logging.NewLogBroadcaster())
+
+	form := url.Values{}
+	form.Set("action", "complete")
+	// no task_ids
+	req := httptest.NewRequest("POST", "/tasks/bulk", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect, got %d", w.Code)
+	}
+}
+
+func TestBulkActionUnknown(t *testing.T) {
+	store := newMockTaskStore()
+	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", IsDeleted: "N"}
+	handler := NewHandler(store, nil, slog.Default(), logging.NewLogBroadcaster())
+
+	form := url.Values{}
+	form.Set("action", "explode")
+	form.Add("task_ids", "t1")
+	req := httptest.NewRequest("POST", "/tasks/bulk", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown action, got %d", w.Code)
+	}
+}
