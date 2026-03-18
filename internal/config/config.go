@@ -40,6 +40,9 @@ type Config struct {
 	// Socket.io
 	SocketIOURL string
 
+	// User
+	UserID int64 // Explicit user ID override (0 = auto-discover)
+
 	// Paths
 	DBEnvPath string
 }
@@ -63,6 +66,7 @@ func Load() (*Config, error) {
 		Username:             os.Getenv("UB_USERNAME"),
 		PasswordHash:         os.Getenv("UB_PASSWORD_HASH"),
 		DBEnvPath:            envOrDefault("UB_SUPERNOTE_DBENV_PATH", "/run/secrets/dbenv"),
+		UserID:               int64(envIntOrDefault("UB_USER_ID", 0)),
 	}
 
 	if err := cfg.loadDBEnv(); err != nil {

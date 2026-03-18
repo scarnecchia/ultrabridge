@@ -58,12 +58,16 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	userID, err := db.DiscoverUserID(ctx, database)
+	userID, err := db.ResolveUserID(ctx, database, cfg.UserID)
 	if err != nil {
-		logger.Error("user discovery failed", "error", err)
+		logger.Error("user resolution failed", "error", err)
 		os.Exit(1)
 	}
-	logger.Info("discovered user_id", "user_id", userID)
+	if cfg.UserID != 0 {
+		logger.Info("using configured user_id", "user_id", userID)
+	} else {
+		logger.Info("discovered user_id", "user_id", userID)
+	}
 
 	store := taskstore.New(database, userID)
 

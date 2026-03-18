@@ -91,6 +91,7 @@ All configuration is via environment variables in `.ultrabridge.env`:
 | `UB_LOG_FILE_MAX_AGE_DAYS` | `30` | Keep logs for N days |
 | `UB_LOG_FILE_MAX_BACKUPS` | `5` | Keep N backup files |
 | `UB_LOG_SYSLOG_ADDR` | (empty) | Optional syslog address (e.g., `udp://graylog:1514`) |
+| `UB_USER_ID` | (auto-discover) | Explicit Supernote user ID — required if multiple users exist in the database |
 | `UB_DB_HOST` | `mariadb` | Database hostname (auto-detected in Docker) |
 | `UB_DB_PORT` | `3306` | Database port |
 | `UB_SUPERNOTE_DBENV_PATH` | `/run/secrets/dbenv` | Path to `.dbenv` file |
@@ -172,7 +173,7 @@ docker run --rm ultrabridge:dev hash-password "yourpassword"
 
 1. **Tier 3 fields are dropped:** Only title, description, priority, due date, and status are synchronized. Recurrence, reminders, and other advanced fields are not mapped.
 
-2. **Single-user only:** UltraBridge discovers the single user from `u_user` and does not support multiple users. This matches the Supernote Private Cloud design.
+2. **Single-user by default:** UltraBridge auto-discovers the user from `u_user`. If multiple users exist, it will refuse to start — set `UB_USER_ID` to the desired user's ID to resolve this.
 
 3. **No TLS termination:** The service listens on plain HTTP. Use a reverse proxy (nginx, Caddy) for HTTPS in production.
 
@@ -189,9 +190,10 @@ cat /mnt/supernote/.dbenv
 docker ps | grep mariadb
 ```
 
-### "user discovery failed"
+### "user resolution failed"
 
-No users exist in the Supernote Private Cloud database. Create a user via the Supernote web UI first.
+- **"no users found"** — No users exist in the database yet. Sync your Supernote device first.
+- **"multiple users found (N) — set UB_USER_ID"** — More than one user in the database. Find the right ID with `mysql -e "SELECT user_id, user_name FROM u_user"` on the MariaDB container, then set `UB_USER_ID` in `.ultrabridge.env`.
 
 ### CalDAV client shows empty collection
 
