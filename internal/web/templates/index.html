@@ -203,6 +203,17 @@
             font-size: 14px;
             background: white;
         }
+        .breadcrumb { margin-bottom: 1rem; font-size: 0.9rem; }
+        .breadcrumb a { color: #0066cc; text-decoration: none; }
+        .breadcrumb .sep { margin: 0 0.3rem; color: #999; }
+        .badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; font-weight: 600; }
+        .badge-unprocessed { background: #f0f0f0; color: #666; }
+        .badge-pending     { background: #fff3cd; color: #856404; }
+        .badge-progress    { background: #cfe2ff; color: #084298; }
+        .badge-done        { background: #d1e7dd; color: #0f5132; }
+        .badge-failed      { background: #f8d7da; color: #842029; }
+        .badge-skipped     { background: #e2e3e5; color: #41464b; }
+        .badge-unsupported { background: #f0f0f0; color: #999; font-style: italic; }
     </style>
 </head>
 <body>
@@ -212,6 +223,7 @@
         <div class="tabs">
             <button class="tab-button active" onclick="switchTab('tasks')">Tasks</button>
             <button class="tab-button" onclick="switchTab('logs')">Logs</button>
+            <button class="tab-button" onclick="switchTab('files')">Files</button>
         </div>
 
         <!-- Tasks Tab -->
@@ -313,6 +325,52 @@
                 </div>
                 <div id="log-output"></div>
             </div>
+        </div>
+
+        <!-- Files Tab -->
+        <div id="files" class="tab-content">
+          {{if .filesError}}
+            <p style="color:#842029; padding:1rem;">{{.filesError}}</p>
+          {{else if .files}}
+            <div class="breadcrumb">
+              {{range .breadcrumbs}}
+                <a href="/files?path={{.RelPath}}">{{.Label}}</a><span class="sep">/</span>
+              {{end}}
+            </div>
+            <table class="task-table">
+              <thead>
+                <tr><th>Name</th><th>Type</th><th>Size</th><th>Modified</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                {{range .files}}
+                <tr>
+                  <td>
+                    {{if eq (fileTypeStr .FileType) "note"}}📝{{else if eq (fileTypeStr .FileType) "pdf"}}📄{{else if eq (fileTypeStr .FileType) "epub"}}📚{{else}}📎{{end}}
+                    {{if .IsDir}}<a href="/files?path={{.RelPath}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}
+                  </td>
+                  <td>{{.FileType}}</td>
+                  <td>{{.SizeBytes}}</td>
+                  <td>{{.MTime.Format "2006-01-02"}}</td>
+                  <td>
+                    {{if eq (fileTypeStr .FileType) "note"}}
+                      {{if eq .JobStatus ""}}<span class="badge badge-unprocessed">unprocessed</span>
+                      {{else if eq .JobStatus "pending"}}<span class="badge badge-pending">queued</span>
+                      {{else if eq .JobStatus "in_progress"}}<span class="badge badge-progress">processing</span>
+                      {{else if eq .JobStatus "done"}}<span class="badge badge-done">done</span>
+                      {{else if eq .JobStatus "failed"}}<span class="badge badge-failed">failed</span>
+                      {{else if eq .JobStatus "skipped"}}<span class="badge badge-skipped">skipped</span>
+                      {{end}}
+                    {{else}}
+                      <span class="badge badge-unsupported">unsupported</span>
+                    {{end}}
+                  </td>
+                </tr>
+                {{end}}
+              </tbody>
+            </table>
+          {{else}}
+            <p style="padding:1rem; color:#666;">No files found.</p>
+          {{end}}
         </div>
     </div>
 
