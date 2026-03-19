@@ -908,3 +908,21 @@ func TestHandleFilesStatus(t *testing.T) {
 		t.Errorf("expected Running:true in JSON body: %s", body)
 	}
 }
+
+// AC7.2: Requeue resets a failed or done job to pending
+func TestHandleFilesRequeue(t *testing.T) {
+	proc := newMockProcessor()
+	// Pre-seed with a failed job
+	proc.jobs["/test.note"] = processor.StatusFailed
+	h := makeFilesHandler(t, proc)
+
+	// Call /files/queue to requeue
+	w := postFiles(h, "/files/queue", "/test.note", "")
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want 303", w.Code)
+	}
+	if proc.jobs["/test.note"] != processor.StatusPending {
+		t.Errorf("job status = %q, want pending", proc.jobs["/test.note"])
+	}
+}
