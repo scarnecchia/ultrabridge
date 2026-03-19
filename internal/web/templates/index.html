@@ -352,7 +352,9 @@
                   <td>{{.SizeBytes}}</td>
                   <td>{{.MTime.Format "2006-01-02"}}</td>
                   <td>
-                    {{if eq (fileTypeStr .FileType) "note"}}
+                    {{if .IsDir}}
+                      {{/* directories have no processing status */}}
+                    {{else if eq (fileTypeStr .FileType) "note"}}
                       {{if eq .JobStatus ""}}<span class="badge badge-unprocessed">unprocessed</span>
                       {{else if eq .JobStatus "pending"}}<span class="badge badge-pending">queued</span>
                       {{else if eq .JobStatus "in_progress"}}<span class="badge badge-progress">processing</span>

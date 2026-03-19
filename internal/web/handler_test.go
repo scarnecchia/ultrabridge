@@ -727,6 +727,9 @@ func TestHandleFiles_TopLevel(t *testing.T) {
 	if !strings.Contains(body, "test.note") {
 		t.Error("expected test.note in response")
 	}
+	if !strings.Contains(body, "unprocessed") {
+		t.Error("expected unprocessed badge for .note file with empty JobStatus")
+	}
 	if !strings.Contains(body, "unsupported") {
 		t.Error("expected unsupported badge for pdf")
 	}

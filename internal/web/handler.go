@@ -308,9 +308,11 @@ func safeRelPath(relPath string) (string, bool) {
 func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	if h.noteStore == nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
+		if err := h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
 			"filesError": "UB_NOTES_PATH is not configured",
-		})
+		}); err != nil {
+			h.logger.Error("failed to render template", "error", err)
+		}
 		return
 	}
 
@@ -332,9 +334,11 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
+	if err := h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
 		"files":       files,
 		"relPath":     relPath,
 		"breadcrumbs": buildBreadcrumbs(relPath),
-	})
+	}); err != nil {
+		h.logger.Error("failed to render template", "error", err)
+	}
 }
