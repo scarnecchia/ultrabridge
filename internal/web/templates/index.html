@@ -224,6 +224,7 @@
             <button class="tab-button active" onclick="switchTab('tasks')">Tasks</button>
             <button class="tab-button" onclick="switchTab('logs')">Logs</button>
             <button class="tab-button" onclick="switchTab('files')">Files</button>
+            <button class="tab-button" onclick="switchTab('search')">Search</button>
         </div>
 
         <!-- Tasks Tab -->
@@ -372,6 +373,32 @@
             </table>
           {{else}}
             <p style="padding:1rem; color:#666;">No files found.</p>
+          {{end}}
+        </div>
+
+        <!-- Search Tab -->
+        <div id="search" class="tab-content">
+          <form method="GET" action="/search" style="margin-bottom:1rem;">
+            <input type="text" name="q" value="{{.searchQuery}}"
+                   placeholder="Search notes..."
+                   style="width:60%; padding:0.4rem; border:1px solid #ccc; border-radius:3px;">
+            <button type="submit" style="padding:0.4rem 0.8rem; margin-left:0.5rem;">Search</button>
+          </form>
+          {{if .searchResults}}
+            <table class="task-table">
+              <thead><tr><th>File</th><th>Page</th><th>Match</th></tr></thead>
+              <tbody>
+                {{range .searchResults}}
+                <tr>
+                  <td><a href="/files?path={{.Path}}">{{.Path}}</a></td>
+                  <td>{{.Page}}</td>
+                  <td>{{.Snippet}}</td>
+                </tr>
+                {{end}}
+              </tbody>
+            </table>
+          {{else if .searchQuery}}
+            <p style="padding:1rem; color:#666;">No results for "{{.searchQuery}}".</p>
           {{end}}
         </div>
     </div>

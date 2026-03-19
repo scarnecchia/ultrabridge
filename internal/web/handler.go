@@ -15,6 +15,7 @@ import (
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/notestore"
+	"github.com/sysop/ultrabridge/internal/search"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
 
@@ -25,6 +26,7 @@ type Handler struct {
 	store       ubcaldav.TaskStore
 	notifier    ubcaldav.SyncNotifier
 	noteStore   notestore.NoteStore
+	searchIndex search.SearchIndex
 	tmpl        *template.Template
 	mux         *http.ServeMux
 	logger      *slog.Logger
@@ -50,11 +52,12 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
 		store:       store,
 		notifier:    notifier,
 		noteStore:   noteStore,
+		searchIndex: searchIndex,
 		logger:      logger,
 		mux:         http.NewServeMux(),
 		broadcaster: broadcaster,
@@ -78,6 +81,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /tasks/{id}/complete", h.handleCompleteTask)
 	h.mux.HandleFunc("POST /tasks/bulk", h.handleBulkAction)
 	h.mux.HandleFunc("GET /files", h.handleFiles)
+	h.mux.HandleFunc("GET /search", h.handleSearch)
 	h.registerLogStreamHandler(broadcaster)
 
 	return h
@@ -338,6 +342,27 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		"files":       files,
 		"relPath":     relPath,
 		"breadcrumbs": buildBreadcrumbs(relPath),
+	}); err != nil {
+		h.logger.Error("failed to render template", "error", err)
+	}
+}
+
+func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	var results []search.SearchResult
+	if h.searchIndex != nil && query != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		var err error
+		results, err = h.searchIndex.Search(ctx, search.SearchQuery{Text: query})
+		if err != nil {
+			h.logger.Error("handleSearch", "err", err)
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
+		"searchQuery":   query,
+		"searchResults": results,
 	}); err != nil {
 		h.logger.Error("failed to render template", "error", err)
 	}
