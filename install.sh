@@ -52,7 +52,7 @@ prompt_password() {
 
 # --- pre-flight checks ---
 
-info "UltraBridge CalDAV Installer"
+info "UltraBridge Installer"
 echo
 
 # Docker
@@ -110,6 +110,40 @@ prompt UB_PORT "Port to expose on host" "$DEFAULT_PORT"
 prompt UB_COLLECTION_NAME "CalDAV collection name" "Supernote Tasks"
 
 echo
+info "Notes Pipeline (optional)"
+echo
+echo "  UltraBridge can scan your .note files, index handwritten text, and"
+echo "  optionally run vision-API OCR to extract content from unrecognised pages."
+echo "  Leave UB_NOTES_PATH blank to skip the pipeline entirely."
+echo
+
+prompt UB_NOTES_PATH "Path to your .note files (leave blank to skip)" ""
+
+if [[ -n "$UB_NOTES_PATH" ]]; then
+    prompt UB_BACKUP_PATH "Backup directory (copy originals here before OCR writes; leave blank to skip)" ""
+
+    printf 'Enable OCR via vision API? [y/N]: '
+    read -r yn
+    if [[ "$yn" =~ ^[Yy] ]]; then
+        UB_OCR_ENABLED=true
+        prompt UB_OCR_API_URL "API base URL" "https://openrouter.ai/api"
+        prompt UB_OCR_API_KEY "API key" ""
+        prompt UB_OCR_MODEL "Model name" "anthropic/claude-opus-4-6"
+    else
+        UB_OCR_ENABLED=false
+        UB_OCR_API_URL=""
+        UB_OCR_API_KEY=""
+        UB_OCR_MODEL=""
+    fi
+else
+    UB_BACKUP_PATH=""
+    UB_OCR_ENABLED=false
+    UB_OCR_API_URL=""
+    UB_OCR_API_KEY=""
+    UB_OCR_MODEL=""
+fi
+
+echo
 
 # --- build image first (needed for password hashing) ---
 
@@ -158,6 +192,17 @@ UB_WEB_ENABLED=true
 # Logging
 UB_LOG_LEVEL=info
 UB_LOG_FORMAT=json
+
+# Notes pipeline
+UB_DB_PATH=/data/ultrabridge.db
+$(if [[ -n "$UB_NOTES_PATH" ]]; then echo "UB_NOTES_PATH=$UB_NOTES_PATH"; fi)
+$(if [[ -n "$UB_BACKUP_PATH" ]]; then echo "UB_BACKUP_PATH=/backup"; fi)
+$(if [[ "$UB_OCR_ENABLED" == "true" ]]; then
+echo "UB_OCR_ENABLED=true"
+echo "UB_OCR_API_URL=$UB_OCR_API_URL"
+echo "UB_OCR_API_KEY=$UB_OCR_API_KEY"
+echo "UB_OCR_MODEL=$UB_OCR_MODEL"
+fi)
 EOF
 
 chmod 600 "$SUPERNOTE_DIR/.ultrabridge.env"
@@ -178,6 +223,22 @@ if [[ -f "$SUPERNOTE_DIR/docker-compose.override.yml" ]]; then
     fi
 fi
 
+# Build volumes list for docker-compose override
+VOLUMES_BLOCK=""
+# Always mount a data dir for the SQLite DB
+mkdir -p "$SUPERNOTE_DIR/ultrabridge-data"
+VOLUMES_BLOCK="    volumes:
+      - ./ultrabridge-data:/data"
+if [[ -n "$UB_NOTES_PATH" ]]; then
+    VOLUMES_BLOCK="$VOLUMES_BLOCK
+      - $UB_NOTES_PATH:$UB_NOTES_PATH"
+fi
+if [[ -n "$UB_BACKUP_PATH" ]]; then
+    mkdir -p "$UB_BACKUP_PATH"
+    VOLUMES_BLOCK="$VOLUMES_BLOCK
+      - $UB_BACKUP_PATH:/backup"
+fi
+
 cat > "$SUPERNOTE_DIR/docker-compose.override.yml" <<EOF
 services:
   ultrabridge:
@@ -191,6 +252,7 @@ services:
     env_file:
       - .ultrabridge.env
       - .dbenv
+$VOLUMES_BLOCK
     depends_on:
       - mariadb
     restart: unless-stopped
@@ -239,10 +301,12 @@ fi
 echo
 info "UltraBridge is running!"
 echo
-echo "  Web UI:          http://localhost:${UB_PORT}/"
-echo "  CalDAV endpoint: http://localhost:${UB_PORT}/caldav/tasks/"
+echo "  Web UI:           http://localhost:${UB_PORT}/"
+echo "  Files tab:        http://localhost:${UB_PORT}/files"
+echo "  Search tab:       http://localhost:${UB_PORT}/search"
+echo "  CalDAV endpoint:  http://localhost:${UB_PORT}/caldav/tasks/"
 echo "  CalDAV discovery: http://localhost:${UB_PORT}/.well-known/caldav"
-echo "  Health check:    http://localhost:${UB_PORT}/health"
+echo "  Health check:     http://localhost:${UB_PORT}/health"
 echo
 echo "  Username: $UB_USERNAME"
 echo "  Password: (the one you just entered)"
