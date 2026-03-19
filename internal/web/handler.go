@@ -4,15 +4,21 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/logging"
+	"github.com/sysop/ultrabridge/internal/notestore"
+	"github.com/sysop/ultrabridge/internal/processor"
+	"github.com/sysop/ultrabridge/internal/search"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
 
@@ -22,6 +28,9 @@ var templateFS embed.FS
 type Handler struct {
 	store       ubcaldav.TaskStore
 	notifier    ubcaldav.SyncNotifier
+	noteStore   notestore.NoteStore
+	searchIndex search.SearchIndex
+	proc        processor.Processor
 	tmpl        *template.Template
 	mux         *http.ServeMux
 	logger      *slog.Logger
@@ -47,10 +56,13 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
 		store:       store,
 		notifier:    notifier,
+		noteStore:   noteStore,
+		searchIndex: searchIndex,
+		proc:        proc,
 		logger:      logger,
 		mux:         http.NewServeMux(),
 		broadcaster: broadcaster,
@@ -58,8 +70,9 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger
 
 	// Parse the embedded templates with custom function map
 	funcMap := template.FuncMap{
-		"formatDueTime":  formatDueTime,
-		"formatCreated":  formatCreated,
+		"formatDueTime": formatDueTime,
+		"formatCreated": formatCreated,
+		"fileTypeStr":   func(ft notestore.FileType) string { return string(ft) },
 	}
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
@@ -72,6 +85,16 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger
 	h.mux.HandleFunc("POST /tasks", h.handleCreateTask)
 	h.mux.HandleFunc("POST /tasks/{id}/complete", h.handleCompleteTask)
 	h.mux.HandleFunc("POST /tasks/bulk", h.handleBulkAction)
+	h.mux.HandleFunc("GET /files", h.handleFiles)
+	h.mux.HandleFunc("GET /search", h.handleSearch)
+	h.mux.HandleFunc("POST /files/queue", h.handleFilesQueue)
+	h.mux.HandleFunc("POST /files/skip", h.handleFilesSkip)
+	h.mux.HandleFunc("POST /files/unskip", h.handleFilesUnskip)
+	h.mux.HandleFunc("POST /files/force", h.handleFilesForce)
+	h.mux.HandleFunc("GET /files/status", h.handleFilesStatus)
+	h.mux.HandleFunc("GET /files/history", h.handleFilesHistory)
+	h.mux.HandleFunc("POST /processor/start", h.handleProcessorStart)
+	h.mux.HandleFunc("POST /processor/stop", h.handleProcessorStop)
 	h.registerLogStreamHandler(broadcaster)
 
 	return h
@@ -261,4 +284,226 @@ func (h *Handler) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// breadcrumb is a navigation segment for the Files tab.
+type breadcrumb struct {
+	Label   string
+	RelPath string
+}
+
+// buildBreadcrumbs returns the crumb chain for a relative path.
+// e.g. "Note/Folder" → [{Home,""},{Note,"Note"},{Folder,"Note/Folder"}]
+func buildBreadcrumbs(relPath string) []breadcrumb {
+	crumbs := []breadcrumb{{Label: "Home", RelPath: ""}}
+	if relPath == "" {
+		return crumbs
+	}
+	parts := strings.Split(relPath, "/")
+	for i, p := range parts {
+		crumbs = append(crumbs, breadcrumb{
+			Label:   p,
+			RelPath: strings.Join(parts[:i+1], "/"),
+		})
+	}
+	return crumbs
+}
+
+// safeRelPath validates and cleans a user-supplied relative path.
+// Returns the cleaned path and true on success, or "", false on traversal attempt.
+func safeRelPath(relPath string) (string, bool) {
+	if relPath == "" {
+		return "", true
+	}
+	cleaned := filepath.Clean(relPath)
+	if filepath.IsAbs(cleaned) || strings.HasPrefix(cleaned, "..") {
+		return "", false
+	}
+	return cleaned, true
+}
+
+func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
+	if h.noteStore == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
+			"filesError": "UB_NOTES_PATH is not configured",
+		}); err != nil {
+			h.logger.Error("failed to render template", "error", err)
+		}
+		return
+	}
+
+	rawPath := r.URL.Query().Get("path")
+	relPath, ok := safeRelPath(rawPath)
+	if !ok {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	files, err := h.noteStore.List(ctx, relPath)
+	if err != nil {
+		h.logger.Error("handleFiles list", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
+		"files":       files,
+		"relPath":     relPath,
+		"breadcrumbs": buildBreadcrumbs(relPath),
+	}); err != nil {
+		h.logger.Error("failed to render template", "error", err)
+	}
+}
+
+func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	var results []search.SearchResult
+	if h.searchIndex != nil && query != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		var err error
+		results, err = h.searchIndex.Search(ctx, search.SearchQuery{Text: query})
+		if err != nil {
+			h.logger.Error("handleSearch", "err", err)
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
+		"searchQuery":   query,
+		"searchResults": results,
+	}); err != nil {
+		h.logger.Error("failed to render template", "error", err)
+	}
+}
+
+func (h *Handler) handleFilesQueue(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.logger.Error("failed to parse form", "error", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	path := r.FormValue("path")
+	back := r.FormValue("back")
+	if path != "" && h.proc != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := h.proc.Enqueue(ctx, path); err != nil {
+			h.logger.Error("failed to enqueue file", "path", path, "error", err)
+		}
+	}
+	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesSkip(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.logger.Error("failed to parse form", "error", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	path := r.FormValue("path")
+	back := r.FormValue("back")
+	if path != "" && h.proc != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := h.proc.Skip(ctx, path, processor.SkipReasonManual); err != nil {
+			h.logger.Error("failed to skip file", "path", path, "error", err)
+		}
+	}
+	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesUnskip(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.logger.Error("failed to parse form", "error", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	path := r.FormValue("path")
+	back := r.FormValue("back")
+	if path != "" && h.proc != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := h.proc.Unskip(ctx, path); err != nil {
+			h.logger.Error("failed to unskip file", "path", path, "error", err)
+		}
+	}
+	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesForce(w http.ResponseWriter, r *http.Request) {
+	// Force-include: unskip then re-enqueue regardless of previous skip reason.
+	if err := r.ParseForm(); err != nil {
+		h.logger.Error("failed to parse form", "error", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	path := r.FormValue("path")
+	back := r.FormValue("back")
+	if path != "" && h.proc != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := h.proc.Unskip(ctx, path); err != nil {
+			h.logger.Error("failed to unskip file during force", "path", path, "error", err)
+		}
+		if err := h.proc.Enqueue(ctx, path); err != nil {
+			h.logger.Error("failed to enqueue file during force", "path", path, "error", err)
+		}
+	}
+	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesStatus(w http.ResponseWriter, r *http.Request) {
+	var st processor.ProcessorStatus
+	if h.proc != nil {
+		st = h.proc.Status()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(st)
+}
+
+// handleFilesHistory returns JSON job history for a single file (AC7.6).
+// GET /files/history?path=<absolute_path>
+func (h *Handler) handleFilesHistory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	path := r.URL.Query().Get("path")
+	if path == "" || h.proc == nil {
+		w.Write([]byte("null"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	job, err := h.proc.GetJob(ctx, path)
+	if err != nil {
+		h.logger.Error("failed to get job history", "path", path, "error", err)
+		w.Write([]byte("null"))
+		return
+	}
+	if job == nil {
+		w.Write([]byte("null"))
+		return
+	}
+	json.NewEncoder(w).Encode(job)
+}
+
+func (h *Handler) handleProcessorStart(w http.ResponseWriter, r *http.Request) {
+	if h.proc != nil {
+		if err := h.proc.Start(r.Context()); err != nil {
+			h.logger.Error("failed to start processor", "error", err)
+		}
+	}
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func (h *Handler) handleProcessorStop(w http.ResponseWriter, r *http.Request) {
+	if h.proc != nil {
+		if err := h.proc.Stop(); err != nil {
+			h.logger.Error("failed to stop processor", "error", err)
+		}
+	}
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }

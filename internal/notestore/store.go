@@ -1,0 +1,169 @@
+package notestore
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// ErrNotFound is returned when a requested file is not in the notes table.
+var ErrNotFound = errors.New("note file not found")
+
+// IsNotFound reports whether err is ErrNotFound.
+func IsNotFound(err error) bool { return errors.Is(err, ErrNotFound) }
+
+// NoteStore reads and maintains file state in the SQLite notes table.
+type NoteStore interface {
+	// Scan walks the notes root, upserts file state, and returns absolute paths
+	// of new or mtime-changed files that should be queued for processing.
+	Scan(ctx context.Context) ([]string, error)
+	// List returns the direct children of relPath (one level deep).
+	// relPath="" returns the top-level contents.
+	List(ctx context.Context, relPath string) ([]NoteFile, error)
+	// Get returns the state of a single file by absolute path.
+	Get(ctx context.Context, path string) (*NoteFile, error)
+	// UpsertFile ensures a single file is present in the notes table.
+	// Used by the pipeline watcher to satisfy the jobs FK constraint before enqueueing.
+	UpsertFile(ctx context.Context, path string) error
+}
+
+// Store implements NoteStore against a SQLite database.
+type Store struct {
+	db        *sql.DB
+	notesPath string
+}
+
+// New creates a Store. notesPath is the absolute root directory to scan.
+func New(db *sql.DB, notesPath string) *Store {
+	return &Store{db: db, notesPath: notesPath}
+}
+
+// Get returns the state of a single file by absolute path.
+func (s *Store) Get(ctx context.Context, path string) (*NoteFile, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT n.path, n.rel_path, n.file_type, n.size_bytes, n.mtime,
+		       COALESCE(j.status, '') AS job_status
+		FROM notes n
+		LEFT JOIN (
+			SELECT note_path, status
+			FROM jobs
+			WHERE id = (SELECT MAX(id) FROM jobs j2 WHERE j2.note_path = jobs.note_path)
+		) j ON j.note_path = n.path
+		WHERE n.path = ?`, path)
+
+	return scanRow(row)
+}
+
+// List returns the direct children of relPath: subdirectories (from live filesystem)
+// followed by files (from the notes DB with job status joined).
+// Directories are returned first with IsDir=true and FileType="" — they are not
+// stored in the notes table and have no job status.
+func (s *Store) List(ctx context.Context, relPath string) ([]NoteFile, error) {
+	var result []NoteFile
+
+	// Subdirectories from live filesystem (not stored in notes table).
+	if s.notesPath != "" {
+		dirPath := filepath.Join(s.notesPath, relPath)
+		entries, err := os.ReadDir(dirPath)
+		if err != nil {
+			// Distinguish "not found" (acceptable, dir may not exist yet) from real errors
+			if !os.IsNotExist(err) {
+				// Real error like permission denied
+				slog.Warn("notestore list: failed to read directory", "path", dirPath, "err", err)
+			}
+		} else {
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				childRel := filepath.Join(relPath, e.Name())
+				info, err := e.Info()
+				if err != nil {
+					// Log Info() errors but continue with next entry
+					slog.Warn("notestore list: failed to get dir entry info", "name", e.Name(), "err", err)
+					continue
+				}
+				var mtime time.Time
+				if info != nil {
+					mtime = info.ModTime().UTC()
+				}
+				result = append(result, NoteFile{
+					Path:    filepath.Join(s.notesPath, childRel),
+					RelPath: childRel,
+					Name:    e.Name(),
+					IsDir:   true,
+					MTime:   mtime,
+				})
+			}
+		}
+	}
+
+	// Files from the notes DB with latest job status.
+	prefix := relPath
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT n.path, n.rel_path, n.file_type, n.size_bytes, n.mtime,
+		       COALESCE(j.status, '') AS job_status
+		FROM notes n
+		LEFT JOIN (
+			SELECT note_path, status
+			FROM jobs
+			WHERE id = (SELECT MAX(id) FROM jobs j2 WHERE j2.note_path = jobs.note_path)
+		) j ON j.note_path = n.path
+		WHERE n.rel_path LIKE ? AND n.rel_path NOT LIKE ?
+		ORDER BY n.rel_path`,
+		prefix+"%",
+		prefix+"%/%",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("notestore list: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var path2, relPath2, fileType, jobStatus string
+		var sizeBytes, mtimeUnix int64
+		if err := rows.Scan(&path2, &relPath2, &fileType, &sizeBytes, &mtimeUnix, &jobStatus); err != nil {
+			return nil, fmt.Errorf("notestore list scan: %w", err)
+		}
+		result = append(result, NoteFile{
+			Path:      path2,
+			RelPath:   relPath2,
+			Name:      filepath.Base(relPath2),
+			FileType:  FileType(fileType),
+			SizeBytes: sizeBytes,
+			MTime:     time.Unix(mtimeUnix, 0).UTC(),
+			JobStatus: jobStatus,
+		})
+	}
+	return result, rows.Err()
+}
+
+func scanRow(row *sql.Row) (*NoteFile, error) {
+	var path2, relPath, fileType, jobStatus string
+	var sizeBytes, mtimeUnix int64
+	if err := row.Scan(&path2, &relPath, &fileType, &sizeBytes, &mtimeUnix, &jobStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("notestore get: %w", err)
+	}
+	return &NoteFile{
+		Path:      path2,
+		RelPath:   relPath,
+		Name:      filepath.Base(relPath),
+		FileType:  FileType(fileType),
+		SizeBytes: sizeBytes,
+		MTime:     time.Unix(mtimeUnix, 0).UTC(),
+		JobStatus: jobStatus,
+	}, nil
+}

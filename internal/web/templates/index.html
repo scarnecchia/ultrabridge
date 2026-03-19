@@ -203,6 +203,17 @@
             font-size: 14px;
             background: white;
         }
+        .breadcrumb { margin-bottom: 1rem; font-size: 0.9rem; }
+        .breadcrumb a { color: #0066cc; text-decoration: none; }
+        .breadcrumb .sep { margin: 0 0.3rem; color: #999; }
+        .badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; font-weight: 600; }
+        .badge-unprocessed { background: #f0f0f0; color: #666; }
+        .badge-pending     { background: #fff3cd; color: #856404; }
+        .badge-progress    { background: #cfe2ff; color: #084298; }
+        .badge-done        { background: #d1e7dd; color: #0f5132; }
+        .badge-failed      { background: #f8d7da; color: #842029; }
+        .badge-skipped     { background: #e2e3e5; color: #41464b; }
+        .badge-unsupported { background: #f0f0f0; color: #999; font-style: italic; }
     </style>
 </head>
 <body>
@@ -212,6 +223,8 @@
         <div class="tabs">
             <button class="tab-button active" onclick="switchTab('tasks')">Tasks</button>
             <button class="tab-button" onclick="switchTab('logs')">Logs</button>
+            <button class="tab-button" onclick="switchTab('files')">Files</button>
+            <button class="tab-button" onclick="switchTab('search')">Search</button>
         </div>
 
         <!-- Tasks Tab -->
@@ -314,6 +327,118 @@
                 <div id="log-output"></div>
             </div>
         </div>
+
+        <!-- Files Tab -->
+        <div id="files" class="tab-content">
+          {{if .filesError}}
+            <p style="color:#842029; padding:1rem;">{{.filesError}}</p>
+          {{else if .files}}
+            <div style="margin-bottom:1rem; display:flex; align-items:center; gap:1rem;">
+              <span id="proc-status" style="font-size:0.9rem; color:#555;">Loading...</span>
+              <form method="POST" action="/processor/start" style="display:inline;">
+                <button type="submit" class="btn-small">▶ Start</button>
+              </form>
+              <form method="POST" action="/processor/stop" style="display:inline;">
+                <button type="submit" class="btn-small">⏹ Stop</button>
+              </form>
+            </div>
+            <div class="breadcrumb">
+              {{range .breadcrumbs}}
+                <a href="/files?path={{.RelPath}}">{{.Label}}</a><span class="sep">/</span>
+              {{end}}
+            </div>
+            <table class="task-table">
+              <thead>
+                <tr><th>Name</th><th>Type</th><th>Size</th><th>Modified</th><th>Status</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {{range .files}}
+                <tr>
+                  <td>
+                    {{if eq (fileTypeStr .FileType) "note"}}📝{{else if eq (fileTypeStr .FileType) "pdf"}}📄{{else if eq (fileTypeStr .FileType) "epub"}}📚{{else}}📎{{end}}
+                    {{if .IsDir}}<a href="/files?path={{.RelPath}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}
+                  </td>
+                  <td>{{.FileType}}</td>
+                  <td>{{.SizeBytes}}</td>
+                  <td>{{.MTime.Format "2006-01-02"}}</td>
+                  <td>
+                    {{if .IsDir}}
+                      {{/* directories have no processing status */}}
+                    {{else if eq (fileTypeStr .FileType) "note"}}
+                      {{if eq .JobStatus ""}}<span class="badge badge-unprocessed">unprocessed</span>
+                      {{else if eq .JobStatus "pending"}}<span class="badge badge-pending">queued</span>
+                      {{else if eq .JobStatus "in_progress"}}<span class="badge badge-progress">processing</span>
+                      {{else if eq .JobStatus "done"}}<span class="badge badge-done">done</span>
+                      {{else if eq .JobStatus "failed"}}<span class="badge badge-failed">failed</span>
+                      {{else if eq .JobStatus "skipped"}}<span class="badge badge-skipped">skipped</span>
+                      {{end}}
+                    {{else}}
+                      <span class="badge badge-unsupported">unsupported</span>
+                    {{end}}
+                  </td>
+                  <td>
+                    {{if eq (fileTypeStr .FileType) "note"}}
+                    <form method="POST" style="display:inline;">
+                      <input type="hidden" name="path" value="{{.Path}}">
+                      <input type="hidden" name="back" value="{{$.relPath}}">
+                      {{if or (eq .JobStatus "") (eq .JobStatus "done") (eq .JobStatus "failed")}}
+                        <button type="submit" formaction="/files/queue" class="btn-small">Queue</button>
+                      {{end}}
+                      {{if eq .JobStatus "skipped"}}
+                        <button type="submit" formaction="/files/unskip" class="btn-small">Unskip</button>
+                        <button type="submit" formaction="/files/force" class="btn-small">Force</button>
+                      {{else if ne .JobStatus "in_progress"}}
+                        <button type="submit" formaction="/files/skip" class="btn-small">Skip</button>
+                      {{end}}
+                    </form>
+                    <button type="button" class="btn-small"
+                            onclick="showHistory('{{.Path}}')">Details</button>
+                    {{end}}
+                  </td>
+                </tr>
+                {{end}}
+              </tbody>
+            </table>
+          {{else}}
+            <p style="padding:1rem; color:#666;">No files found.</p>
+          {{end}}
+        </div>
+
+        <!-- Search Tab -->
+        <div id="search" class="tab-content">
+          <form method="GET" action="/search" style="margin-bottom:1rem;">
+            <input type="text" name="q" value="{{.searchQuery}}"
+                   placeholder="Search notes..."
+                   style="width:60%; padding:0.4rem; border:1px solid #ccc; border-radius:3px;">
+            <button type="submit" style="padding:0.4rem 0.8rem; margin-left:0.5rem;">Search</button>
+          </form>
+          {{if .searchResults}}
+            <table class="task-table">
+              <thead><tr><th>File</th><th>Page</th><th>Match</th></tr></thead>
+              <tbody>
+                {{range .searchResults}}
+                <tr>
+                  <td><a href="/files?path={{.Path}}">{{.Path}}</a></td>
+                  <td>{{.Page}}</td>
+                  <td>{{.Snippet}}</td>
+                </tr>
+                {{end}}
+              </tbody>
+            </table>
+          {{else if .searchQuery}}
+            <p style="padding:1rem; color:#666;">No results for "{{.searchQuery}}".</p>
+          {{end}}
+        </div>
+    </div>
+
+    <!-- Job history modal (AC7.6) -->
+    <div id="history-modal" style="display:none; position:fixed; top:20%; left:50%;
+         transform:translateX(-50%); background:white; border:1px solid #ccc;
+         padding:1.5rem; border-radius:6px; min-width:400px; z-index:100; box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+      <h3 style="margin-top:0;">Job History</h3>
+      <pre id="history-content" style="font-size:0.85rem; white-space:pre-wrap;"></pre>
+      <button onclick="document.getElementById('history-modal').style.display='none'"
+              class="btn-small">Close</button>
     </div>
 
     <script>
@@ -358,6 +483,21 @@
             }
         }
 
+        let statusInterval = null;
+
+        function updateProcessorStatus() {
+          fetch('/files/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              var el = document.getElementById('proc-status');
+              if (el) {
+                var state = data.Running ? '▶ Running' : '⏹ Stopped';
+                el.textContent = state + ' | Pending: ' + data.Pending + ' | Active: ' + data.InFlight;
+              }
+            })
+            .catch(function() {});
+        }
+
         function switchTab(tabName) {
             // Hide all tabs
             const tabs = document.querySelectorAll('.tab-content');
@@ -373,9 +513,17 @@
             // Activate corresponding button
             event.target.classList.add('active');
 
+            // Clear status polling interval
+            clearInterval(statusInterval);
+
             // If switching to logs, start WebSocket connection
             if (tabName === 'logs') {
                 connectLogs();
+            }
+            // If switching to files, start status polling
+            if (tabName === 'files') {
+                updateProcessorStatus();
+                statusInterval = setInterval(updateProcessorStatus, 5000);
             }
         }
 
@@ -425,6 +573,20 @@
             logWebSocket = null;
             document.getElementById('log-output').textContent = '';
             connectLogs();
+        }
+
+        function showHistory(path) {
+          fetch('/files/history?path=' + encodeURIComponent(path))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              document.getElementById('history-content').textContent =
+                data ? JSON.stringify(data, null, 2) : 'No job record found.';
+              document.getElementById('history-modal').style.display = 'block';
+            })
+            .catch(function() {
+              document.getElementById('history-content').textContent = 'Failed to load history.';
+              document.getElementById('history-modal').style.display = 'block';
+            });
         }
     </script>
 </body>

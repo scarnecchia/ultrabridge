@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"github.com/sysop/ultrabridge/internal/logging"
+	"github.com/sysop/ultrabridge/internal/notestore"
+	"github.com/sysop/ultrabridge/internal/processor"
+	"github.com/sysop/ultrabridge/internal/search"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
 
@@ -94,6 +97,88 @@ func (m *mockNotifier) Notify(ctx context.Context) error {
 	return m.lastErr
 }
 
+// mockNoteStore implements NoteStore for testing
+type mockNoteStore struct {
+	files map[string][]notestore.NoteFile
+	err   error
+}
+
+func newMockNoteStore() *mockNoteStore {
+	return &mockNoteStore{files: make(map[string][]notestore.NoteFile)}
+}
+
+func (m *mockNoteStore) List(ctx context.Context, relPath string) ([]notestore.NoteFile, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.files[relPath], nil
+}
+
+func (m *mockNoteStore) Get(ctx context.Context, path string) (*notestore.NoteFile, error) {
+	return nil, notestore.ErrNotFound
+}
+
+func (m *mockNoteStore) Scan(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockNoteStore) UpsertFile(_ context.Context, _ string) error { return nil }
+
+// mockSearchIndex implements SearchIndex for testing
+type mockSearchIndex struct{}
+
+func (m *mockSearchIndex) Index(_ context.Context, _ search.NoteDocument) error { return nil }
+func (m *mockSearchIndex) Search(_ context.Context, _ search.SearchQuery) ([]search.SearchResult, error) {
+	return nil, nil
+}
+func (m *mockSearchIndex) Delete(_ context.Context, _ string) error { return nil }
+func (m *mockSearchIndex) IndexPage(_ context.Context, _ string, _ int, _, _, _, _ string) error {
+	return nil
+}
+
+// mockProcessor implements Processor for testing
+type mockProcessor struct {
+	running bool
+	jobs    map[string]string // path → status
+	skips   map[string]string // path → skip reason
+}
+
+func newMockProcessor() *mockProcessor {
+	return &mockProcessor{
+		jobs:  make(map[string]string),
+		skips: make(map[string]string),
+	}
+}
+
+func (m *mockProcessor) Start(_ context.Context) error  { m.running = true; return nil }
+func (m *mockProcessor) Stop() error                     { m.running = false; return nil }
+func (m *mockProcessor) Status() processor.ProcessorStatus {
+	return processor.ProcessorStatus{Running: m.running, Pending: len(m.jobs)}
+}
+func (m *mockProcessor) Enqueue(_ context.Context, path string) error {
+	m.jobs[path] = processor.StatusPending
+	return nil
+}
+func (m *mockProcessor) Skip(_ context.Context, path, reason string) error {
+	m.jobs[path] = processor.StatusSkipped
+	m.skips[path] = reason
+	return nil
+}
+func (m *mockProcessor) Unskip(_ context.Context, path string) error {
+	if m.jobs[path] == processor.StatusSkipped {
+		m.jobs[path] = processor.StatusPending
+		delete(m.skips, path)
+	}
+	return nil
+}
+func (m *mockProcessor) GetJob(_ context.Context, path string) (*processor.Job, error) {
+	status, ok := m.jobs[path]
+	if !ok {
+		return nil, nil
+	}
+	return &processor.Job{NotePath: path, Status: status, SkipReason: m.skips[path]}, nil
+}
+
 // TestListTasksReturnsNonDeletedTasks verifies AC4.1: store returns list of all non-deleted tasks
 func TestListTasksReturnsNonDeletedTasks(t *testing.T) {
 	store := newMockTaskStore()
@@ -161,7 +246,7 @@ func TestGetIndexResponseBodyVerifiesAC41(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, nil, logger, broadcaster)
 
 	// Pre-populate with multiple tasks
 	task1 := &taskstore.Task{
@@ -211,7 +296,7 @@ func TestGetIndexFiltersDeletedTasks(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, nil, logger, broadcaster)
 
 	// Add a non-deleted task
 	task1 := &taskstore.Task{
@@ -258,7 +343,7 @@ func TestPostCreateTaskMinimal(t *testing.T) {
 	notifier := &mockNotifier{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, notifier, logger, broadcaster)
+	handler := NewHandler(store, notifier, nil, nil, nil, logger, broadcaster)
 
 	// Create task via form POST
 	form := url.Values{}
@@ -306,7 +391,7 @@ func TestPostCreateTaskWithDueDate(t *testing.T) {
 	notifier := &mockNotifier{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, notifier, logger, broadcaster)
+	handler := NewHandler(store, notifier, nil, nil, nil, logger, broadcaster)
 
 	// Create task with due date
 	form := url.Values{}
@@ -342,7 +427,7 @@ func TestPostCreateTaskNoTitle(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, nil, logger, broadcaster)
 
 	form := url.Values{}
 	form.Set("title", "")
@@ -365,7 +450,7 @@ func TestPostCreateTaskInvalidDueDate(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, nil, logger, broadcaster)
 
 	form := url.Values{}
 	form.Set("title", "Task")
@@ -386,7 +471,7 @@ func TestPostCompleteTaskUpdatesStatus(t *testing.T) {
 	notifier := &mockNotifier{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, notifier, logger, broadcaster)
+	handler := NewHandler(store, notifier, nil, nil, nil, logger, broadcaster)
 
 	// Create a task
 	task := &taskstore.Task{
@@ -430,7 +515,7 @@ func TestPostCompleteTaskAlreadyCompleted(t *testing.T) {
 	notifier := &mockNotifier{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, notifier, logger, broadcaster)
+	handler := NewHandler(store, notifier, nil, nil, nil, logger, broadcaster)
 
 	// Create an already-completed task
 	completionTime := time.Now().UnixMilli()
@@ -464,7 +549,7 @@ func TestPostCompleteTaskNotFound(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, nil, logger, broadcaster)
 
 	req := httptest.NewRequest("POST", "/tasks/nonexistent-id/complete", nil)
 	w := httptest.NewRecorder()
@@ -480,7 +565,7 @@ func TestPostCompleteTaskNoID(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, nil, logger, broadcaster)
 
 	// Note: This test verifies the Go 1.22 route pattern parsing
 	// In practice, /tasks/{id}/complete always extracts an id (could be empty)
@@ -499,7 +584,7 @@ func TestHandlerNotifierNil(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, nil, logger, broadcaster)
 
 	form := url.Values{}
 	form.Set("title", "Task without notifier")
@@ -523,7 +608,7 @@ func TestPostCreateTaskWithWhitespace(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, nil, logger, broadcaster)
 
 	form := url.Values{}
 	form.Set("title", "  Task with spaces  ")
@@ -552,7 +637,7 @@ func TestBulkCompleteMultipleTasks(t *testing.T) {
 	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", Title: taskstore.SqlStr("Task 1"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
 	store.tasks["t2"] = &taskstore.Task{TaskID: "t2", Title: taskstore.SqlStr("Task 2"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
 	store.tasks["t3"] = &taskstore.Task{TaskID: "t3", Title: taskstore.SqlStr("Task 3"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
-	handler := NewHandler(store, nil, slog.Default(), logging.NewLogBroadcaster())
+	handler := NewHandler(store, nil, nil, nil, nil, slog.Default(), logging.NewLogBroadcaster())
 
 	form := url.Values{}
 	form.Set("action", "complete")
@@ -582,7 +667,7 @@ func TestBulkDeleteMultipleTasks(t *testing.T) {
 	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", Title: taskstore.SqlStr("Task 1"), IsDeleted: "N"}
 	store.tasks["t2"] = &taskstore.Task{TaskID: "t2", Title: taskstore.SqlStr("Task 2"), IsDeleted: "N"}
 	store.tasks["t3"] = &taskstore.Task{TaskID: "t3", Title: taskstore.SqlStr("Task 3"), IsDeleted: "N"}
-	handler := NewHandler(store, nil, slog.Default(), logging.NewLogBroadcaster())
+	handler := NewHandler(store, nil, nil, nil, nil, slog.Default(), logging.NewLogBroadcaster())
 
 	form := url.Values{}
 	form.Set("action", "delete")
@@ -609,7 +694,7 @@ func TestBulkDeleteMultipleTasks(t *testing.T) {
 
 func TestBulkActionNoSelection(t *testing.T) {
 	store := newMockTaskStore()
-	handler := NewHandler(store, nil, slog.Default(), logging.NewLogBroadcaster())
+	handler := NewHandler(store, nil, nil, nil, nil, slog.Default(), logging.NewLogBroadcaster())
 
 	form := url.Values{}
 	form.Set("action", "complete")
@@ -627,7 +712,7 @@ func TestBulkActionNoSelection(t *testing.T) {
 func TestBulkActionUnknown(t *testing.T) {
 	store := newMockTaskStore()
 	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", IsDeleted: "N"}
-	handler := NewHandler(store, nil, slog.Default(), logging.NewLogBroadcaster())
+	handler := NewHandler(store, nil, nil, nil, nil, slog.Default(), logging.NewLogBroadcaster())
 
 	form := url.Values{}
 	form.Set("action", "explode")
@@ -639,5 +724,205 @@ func TestBulkActionUnknown(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for unknown action, got %d", w.Code)
+	}
+}
+
+// TestHandleFiles_NoteStoreNil verifies AC1.6: missing UB_NOTES_PATH renders error, not crash
+func TestHandleFiles_NoteStoreNil(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/files", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "UB_NOTES_PATH") {
+		t.Error("expected UB_NOTES_PATH error message in response")
+	}
+}
+
+// TestHandleFiles_PathTraversal verifies AC1.5: traversal attempts return 400
+func TestHandleFiles_PathTraversal(t *testing.T) {
+	ns := newMockNoteStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, ns, nil, nil, logger, broadcaster)
+
+	for _, badPath := range []string{"../../etc", "../secrets", "/etc/passwd"} {
+		req := httptest.NewRequest("GET", "/files?path="+badPath, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("path %q: status = %d, want 400", badPath, w.Code)
+		}
+	}
+}
+
+// TestHandleFiles_TopLevel verifies AC1.1, AC1.3, AC1.4
+func TestHandleFiles_TopLevel(t *testing.T) {
+	ns := newMockNoteStore()
+	ns.files[""] = []notestore.NoteFile{
+		{Name: "test.note", FileType: notestore.FileTypeNote, RelPath: "test.note"},
+		{Name: "readme.pdf", FileType: notestore.FileTypePDF, RelPath: "readme.pdf"},
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, ns, nil, nil, logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/files", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "test.note") {
+		t.Error("expected test.note in response")
+	}
+	if !strings.Contains(body, "unprocessed") {
+		t.Error("expected unprocessed badge for .note file with empty JobStatus")
+	}
+	if !strings.Contains(body, "unsupported") {
+		t.Error("expected unsupported badge for pdf")
+	}
+}
+
+// TestHandleFiles_WithPath verifies AC1.2: subdirectory path shows contents and breadcrumb
+func TestHandleFiles_WithPath(t *testing.T) {
+	ns := newMockNoteStore()
+	ns.files["Note/Folder"] = []notestore.NoteFile{
+		{Name: "deep.note", FileType: notestore.FileTypeNote, RelPath: "Note/Folder/deep.note"},
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, ns, nil, nil, logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/files?path=Note/Folder", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "deep.note") {
+		t.Error("expected deep.note in response")
+	}
+	if !strings.Contains(body, "Folder") {
+		t.Error("expected breadcrumb Folder in response")
+	}
+}
+
+// Helper functions for C&C tests
+func makeFilesHandler(t *testing.T, proc *mockProcessor) *Handler {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	return NewHandler(newMockTaskStore(), nil, nil, nil, proc, logger, broadcaster)
+}
+
+func postFiles(handler *Handler, route, path, back string) *httptest.ResponseRecorder {
+	form := url.Values{}
+	form.Set("path", path)
+	form.Set("back", back)
+	req := httptest.NewRequest("POST", route, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	return w
+}
+
+// AC7.1: Queue creates pending job
+func TestHandleFilesQueue(t *testing.T) {
+	proc := newMockProcessor()
+	h := makeFilesHandler(t, proc)
+	w := postFiles(h, "/files/queue", "/test.note", "")
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want 303", w.Code)
+	}
+	if proc.jobs["/test.note"] != processor.StatusPending {
+		t.Errorf("job = %q, want pending", proc.jobs["/test.note"])
+	}
+}
+
+// AC7.3: Skip sets skipped with manual reason
+func TestHandleFilesSkip(t *testing.T) {
+	proc := newMockProcessor()
+	h := makeFilesHandler(t, proc)
+	postFiles(h, "/files/skip", "/test.note", "")
+	if proc.jobs["/test.note"] != processor.StatusSkipped {
+		t.Errorf("job = %q, want skipped", proc.jobs["/test.note"])
+	}
+	if proc.skips["/test.note"] != processor.SkipReasonManual {
+		t.Errorf("reason = %q, want manual", proc.skips["/test.note"])
+	}
+}
+
+// AC7.4: Unskip re-enables queuing
+func TestHandleFilesUnskip(t *testing.T) {
+	proc := newMockProcessor()
+	h := makeFilesHandler(t, proc)
+	postFiles(h, "/files/skip", "/test.note", "")
+	postFiles(h, "/files/unskip", "/test.note", "")
+	if proc.jobs["/test.note"] != processor.StatusPending {
+		t.Errorf("after unskip = %q, want pending", proc.jobs["/test.note"])
+	}
+}
+
+// AC7.5: Force overrides size_limit skip
+func TestHandleFilesForce(t *testing.T) {
+	proc := newMockProcessor()
+	proc.jobs["/big.note"] = processor.StatusSkipped
+	proc.skips["/big.note"] = processor.SkipReasonSizeLimit
+	h := makeFilesHandler(t, proc)
+	postFiles(h, "/files/force", "/big.note", "")
+	if proc.jobs["/big.note"] != processor.StatusPending {
+		t.Errorf("after force = %q, want pending", proc.jobs["/big.note"])
+	}
+}
+
+// AC2.5: Status endpoint returns JSON with running state and queue depth
+func TestHandleFilesStatus(t *testing.T) {
+	proc := newMockProcessor()
+	proc.running = true
+	proc.jobs["/a.note"] = processor.StatusPending
+
+	h := makeFilesHandler(t, proc)
+	req := httptest.NewRequest("GET", "/files/status", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "application/json") {
+		t.Error("expected JSON content type")
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "true") {
+		t.Errorf("expected Running:true in JSON body: %s", body)
+	}
+}
+
+// AC7.2: Requeue resets a failed or done job to pending
+func TestHandleFilesRequeue(t *testing.T) {
+	proc := newMockProcessor()
+	// Pre-seed with a failed job
+	proc.jobs["/test.note"] = processor.StatusFailed
+	h := makeFilesHandler(t, proc)
+
+	// Call /files/queue to requeue
+	w := postFiles(h, "/files/queue", "/test.note", "")
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want 303", w.Code)
+	}
+	if proc.jobs["/test.note"] != processor.StatusPending {
+		t.Errorf("job status = %q, want pending", proc.jobs["/test.note"])
 	}
 }

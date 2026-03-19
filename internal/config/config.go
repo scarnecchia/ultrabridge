@@ -45,6 +45,17 @@ type Config struct {
 
 	// Paths
 	DBEnvPath string
+
+	// Notes pipeline
+	NotesPath      string
+	DBPath         string
+	BackupPath     string
+	OCREnabled     bool
+	OCRAPIURL      string
+	OCRAPIKey      string
+	OCRModel       string
+	OCRConcurrency int
+	OCRMaxFileMB   int
 }
 
 func Load() (*Config, error) {
@@ -68,6 +79,16 @@ func Load() (*Config, error) {
 		DBEnvPath:            envOrDefault("UB_SUPERNOTE_DBENV_PATH", "/run/secrets/dbenv"),
 		UserID:               int64(envIntOrDefault("UB_USER_ID", 0)),
 	}
+
+	cfg.NotesPath      = os.Getenv("UB_NOTES_PATH")
+	cfg.DBPath         = envOrDefault("UB_DB_PATH", "/data/ultrabridge.db")
+	cfg.BackupPath     = os.Getenv("UB_BACKUP_PATH")
+	cfg.OCREnabled     = envBoolOrDefault("UB_OCR_ENABLED", false)
+	cfg.OCRAPIURL      = os.Getenv("UB_OCR_API_URL")
+	cfg.OCRAPIKey      = os.Getenv("UB_OCR_API_KEY")
+	cfg.OCRModel       = os.Getenv("UB_OCR_MODEL")
+	cfg.OCRConcurrency = envIntOrDefault("UB_OCR_CONCURRENCY", 1)
+	cfg.OCRMaxFileMB   = envIntOrDefault("UB_OCR_MAX_FILE_MB", 0)
 
 	if err := cfg.loadDBEnv(); err != nil {
 		return nil, fmt.Errorf("loading .dbenv: %w", err)
@@ -155,4 +176,12 @@ func envIntOrDefault(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+func envBoolOrDefault(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	return strings.EqualFold(v, "true") || v == "1"
 }

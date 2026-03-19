@@ -16,6 +16,11 @@ import (
 	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
 	"github.com/sysop/ultrabridge/internal/logging"
+	"github.com/sysop/ultrabridge/internal/notedb"
+	"github.com/sysop/ultrabridge/internal/notestore"
+	"github.com/sysop/ultrabridge/internal/pipeline"
+	"github.com/sysop/ultrabridge/internal/processor"
+	"github.com/sysop/ultrabridge/internal/search"
 	"github.com/sysop/ultrabridge/internal/sync"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 	"github.com/sysop/ultrabridge/internal/web"
@@ -75,6 +80,44 @@ func main() {
 	notifier.Connect(context.Background())
 	defer notifier.Close()
 
+	// Open the notes SQLite DB (separate from Supernote's MariaDB)
+	noteDB, err := notedb.Open(context.Background(), cfg.DBPath)
+	if err != nil {
+		logger.Error("notedb open failed", "err", err, "path", cfg.DBPath)
+		os.Exit(1)
+	}
+	defer noteDB.Close()
+
+	// Notes pipeline components
+	ns := notestore.New(noteDB, cfg.NotesPath)
+	si := search.New(noteDB)
+	workerCfg := processor.WorkerConfig{
+		OCREnabled: cfg.OCREnabled,
+		BackupPath: cfg.BackupPath,
+		MaxFileMB:  cfg.OCRMaxFileMB,
+		Indexer:    si,
+	}
+	if cfg.OCREnabled && cfg.OCRAPIURL != "" {
+		workerCfg.OCRClient = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel)
+	}
+	proc := processor.New(noteDB, workerCfg)
+	if cfg.OCREnabled {
+		if err := proc.Start(context.Background()); err != nil {
+			logger.Warn("processor start failed", "err", err)
+		}
+		defer proc.Stop()
+	}
+
+	pl := pipeline.New(pipeline.Config{
+		NotesPath: cfg.NotesPath,
+		Store:     ns,
+		Proc:      proc,
+		Events:    notifier.Events(),
+		Logger:    logger,
+	})
+	pl.Start(context.Background())
+	defer pl.Close()
+
 	backend := ubcaldav.NewBackend(store, "/caldav", cfg.CalDAVCollectionName, cfg.DueTimeMode, notifier)
 	caldavHandler := &gocaldav.Handler{
 		Backend: backend,
@@ -104,7 +147,7 @@ func main() {
 
 	// Wire web UI if enabled
 	if cfg.WebEnabled {
-		webHandler := web.NewHandler(store, notifier, logger, broadcaster)
+		webHandler := web.NewHandler(store, notifier, ns, si, proc, logger, broadcaster)
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 

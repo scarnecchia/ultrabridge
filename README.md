@@ -6,37 +6,37 @@
  <h1>UltraBridge</h1>
 </p>
 
-UltraBridge is a "sidecar service" for the Supernote Private Cloud (and soon for other platforms!), which currently: 
-* Enables synchronization of tasks between Supernote tablets and standard CalDAV clients (GNOME Evolution, DAVx5, 2Do, etc.)
-* Sits alongside the Supernote stack as a companion microservice, reading from and writing to the same MariaDB database.
+UltraBridge is a sidecar service for [Supernote Private Cloud](https://support.supernote.com/article/75/set-up-supernote-partner-cloud), adding two capabilities to the self-hosted Supernote stack:
+
+1. **CalDAV task sync** — synchronise Supernote tasks with any CalDAV client (DAVx5, GNOME Evolution, 2Do, etc.)
+2. **Notes pipeline** — automatically discover `.note` files, extract handwritten text, index it for full-text search, and optionally run vision-API OCR
 
 ## Prerequisites
 
 - **Supernote Private Cloud** running with Docker Compose (at `/mnt/supernote/`)
 - **Docker** and **Docker Compose**
-- A CalDAV client on your calendar/task app (DAVx5, GNOME Evolution, 2Do, etc.)
+- For CalDAV sync: a CalDAV client on your device
+- For OCR: an API key for Anthropic or OpenRouter
 
 ## Quick Start
 
-The interactive installer handles everything — configuration, password hashing, Docker image build, and startup:
+The interactive installer handles configuration, password hashing, Docker image build, and startup:
 
 ```bash
 ./install.sh
 ```
 
-It will prompt for username, password, port, and collection name, then build and start the container. Safe to re-run to change configuration.
+It prompts for username, password, port, and collection name, then builds and starts the container. Safe to re-run to change configuration.
 
-After making code changes, rebuild and restart without reconfiguring:
+After code changes, rebuild and restart without reconfiguring:
 
 ```bash
 ./rebuild.sh
 ```
 
-Both scripts auto-detect the Supernote stack at `/mnt/supernote/`. Pass a different path as an argument if needed: `./install.sh /path/to/supernote`.
+Both scripts auto-detect the Supernote stack at `/mnt/supernote/`. Pass a different path if needed: `./install.sh /path/to/supernote`.
 
 ### Manual setup
-
-If you prefer to configure manually instead of using the installer:
 
 1. Copy `.ultrabridge.env.example` to `/mnt/supernote/.ultrabridge.env` and set `UB_USERNAME` and `UB_PASSWORD_HASH` (generate with `docker run --rm ultrabridge:dev hash-password "yourpassword"`)
 2. Create a `docker-compose.override.yml` in `/mnt/supernote/` (see `.ultrabridge.env.example` for the template)
@@ -44,132 +44,175 @@ If you prefer to configure manually instead of using the installer:
 
 Verify: `curl -u admin:yourpassword http://localhost:8443/health` should return `{"status":"ok"}`
 
+## Web UI
+
+Navigate to `http://<host>:<port>/` after starting the service.
+
+| Tab | What it does |
+|-----|-------------|
+| **Tasks** | View, create, and complete Supernote tasks |
+| **Files** | Browse `.note` files; queue/skip/force individual files; start/stop the OCR processor |
+| **Search** | Full-text keyword search over indexed note content |
+| **Logs** | Live log stream (SSE) |
+
 ## CalDAV Client Setup
 
 UltraBridge exposes a single CalDAV collection at `https://your-host:8443/caldav/tasks/`.
 
 ### DAVx5 (Android)
-
 1. **Add account** → DAVx5 settings → Add account → CalDAV
 2. **Server URL:** `https://your-host:8443/.well-known/caldav`
 3. **Login:** Username and password from `.ultrabridge.env`
-4. **Accept SSL:** If using self-signed certificate, enable "SSL / TLS: Custom CA"
+4. **Accept SSL:** If using a self-signed certificate, enable "SSL / TLS: Custom CA"
 5. **Sync:** Select "Supernote Tasks" collection
 
 ### GNOME Evolution (Linux)
-
 1. **Calendar** → **New Calendar** → Remote
-2. **Type:** CalDAV
-3. **Server URL:** `https://your-host:8443/caldav/tasks/`
-4. **Login:** Username and password from `.ultrabridge.env`
-5. **Color:** Choose a color
-6. **Create** → Evolution syncs automatically
-
-### OpenTasks (Android)
-
-1. **Settings** → **Caldav Sync**
-2. **Add account** → CalDAV
-3. **Server URL:** `https://your-host:8443/.well-known/caldav`
-4. **Login:** Username and password from `.ultrabridge.env`
-5. **OK** → Select "Supernote Tasks"
-
-### 2Do (iOS/Mac)
-
-1. **Settings** → **Sync** → **Add Account** → CalDAV
-2. **Server URL:** `https://your-host:8443/caldav/tasks/`
+2. **Type:** CalDAV, **URL:** `https://your-host:8443/caldav/tasks/`
 3. **Login:** Username and password from `.ultrabridge.env`
-4. **Save**
+
+### OpenTasks / 2Do
+Use `https://your-host:8443/.well-known/caldav` as the server URL with your credentials.
 
 ## Configuration
 
-All configuration is via environment variables in `.ultrabridge.env`:
+Copy `.ultrabridge.env.example` to `.ultrabridge.env` and edit. All variables are optional except `UB_USERNAME` and `UB_PASSWORD_HASH`.
+
+### Core
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `UB_USERNAME` | (required) | Basic Auth username |
-| `UB_PASSWORD_HASH` | (required) | bcrypt hash of password |
-| `UB_CALDAV_COLLECTION_NAME` | `Supernote Tasks` | Name shown in CalDAV clients |
-| `UB_DUE_TIME_MODE` | `preserve` | `preserve` or `date_only` (strip time from due dates) |
+| `UB_PASSWORD_HASH` | (required) | bcrypt hash — generate with `hash-password` |
 | `UB_LISTEN_ADDR` | `:8443` | Listen address (port inside container) |
-| `UB_WEB_ENABLED` | `true` | Enable web UI at `/` |
+| `UB_WEB_ENABLED` | `true` | Enable web UI |
+| `UB_CALDAV_COLLECTION_NAME` | `Supernote Tasks` | Name shown in CalDAV clients |
+| `UB_DUE_TIME_MODE` | `preserve` | `preserve` or `date_only` |
+
+### Logging
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `UB_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `UB_LOG_FORMAT` | `json` | `json` or `text` |
-| `UB_LOG_FILE` | (empty) | Optional file path for logging |
+| `UB_LOG_FILE` | (empty) | Optional file path |
 | `UB_LOG_FILE_MAX_MB` | `50` | Max size before rotation |
-| `UB_LOG_FILE_MAX_AGE_DAYS` | `30` | Keep logs for N days |
-| `UB_LOG_FILE_MAX_BACKUPS` | `5` | Keep N backup files |
-| `UB_LOG_SYSLOG_ADDR` | (empty) | Optional syslog address (e.g., `udp://graylog:1514`) |
-| `UB_USER_ID` | (auto-discover) | Explicit Supernote user ID — required if multiple users exist in the database |
-| `UB_DB_HOST` | `mariadb` | Database hostname (auto-detected in Docker) |
-| `UB_DB_PORT` | `3306` | Database port |
-| `UB_SUPERNOTE_DBENV_PATH` | `/run/secrets/dbenv` | Path to `.dbenv` file |
-| `UB_SOCKETIO_URL` | `ws://supernote-service:8080/socket.io/` | Socket.io URL for device notifications |
+| `UB_LOG_FILE_MAX_AGE_DAYS` | `30` | Days to keep |
+| `UB_LOG_FILE_MAX_BACKUPS` | `5` | Number of backup files |
+| `UB_LOG_SYSLOG_ADDR` | (empty) | e.g. `udp://graylog:1514` |
+
+### Notes Pipeline
+
+All pipeline variables are optional. Omitting `UB_NOTES_PATH` disables the pipeline entirely (Files and Search tabs show "not configured").
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UB_NOTES_PATH` | (empty) | Root directory of `.note` files |
+| `UB_DB_PATH` | `/data/ultrabridge.db` | SQLite database for the pipeline |
+| `UB_BACKUP_PATH` | (empty) | Copy originals here before any OCR write |
+| `UB_OCR_ENABLED` | `false` | Enable vision-API OCR |
+| `UB_OCR_API_URL` | (empty) | API base URL — Anthropic or OpenRouter |
+| `UB_OCR_API_KEY` | (empty) | API key |
+| `UB_OCR_MODEL` | (empty) | Model name (e.g. `anthropic/claude-opus-4-6`) |
+| `UB_OCR_CONCURRENCY` | `1` | Parallel OCR workers |
+| `UB_OCR_MAX_FILE_MB` | `0` | Skip files larger than N MB (0 = no limit) |
+
+### Infrastructure (rarely need to change)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UB_DB_HOST` | `mariadb` | MariaDB hostname |
+| `UB_DB_PORT` | `3306` | MariaDB port |
+| `UB_SUPERNOTE_DBENV_PATH` | `/run/secrets/dbenv` | Path to `.dbenv` credentials file |
+| `UB_SOCKETIO_URL` | `ws://supernote-service:8080/socket.io/` | Engine.IO URL for device notifications |
+| `UB_USER_ID` | (auto-discover) | Explicit user ID if multiple users exist |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Supernote Private Cloud Stack                               │
-├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │  nginx       │  │  MariaDB     │  │  Redis       │       │
-│  │  (reverse    │  │  (t_schedule │  │  (sessions)  │       │
-│  │   proxy)     │  │   _task etc) │  │              │       │
-│  └──────────────┘  └──────────────┘  └──────────────┘       │
-│         ▲                 ▲                                   │
-│         │                 │                                   │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │  UltraBridge CalDAV Microservice                    │   │
-│  │  ┌────────────────────────────────────────────────┐ │   │
-│  │  │ CalDAV Handler ← Tasks Store → MariaDB         │ │   │
-│  │  │                                                 │ │   │
-│  │  │ GET /caldav/tasks/task-001.ics                 │ │   │
-│  │  │ PUT /caldav/tasks/task-002.ics (VTODO)         │ │   │
-│  │  │ DELETE /caldav/tasks/task-003.ics              │ │   │
-│  │  │ PROPFIND /caldav/tasks/ (list)                 │ │   │
-│  │  │                                                 │ │   │
-│  │  │ Notifies device via Socket.io on write         │ │   │
-│  │  └────────────────────────────────────────────────┘ │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                         ▲                                     │
-└─────────────────────────┼─────────────────────────────────────┘
-                          │
-              CalDAV clients (DAVx5, Evolution, etc.)
+┌─────────────────────────────────────────────────────────────────┐
+│ Supernote Private Cloud Stack                                   │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐ │
+│  │  nginx       │  │  MariaDB     │  │  .note file store     │ │
+│  │  (proxy)     │  │  (tasks)     │  │  (NFS / volume)       │ │
+│  └──────────────┘  └──────────────┘  └───────────────────────┘ │
+│         ▲                 ▲                       ▲             │
+│         │                 │                       │             │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  UltraBridge                                             │  │
+│  │                                                          │  │
+│  │  ┌─────────────────────────┐  ┌──────────────────────┐  │  │
+│  │  │  CalDAV subsystem       │  │  Notes pipeline      │  │  │
+│  │  │  CalDAV ← TaskStore     │  │  Pipeline            │  │  │
+│  │  │         → MariaDB       │  │   ↓ fsnotify watcher │  │  │
+│  │  │         → Engine.IO     │  │   ↓ reconciler       │  │  │
+│  │  └─────────────────────────┘  │  NoteStore → SQLite  │  │  │
+│  │                               │  Processor (OCR jobs)│  │  │
+│  │  ┌─────────────────────────┐  │  SearchIndex (FTS5)  │  │  │
+│  │  │  Web UI                 │  └──────────────────────┘  │  │
+│  │  │  Tasks / Files / Search │                             │  │
+│  │  └─────────────────────────┘                             │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Notes pipeline flow
+
+```
+.note file written/changed
+         │
+         ▼
+   fsnotify watcher  ──(2s debounce)──▶  Processor queue
+         +
+   reconciler (15 min)
+         │
+         ▼
+   Worker picks up job
+         │
+         ├─ backup original (if UB_BACKUP_PATH set)
+         ├─ extract existing MyScript RECOGNTEXT → index as "myScript"
+         ├─ if OCR enabled:
+         │    render page → JPEG → vision API → inject RECOGNTEXT
+         │    index as "api"
+         └─ job marked done
+                  │
+                  ▼
+           FTS5 search index
 ```
 
 ## Development
 
-### Build the service
+### Build
 
 ```bash
-cd /home/sysop/src/ultrabridge/.worktrees/ultrabridge-caldav
-go build -o ultrabridge ./cmd/ultrabridge/
+go build -C /home/sysop/src/ultrabridge ./cmd/ultrabridge/
 ```
 
-### Run unit tests
+### Test
 
 ```bash
-go test ./...
+go test -C /home/sysop/src/ultrabridge ./...
 ```
 
-### Run integration tests
-
-Integration tests require a running Supernote Private Cloud MariaDB:
+Integration tests require a running MariaDB:
 
 ```bash
 TEST_DBENV_PATH=/mnt/supernote/.dbenv go test -tags integration ./tests/ -v
 ```
 
-Expected output: All tests pass.
-
-### Build and restart
+### Rebuild Docker image
 
 ```bash
 ./rebuild.sh
 ```
 
-Or manually: `docker build -t ultrabridge:dev .`
+Or manually:
+
+```bash
+docker build -t ultrabridge:dev .
+```
 
 ### Generate a password hash
 
@@ -179,13 +222,15 @@ docker run --rm ultrabridge:dev hash-password "yourpassword"
 
 ## Known Limitations
 
-1. **Tier 3 fields are dropped:** Only title, description, priority, due date, and status are synchronized. Recurrence, reminders, and other advanced fields are not mapped.
+1. **CalDAV — tier 3 fields dropped:** Only title, description, priority, due date, and status are synchronised. Recurrence, reminders, and other advanced fields are not mapped.
 
-2. **Single-user by default:** UltraBridge auto-discovers the user from `u_user`. If multiple users exist, it will refuse to start — set `UB_USER_ID` to the desired user's ID to resolve this.
+2. **Single-user by default:** UltraBridge auto-discovers the user from `u_user`. If multiple users exist, it refuses to start — set `UB_USER_ID` to resolve this.
 
 3. **No TLS termination:** The service listens on plain HTTP. Use a reverse proxy (nginx, Caddy) for HTTPS in production.
 
-4. **Device sync notifications:** UltraBridge notifies the device via Socket.io when tasks are modified via CalDAV. If the device is offline, it will pick up changes on next sync.
+4. **Engine.IO listener is a stub:** The pipeline detects files via fsnotify and periodic reconciliation. Parsing Supernote Engine.IO push events for instant detection is not yet implemented (`extractNotePaths` in `internal/pipeline/engineio.go`).
+
+5. **TITLE block extraction is a stub:** `extractNoteTitle` returns an empty string. Heading text is captured indirectly when RECOGNTEXT is indexed. Full heading extraction is out of scope for the current release.
 
 ## Troubleshooting
 
@@ -200,19 +245,23 @@ docker ps | grep mariadb
 
 ### "user resolution failed"
 
-- **"no users found"** — No users exist in the database yet. Sync your Supernote device first.
-- **"multiple users found (N) — set UB_USER_ID"** — More than one user in the database. Find the right ID with `mysql -e "SELECT user_id, user_name FROM u_user"` on the MariaDB container, then set `UB_USER_ID` in `.ultrabridge.env`.
+- **"no users found"** — No users in the database yet. Sync your Supernote device first.
+- **"multiple users found"** — Set `UB_USER_ID` in `.ultrabridge.env`.
+
+### Files tab shows "UB_NOTES_PATH is not configured"
+
+Set `UB_NOTES_PATH` in `.ultrabridge.env` to the directory containing your `.note` files.
+
+### OCR jobs stuck in "in_progress"
+
+The watchdog reclaims stuck jobs after 10 minutes. If jobs consistently get stuck, check `UB_OCR_API_URL` and `UB_OCR_API_KEY` are correct and the API is reachable from inside the container.
 
 ### CalDAV client shows empty collection
 
-1. Verify UltraBridge is running: `curl -u admin:password http://localhost:8443/health`
-2. Verify credentials are correct in the CalDAV client
+1. `curl -u admin:password http://localhost:8443/health` — should return `{"status":"ok"}`
+2. Verify credentials in the CalDAV client
 3. Check logs: `docker logs ultrabridge`
-
-### SSL certificate errors
-
-Use a self-signed certificate and configure your CalDAV client to trust it, or use a reverse proxy with a valid certificate.
 
 ## License
 
-[Apache 2.0.](https://www.apache.org/licenses/LICENSE-2.0.txt)
+[Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0.txt)
