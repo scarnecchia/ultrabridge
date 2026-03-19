@@ -1,3 +1,7 @@
+<p style="text-align: center;">
+  ![stylized representation of an Einstein-Rosen bridge](docs/erb.png)
+</p>
+
 # UltraBridge
 
 UltraBridge is a "sidecar service" for the Supernote Private Cloud (and soon for other platforms!), which currently: 
