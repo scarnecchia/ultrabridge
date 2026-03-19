@@ -121,13 +121,20 @@ All variables follow the existing `UB_` prefix convention:
 
 ```
 UB_NOTES_PATH        — root of Supernote user directory
-                       e.g. /mnt/supernote/supernote_data/user@example.com/Supernote
+                       e.g. /mnt/supernote/note/user@example.com
+                       (directory name contains the account email address)
 UB_DB_PATH           — SQLite file path (default: /data/ultrabridge.db)
 UB_BACKUP_PATH       — copy originals here before first write (optional)
 UB_OCR_ENABLED       — bool, default false
+UB_OCR_FORMAT        — "anthropic" (default) or "openai"
+                       anthropic: Anthropic Messages API /v1/messages
+                                  (direct Anthropic API or OpenRouter)
+                       openai:    OpenAI Chat Completions /v1/chat/completions
+                                  (vLLM, Ollama, or any OpenAI-compatible endpoint)
 UB_OCR_API_URL       — vision API base URL
-UB_OCR_API_KEY       — API key
-UB_OCR_MODEL         — model identifier (e.g. claude-haiku-4-5-20251001)
+UB_OCR_API_KEY       — API key; leave blank for unauthenticated local endpoints
+UB_OCR_MODEL         — model identifier (e.g. anthropic/claude-opus-4-6,
+                       or Qwen3-VL-8B-Instruct for a local vLLM instance)
 UB_OCR_CONCURRENCY   — parallel workers, default 1
 UB_OCR_MAX_FILE_MB   — skip files larger than this (0 = no limit, default 0)
 ```
@@ -193,9 +200,15 @@ note_fts USING fts5(
 **NoteStore**
 ```go
 type NoteStore interface {
-    Scan(ctx context.Context) error
+    // Scan walks the notes root, upserts file state, prunes orphaned DB entries
+    // for files no longer on disk (handles moved/deleted files), and returns the
+    // absolute paths of new or mtime-changed files to be queued.
+    Scan(ctx context.Context) ([]string, error)
     List(ctx context.Context, relPath string) ([]NoteFile, error)
     Get(ctx context.Context, path string) (*NoteFile, error)
+    // UpsertFile ensures a single file exists in the notes table before its
+    // path is used as a foreign key in the jobs table.
+    UpsertFile(ctx context.Context, path string) error
 }
 
 type NoteFile struct {
@@ -203,10 +216,10 @@ type NoteFile struct {
     RelPath   string
     Name      string
     IsDir     bool
-    FileType  string   // "note" | "pdf" | "epub" | "other"
+    FileType  FileType  // FileTypeNote | FileTypePDF | FileTypeEPUB | FileTypeOther
     SizeBytes int64
     MTime     time.Time
-    JobStatus string   // last job status, joined from jobs table
+    JobStatus string    // last job status, joined from jobs table; "" if no job
 }
 ```
 
@@ -219,6 +232,9 @@ type Processor interface {
     Enqueue(ctx context.Context, path string) error
     Skip(ctx context.Context, path string, reason string) error
     Unskip(ctx context.Context, path string) error
+    // GetJob returns the latest job record for a path, or nil if none exists.
+    // Used by the Files tab history modal.
+    GetJob(ctx context.Context, path string) (*Job, error)
 }
 
 type ProcessorStatus struct {
@@ -234,16 +250,21 @@ type SearchIndex interface {
     Index(ctx context.Context, doc NoteDocument) error
     Search(ctx context.Context, q SearchQuery) ([]SearchResult, error)
     Delete(ctx context.Context, path string) error
+    // IndexPage is a convenience wrapper around Index used by the worker so
+    // it doesn't need to import the search package directly (avoids a
+    // potential circular import). Satisfies the processor.Indexer interface.
+    IndexPage(ctx context.Context, path string, pageIdx int,
+              source, bodyText, titleText, keywords string) error
 }
 
 type NoteDocument struct {
-    Path       string
-    Page       int
-    TitleText  string
-    BodyText   string
-    Keywords   []string
-    Source     string   // "myScript" | "api"
-    Model      string
+    Path      string
+    Page      int
+    TitleText string
+    BodyText  string
+    Keywords  string  // space-separated keyword text extracted from KEYWORD blocks
+    Source    string  // "myScript" | "api"
+    Model     string
 }
 
 type SearchQuery struct {
@@ -410,8 +431,16 @@ Investigation found:
 
 ## Additional Considerations
 
-**Engine.IO inbound events:** The specific event names emitted by supernote-service when a file is synced are unknown. Phase 8 includes an investigation step to snoop the WebSocket connection while syncing a file. If no usable events exist, the engineio.go component is omitted and fsnotify + reconciler provide full coverage.
+**Engine.IO inbound events:** The specific event names emitted by supernote-service when a file is synced are unknown. Phase 8 includes an investigation step to snoop the WebSocket connection while syncing a file. If no usable events exist, `extractNotePaths` remains a stub and fsnotify + reconciler provide full coverage (which is the current state).
 
 **File size guard:** Files exceeding `UB_OCR_MAX_FILE_MB` are set to `skipped` with `skip_reason = "size_limit"`. The per-file force-include action in the Files tab overrides this for individual files.
+
+**OCR API compatibility:** The original design assumed the Anthropic Messages API format (`/v1/messages`). The implementation supports two formats via `UB_OCR_FORMAT`:
+- `anthropic` (default): Anthropic Messages API — works with direct Anthropic or OpenRouter
+- `openai`: OpenAI Chat Completions API (`/v1/chat/completions`) — works with vLLM, Ollama, and compatible local servers
+
+Both formats use `Authorization: Bearer <key>`. Leave the key blank for unauthenticated local endpoints.
+
+**Moved and deleted files:** When a file is moved or deleted, fsnotify fires events on the new path (Create) and the old path ceases to exist. The old path's rows in `notes`, `jobs`, and `note_content` become orphans. The reconciler's `Scan` call prunes these orphans after each walk: any path in the DB that was not found on disk is deleted in FK-safe order (`note_content` → `jobs` → `notes`). The FTS5 index is cleaned up automatically by the schema's delete trigger. Moves are therefore handled correctly within one reconciler cycle (up to 15 minutes).
 
 **Implementation scoping:** This design has 8 phases — at the limit for a single implementation plan. If scope needs to be trimmed, Phase 7 (command & control UI) is the most separable and could move to a follow-on plan.
