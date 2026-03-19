@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/jpeg"
 	"io"
@@ -21,8 +22,10 @@ import (
 func (s *Store) processJob(ctx context.Context, job *Job) {
 	err := s.executeJob(ctx, job)
 	if skipped, ok := err.(skipError); ok {
-		s.db.ExecContext(ctx, "UPDATE jobs SET status=?, skip_reason=? WHERE id=?",
-			StatusSkipped, skipped.Reason, job.ID)
+		if _, err := s.db.ExecContext(ctx, "UPDATE jobs SET status=?, skip_reason=? WHERE id=?",
+			StatusSkipped, skipped.Reason, job.ID); err != nil {
+			s.logger.Error("failed to mark job skipped", "job_id", job.ID, "err", err)
+		}
 		return
 	}
 	if err != nil {
@@ -96,7 +99,9 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 			if p.Index == 0 {
 				tt, kw = titleText, keywordsText
 			}
-			s.cfg.Indexer.IndexPage(ctx, job.NotePath, p.Index, "myScript", bodyText, tt, kw)
+			if err := s.cfg.Indexer.IndexPage(ctx, job.NotePath, p.Index, "myScript", bodyText, tt, kw); err != nil {
+				s.logger.Error("failed to index page", "path", job.NotePath, "page", p.Index, "err", err)
+			}
 		}
 	}
 
@@ -158,7 +163,9 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 		}
 
 		if s.cfg.Indexer != nil {
-			s.cfg.Indexer.IndexPage(ctx, job.NotePath, pageIdx, "api", text, "", "")
+			if err := s.cfg.Indexer.IndexPage(ctx, job.NotePath, pageIdx, "api", text, "", ""); err != nil {
+				s.logger.Error("failed to index page", "path", job.NotePath, "page", pageIdx, "err", err)
+			}
 		}
 	}
 
@@ -173,7 +180,11 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 // Returns an error if backup is required but copying fails.
 func (s *Store) ensureBackup(ctx context.Context, path string) error {
 	var backupPath sql.NullString
-	s.db.QueryRowContext(ctx, "SELECT backup_path FROM notes WHERE path=?", path).Scan(&backupPath)
+	if err := s.db.QueryRowContext(ctx, "SELECT backup_path FROM notes WHERE path=?", path).Scan(&backupPath); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) && err != nil {
+			s.logger.Error("failed to query backup_path", "path", path, "err", err)
+		}
+	}
 	if backupPath.Valid && backupPath.String != "" {
 		return nil // already backed up
 	}
@@ -208,10 +219,12 @@ func (s *Store) ensureBackup(ctx context.Context, path string) error {
 		return fmt.Errorf("rename backup: %w", err)
 	}
 
-	s.db.ExecContext(ctx,
+	if _, err := s.db.ExecContext(ctx,
 		"UPDATE notes SET backup_path=?, backed_up_at=? WHERE path=?",
 		dst, time.Now().Unix(), path,
-	)
+	); err != nil {
+		s.logger.Error("failed to update backup_path", "path", path, "err", err)
+	}
 	return nil
 }
 
