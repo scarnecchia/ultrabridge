@@ -1,6 +1,6 @@
 module github.com/sysop/ultrabridge
 
-go 1.22.2
+go 1.24.7
 
 require (
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
