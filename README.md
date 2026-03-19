@@ -207,4 +207,4 @@ Use a self-signed certificate and configure your CalDAV client to trust it, or u
 
 ## License
 
-Same as UltraBridge project.
+[Apache 2.0.]https://www.apache.org/licenses/LICENSE-2.0.txt
