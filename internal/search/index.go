@@ -16,6 +16,8 @@ type SearchIndex interface {
 	// IndexPage satisfies processor.Indexer — convenience wrapper around Index.
 	// titleText and keywords are populated for page 0 only; pass empty strings for other pages.
 	IndexPage(ctx context.Context, path string, pageIdx int, source, bodyText, titleText, keywords string) error
+	// GetContent returns all indexed content for a note, ordered by page.
+	GetContent(ctx context.Context, path string) ([]NoteDocument, error)
 }
 
 // Store implements SearchIndex using SQLite FTS5.
@@ -103,6 +105,26 @@ func (s *Store) Search(ctx context.Context, q SearchQuery) ([]SearchResult, erro
 func (s *Store) Delete(ctx context.Context, path string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM note_content WHERE note_path=?", path)
 	return err
+}
+
+func (s *Store) GetContent(ctx context.Context, path string) ([]NoteDocument, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT note_path, page, COALESCE(title_text,''), COALESCE(body_text,''),
+		       COALESCE(keywords,''), COALESCE(source,''), COALESCE(model,'')
+		FROM note_content WHERE note_path=? ORDER BY page`, path)
+	if err != nil {
+		return nil, fmt.Errorf("get content: %w", err)
+	}
+	defer rows.Close()
+	var docs []NoteDocument
+	for rows.Next() {
+		var d NoteDocument
+		if err := rows.Scan(&d.Path, &d.Page, &d.TitleText, &d.BodyText, &d.Keywords, &d.Source, &d.Model); err != nil {
+			return nil, fmt.Errorf("get content scan: %w", err)
+		}
+		docs = append(docs, d)
+	}
+	return docs, rows.Err()
 }
 
 // escapeFTS5 wraps the user query in double quotes and escapes internal quotes,

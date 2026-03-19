@@ -1,18 +1,24 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"image/jpeg"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+
+	gosnote "github.com/jdkruzr/go-sn/note"
 
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/logging"
@@ -93,6 +99,8 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /files/force", h.handleFilesForce)
 	h.mux.HandleFunc("GET /files/status", h.handleFilesStatus)
 	h.mux.HandleFunc("GET /files/history", h.handleFilesHistory)
+	h.mux.HandleFunc("GET /files/content", h.handleFilesContent)
+	h.mux.HandleFunc("GET /files/render", h.handleFilesRender)
 	h.mux.HandleFunc("POST /processor/start", h.handleProcessorStart)
 	h.mux.HandleFunc("POST /processor/stop", h.handleProcessorStop)
 	h.registerLogStreamHandler(broadcaster)
@@ -492,6 +500,85 @@ func (h *Handler) handleFilesHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(job)
+}
+
+// handleFilesContent returns indexed note_content for a single file as JSON.
+// GET /files/content?path=<absolute_path>
+func (h *Handler) handleFilesContent(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	path := r.URL.Query().Get("path")
+	if path == "" || h.searchIndex == nil {
+		w.Write([]byte("[]"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	docs, err := h.searchIndex.GetContent(ctx, path)
+	if err != nil {
+		h.logger.Error("failed to get content", "path", path, "error", err)
+		w.Write([]byte("[]"))
+		return
+	}
+	json.NewEncoder(w).Encode(docs)
+}
+
+// handleFilesRender renders a single page of a .note file as JPEG.
+// GET /files/render?path=<absolute_path>&page=<int>
+func (h *Handler) handleFilesRender(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	pageStr := r.URL.Query().Get("page")
+	if path == "" {
+		http.Error(w, "missing path", http.StatusBadRequest)
+		return
+	}
+	pageIdx, err := strconv.Atoi(pageStr)
+	if err != nil || pageIdx < 0 {
+		pageIdx = 0
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		h.logger.Error("render: open failed", "path", path, "err", err)
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	n, err := gosnote.Load(f)
+	f.Close()
+	if err != nil {
+		h.logger.Error("render: load failed", "path", path, "err", err)
+		http.Error(w, "invalid note file", http.StatusInternalServerError)
+		return
+	}
+
+	if pageIdx >= len(n.Pages) {
+		http.Error(w, fmt.Sprintf("page %d out of range (note has %d pages)", pageIdx, len(n.Pages)), http.StatusBadRequest)
+		return
+	}
+
+	p := n.Pages[pageIdx]
+	tp, err := n.TotalPathData(p)
+	if err != nil || tp == nil {
+		http.Error(w, "no stroke data for page", http.StatusNoContent)
+		return
+	}
+	objs, err := gosnote.DecodeObjects(tp, n.PageWidth(), n.PageHeight())
+	if err != nil {
+		h.logger.Error("render: decode failed", "path", path, "page", pageIdx, "err", err)
+		http.Error(w, "decode error", http.StatusInternalServerError)
+		return
+	}
+	img := gosnote.RenderObjects(objs, n.PageWidth(), n.PageHeight(), nil)
+
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		h.logger.Error("render: jpeg encode failed", "err", err)
+		http.Error(w, "encode error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.Write(buf.Bytes())
 }
 
 func (h *Handler) handleProcessorStart(w http.ResponseWriter, r *http.Request) {

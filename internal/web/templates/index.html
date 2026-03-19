@@ -431,14 +431,21 @@
         </div>
     </div>
 
-    <!-- Job history modal (AC7.6) -->
-    <div id="history-modal" style="display:none; position:fixed; top:20%; left:50%;
+    <!-- Note details modal -->
+    <div id="history-modal" style="display:none; position:fixed; top:5%; left:50%;
          transform:translateX(-50%); background:white; border:1px solid #ccc;
-         padding:1.5rem; border-radius:6px; min-width:400px; z-index:100; box-shadow:0 4px 12px rgba(0,0,0,0.15);">
-      <h3 style="margin-top:0;">Job History</h3>
-      <pre id="history-content" style="font-size:0.85rem; white-space:pre-wrap;"></pre>
-      <button onclick="document.getElementById('history-modal').style.display='none'"
-              class="btn-small">Close</button>
+         padding:1.5rem; border-radius:6px; width:800px; max-width:90vw; max-height:85vh;
+         overflow-y:auto; z-index:100; box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <h3 style="margin:0;">Note Details</h3>
+        <button onclick="document.getElementById('history-modal').style.display='none'"
+                class="btn-small">Close</button>
+      </div>
+      <div id="history-job" style="margin-bottom:1rem;">
+        <h4 style="margin:0 0 0.5rem;">Job Info</h4>
+        <pre id="history-content" style="font-size:0.8rem; white-space:pre-wrap; background:#f8f8f8; padding:0.5rem; border-radius:3px; max-height:150px; overflow-y:auto;"></pre>
+      </div>
+      <div id="history-pages"></div>
     </div>
 
     <script>
@@ -591,17 +598,66 @@
         }
 
         function showHistory(path) {
+          var modal = document.getElementById('history-modal');
+          var jobPre = document.getElementById('history-content');
+          var pagesDiv = document.getElementById('history-pages');
+          jobPre.textContent = 'Loading...';
+          pagesDiv.innerHTML = '';
+          modal.style.display = 'block';
+
+          // Fetch job info
           fetch('/files/history?path=' + encodeURIComponent(path))
             .then(function(r) { return r.json(); })
             .then(function(data) {
-              document.getElementById('history-content').textContent =
-                data ? JSON.stringify(data, null, 2) : 'No job record found.';
-              document.getElementById('history-modal').style.display = 'block';
+              jobPre.textContent = data ? JSON.stringify(data, null, 2) : 'No job record found.';
+            })
+            .catch(function() { jobPre.textContent = 'Failed to load job info.'; });
+
+          // Fetch indexed content + render images
+          fetch('/files/content?path=' + encodeURIComponent(path))
+            .then(function(r) { return r.json(); })
+            .then(function(pages) {
+              if (!pages || pages.length === 0) {
+                pagesDiv.innerHTML = '<p style="color:#666;">No indexed content.</p>';
+                return;
+              }
+              pagesDiv.innerHTML = '<h4 style="margin:0 0 0.5rem;">Pages</h4>';
+              pages.forEach(function(pg) {
+                var div = document.createElement('div');
+                div.style.cssText = 'display:flex; gap:1rem; margin-bottom:1rem; padding:0.5rem; border:1px solid #eee; border-radius:4px;';
+
+                var imgDiv = document.createElement('div');
+                imgDiv.style.cssText = 'flex-shrink:0;';
+                var img = document.createElement('img');
+                img.src = '/files/render?path=' + encodeURIComponent(pg.Path) + '&page=' + pg.Page;
+                img.alt = 'Page ' + pg.Page;
+                img.style.cssText = 'width:200px; border:1px solid #ddd; border-radius:3px; background:#fafafa;';
+                img.onerror = function() { this.alt = 'No render'; this.style.display = 'none'; };
+                imgDiv.appendChild(img);
+
+                var textDiv = document.createElement('div');
+                textDiv.style.cssText = 'flex:1; min-width:0;';
+                var header = '<strong>Page ' + pg.Page + '</strong> <span style="color:#888; font-size:0.8rem;">[' + pg.Source + ']</span>';
+                var bodyText = pg.BodyText || '<em style="color:#999;">empty</em>';
+                textDiv.innerHTML = header + '<pre style="font-size:0.8rem; white-space:pre-wrap; margin-top:0.3rem; max-height:200px; overflow-y:auto;">' + escapeHtml(bodyText) + '</pre>';
+                if (pg.Keywords) {
+                  textDiv.innerHTML += '<div style="font-size:0.8rem; color:#555; margin-top:0.3rem;">Keywords: ' + escapeHtml(pg.Keywords) + '</div>';
+                }
+
+                div.appendChild(imgDiv);
+                div.appendChild(textDiv);
+                pagesDiv.appendChild(div);
+              });
             })
             .catch(function() {
-              document.getElementById('history-content').textContent = 'Failed to load history.';
-              document.getElementById('history-modal').style.display = 'block';
+              pagesDiv.innerHTML = '<p style="color:#842029;">Failed to load content.</p>';
             });
+        }
+
+        function escapeHtml(text) {
+          var div = document.createElement('div');
+          div.textContent = text;
+          return div.innerHTML;
         }
     </script>
 </body>

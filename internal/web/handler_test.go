@@ -135,6 +135,9 @@ func (m *mockSearchIndex) Delete(_ context.Context, _ string) error { return nil
 func (m *mockSearchIndex) IndexPage(_ context.Context, _ string, _ int, _, _, _, _ string) error {
 	return nil
 }
+func (m *mockSearchIndex) GetContent(_ context.Context, _ string) ([]search.NoteDocument, error) {
+	return nil, nil
+}
 
 // mockProcessor implements Processor for testing
 type mockProcessor struct {
