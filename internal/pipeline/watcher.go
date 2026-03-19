@@ -57,13 +57,15 @@ func (p *Pipeline) runWatcher(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if event.Has(fsnotify.Chmod) {
-				continue // ignore attribute-only changes (common from antivirus etc.)
+			if event.Op == fsnotify.Chmod {
+				continue // ignore attribute-only changes (Linux/inotify: Chmod is never combined)
 			}
 			// If a new directory is created, watch it immediately.
 			if event.Has(fsnotify.Create) {
 				if fi, err := os.Stat(event.Name); err == nil && fi.IsDir() {
-					watcher.Add(event.Name)
+					if err := watcher.Add(event.Name); err != nil {
+						p.logger.Warn("watcher add new dir failed", "path", event.Name, "err", err)
+					}
 				}
 			}
 			if event.Has(fsnotify.Create) || event.Has(fsnotify.Write) || event.Has(fsnotify.Rename) {
@@ -85,7 +87,9 @@ func (p *Pipeline) addDirsRecursive(w *fsnotify.Watcher, root string) error {
 			return nil // skip unreadable entries
 		}
 		if d.IsDir() {
-			w.Add(path)
+			if err := w.Add(path); err != nil {
+				p.logger.Warn("watcher add dir failed", "path", path, "err", err)
+			}
 		}
 		return nil
 	})

@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
-	"strings"
 
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/processor"
@@ -94,6 +93,3 @@ func (p *Pipeline) enqueue(ctx context.Context, path string) {
 	}
 }
 
-func fileExt(path string) string {
-	return strings.ToLower(filepath.Ext(path))
-}
