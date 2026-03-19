@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -23,6 +24,7 @@ func (s *Store) Scan(ctx context.Context) ([]string, error) {
 
 	now := time.Now().Unix()
 	var changed []string
+	seen := make(map[string]struct{})
 
 	err := filepath.WalkDir(s.notesPath, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -75,11 +77,49 @@ func (s *Store) Scan(ctx context.Context) ([]string, error) {
 			changed = append(changed, path)
 		}
 		// mtime unchanged — skip
-
+		seen[path] = struct{}{}
 		return nil
 	})
 
+	if err == nil {
+		s.pruneOrphans(ctx, seen)
+	}
 	return changed, err
+}
+
+// pruneOrphans removes notes, jobs, and note_content rows for paths that no
+// longer exist on disk (e.g. files that were moved or deleted since last scan).
+// Deletion order respects the jobs→notes FK constraint.
+func (s *Store) pruneOrphans(ctx context.Context, seen map[string]struct{}) {
+	rows, err := s.db.QueryContext(ctx, "SELECT path FROM notes")
+	if err != nil {
+		slog.Warn("notestore prune: query failed", "err", err)
+		return
+	}
+	defer rows.Close()
+
+	var orphans []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			slog.Warn("notestore prune: scan failed", "err", err)
+			return
+		}
+		if _, ok := seen[path]; !ok {
+			orphans = append(orphans, path)
+		}
+	}
+	rows.Close()
+
+	for _, path := range orphans {
+		s.db.ExecContext(ctx, "DELETE FROM note_content WHERE note_path=?", path)
+		s.db.ExecContext(ctx, "DELETE FROM jobs WHERE note_path=?", path)
+		if _, err := s.db.ExecContext(ctx, "DELETE FROM notes WHERE path=?", path); err != nil {
+			slog.Warn("notestore prune: delete failed", "path", path, "err", err)
+		} else {
+			slog.Info("notestore: pruned orphan", "path", path)
+		}
+	}
 }
 
 // UpsertFile ensures a single file is present in the notes table.

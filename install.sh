@@ -114,7 +114,17 @@ info "Notes Pipeline (optional)"
 echo
 echo "  UltraBridge can scan your .note files, index handwritten text, and"
 echo "  optionally run vision-API OCR to extract content from unrecognised pages."
-echo "  Leave UB_NOTES_PATH blank to skip the pipeline entirely."
+echo
+echo "  Before continuing, have these ready:"
+echo "    - Full path to your .note files directory"
+echo "      (usually /mnt/supernote/note/<your-email@address>)"
+echo "    - Full path to a backup directory with sufficient free space"
+echo "      (recommended — originals are copied here before any OCR writes)"
+echo "    - API credentials if you want OCR"
+echo "      (OpenRouter key, or http://localhost:<port> for a local vLLM)"
+echo
+echo "  Leave the path blank now to skip the pipeline — you can re-run"
+echo "  install.sh at any time to enable it later."
 echo
 
 prompt UB_NOTES_PATH "Path to your .note files (leave blank to skip)" ""

@@ -25,3 +25,4 @@ listing for the web UI Files tab. Bridges the filesystem with the database.
 - Every file in the notes table has an absolute path as PK and a relative path for display
 - FileType is classified by extension: .note, .pdf, .epub, or "other"
 - Scan walks the entire tree; returns changed paths for the pipeline to enqueue
+- Scan prunes orphans: after walking, any path in the DB that was not seen on disk is deleted from `note_content`, `jobs`, and `notes` (in that order, to respect the jobs→notes FK). This handles moved and deleted files.

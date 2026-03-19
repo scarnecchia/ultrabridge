@@ -239,3 +239,35 @@ func TestComputeSHA256(t *testing.T) {
 		t.Errorf("digest = %s, want %s", digest, expectedDigest)
 	}
 }
+
+// TestScan_PrunesOrphans verifies that Scan removes DB entries for files that
+// have been moved or deleted since the last scan (e.g. after a device re-org).
+func TestScan_PrunesOrphans(t *testing.T) {
+	s := openTestStore(t)
+	notePath := filepath.Join(s.notesPath, "test.note")
+
+	// First scan: file exists, gets inserted
+	if err := os.WriteFile(notePath, []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Scan(context.Background()); err != nil {
+		t.Fatalf("first Scan: %v", err)
+	}
+	if _, err := s.Get(context.Background(), notePath); err != nil {
+		t.Fatalf("Get before delete: %v", err)
+	}
+
+	// File is moved/deleted
+	if err := os.Remove(notePath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second scan: file gone, DB entry should be pruned
+	if _, err := s.Scan(context.Background()); err != nil {
+		t.Fatalf("second Scan: %v", err)
+	}
+	_, err := s.Get(context.Background(), notePath)
+	if !IsNotFound(err) {
+		t.Errorf("expected ErrNotFound after prune, got %v", err)
+	}
+}

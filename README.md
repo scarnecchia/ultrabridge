@@ -20,13 +20,24 @@ UltraBridge is a sidecar service for [Supernote Private Cloud](https://support.s
 
 ## Quick Start
 
-The interactive installer handles configuration, password hashing, Docker image build, and startup:
+### Before you run the installer
+
+Have the following ready:
+
+- **Username and password** for CalDAV/web access (you choose these)
+- **Full path to your `.note` files** — the directory where Supernote stores notes, usually `/mnt/supernote/note/your@email.com` (the directory name contains your account email)
+- **Full path for backups** *(recommended)* — a directory with sufficient free space; UltraBridge copies each `.note` file here before writing OCR results, so you can always recover the original
+- **API credentials** *(optional, for OCR)* — an [OpenRouter](https://openrouter.ai) key, a direct Anthropic key, or the base URL of a local vLLM instance
+
+You can skip the notes pipeline during install and enable it later by re-running `install.sh`.
+
+### Run the installer
 
 ```bash
 ./install.sh
 ```
 
-It prompts for username, password, port, and collection name, then builds and starts the container. Safe to re-run to change configuration.
+It prompts for username, password, port, collection name, and optional notes pipeline settings, then builds and starts the container. Safe to re-run to change configuration.
 
 After code changes, rebuild and restart without reconfiguring:
 
