@@ -153,3 +153,89 @@ func TestGet_NotFound(t *testing.T) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
+
+func TestUpsertFile_InsertPath(t *testing.T) {
+	s := openTestStore(t)
+	noteFile := filepath.Join(s.notesPath, "new.note")
+	if err := os.WriteFile(noteFile, []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// UpsertFile should insert the file
+	if err := s.UpsertFile(context.Background(), noteFile); err != nil {
+		t.Fatalf("UpsertFile insert: %v", err)
+	}
+
+	// Verify the file was inserted
+	nf, err := s.Get(context.Background(), noteFile)
+	if err != nil {
+		t.Fatalf("Get after upsert: %v", err)
+	}
+	if nf.FileType != FileTypeNote {
+		t.Errorf("FileType = %q, want note", nf.FileType)
+	}
+}
+
+func TestUpsertFile_ConflictUpdatePath(t *testing.T) {
+	s := openTestStore(t)
+	noteFile := filepath.Join(s.notesPath, "existing.note")
+	if err := os.WriteFile(noteFile, []byte("v1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// First upsert (insert)
+	if err := s.UpsertFile(context.Background(), noteFile); err != nil {
+		t.Fatalf("UpsertFile first: %v", err)
+	}
+	nf1, _ := s.Get(context.Background(), noteFile)
+	size1 := nf1.SizeBytes
+
+	// Update the file
+	if err := os.WriteFile(noteFile, []byte("v1_updated_content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second upsert (should update on conflict)
+	if err := s.UpsertFile(context.Background(), noteFile); err != nil {
+		t.Fatalf("UpsertFile second: %v", err)
+	}
+
+	nf2, _ := s.Get(context.Background(), noteFile)
+	if nf2.SizeBytes <= size1 {
+		t.Errorf("size after conflict update = %d, want > %d (file was updated)", nf2.SizeBytes, size1)
+	}
+}
+
+func TestComputeSHA256(t *testing.T) {
+	// Create a temporary file with known content
+	tmpFile, err := os.CreateTemp("", "test-*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	content := []byte("test content for sha256")
+	if _, err := tmpFile.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	tmpFile.Close()
+
+	// Compute SHA256
+	digest, err := ComputeSHA256(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("ComputeSHA256: %v", err)
+	}
+
+	// Verify the digest is a valid hex string (64 chars for SHA256)
+	if len(digest) != 64 {
+		t.Errorf("digest length = %d, want 64 (SHA256 hex)", len(digest))
+	}
+
+	// Verify the digest matches expected value (precomputed)
+	// echo -n "test content for sha256" | sha256sum
+	// -> 47914c8afb6da51b436bca58d0fd288d7cd3ea252f778b57617b86f12306c20f
+	expectedDigest := "47914c8afb6da51b436bca58d0fd288d7cd3ea252f778b57617b86f12306c20f"
+	if digest != expectedDigest {
+		t.Errorf("digest = %s, want %s", digest, expectedDigest)
+	}
+}

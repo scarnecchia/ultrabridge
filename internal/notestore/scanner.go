@@ -3,6 +3,8 @@ package notestore
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -47,15 +49,21 @@ func (s *Store) Scan(ctx context.Context) ([]string, error) {
 		var existingMtime int64
 		err = s.db.QueryRowContext(ctx, "SELECT mtime FROM notes WHERE path = ?", path).Scan(&existingMtime)
 		if err != nil {
-			// New file — insert
-			_, insertErr := s.db.ExecContext(ctx, `
-				INSERT INTO notes (path, rel_path, file_type, size_bytes, mtime, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				path, relPath, string(ft), sizeBytes, mtimeUnix, now, now)
-			if insertErr != nil {
-				return fmt.Errorf("insert note %s: %w", path, insertErr)
+			// Check if this is a "not found" error (new file) or a real DB error
+			if errors.Is(err, sql.ErrNoRows) {
+				// New file — insert
+				_, insertErr := s.db.ExecContext(ctx, `
+					INSERT INTO notes (path, rel_path, file_type, size_bytes, mtime, created_at, updated_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?)`,
+					path, relPath, string(ft), sizeBytes, mtimeUnix, now, now)
+				if insertErr != nil {
+					return fmt.Errorf("insert note %s: %w", path, insertErr)
+				}
+				changed = append(changed, path)
+			} else {
+				// Real DB error (connection lost, locked, etc.)
+				return fmt.Errorf("query note mtime %s: %w", path, err)
 			}
-			changed = append(changed, path)
 		} else if existingMtime != mtimeUnix {
 			// mtime changed — update
 			_, updateErr := s.db.ExecContext(ctx, `

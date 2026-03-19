@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,13 +71,24 @@ func (s *Store) List(ctx context.Context, relPath string) ([]NoteFile, error) {
 	if s.notesPath != "" {
 		dirPath := filepath.Join(s.notesPath, relPath)
 		entries, err := os.ReadDir(dirPath)
-		if err == nil {
+		if err != nil {
+			// Distinguish "not found" (acceptable, dir may not exist yet) from real errors
+			if !os.IsNotExist(err) {
+				// Real error like permission denied
+				slog.Warn("notestore list: failed to read directory", "path", dirPath, "err", err)
+			}
+		} else {
 			for _, e := range entries {
 				if !e.IsDir() {
 					continue
 				}
 				childRel := filepath.Join(relPath, e.Name())
-				info, _ := e.Info()
+				info, err := e.Info()
+				if err != nil {
+					// Log Info() errors but continue with next entry
+					slog.Warn("notestore list: failed to get dir entry info", "name", e.Name(), "err", err)
+					continue
+				}
 				var mtime time.Time
 				if info != nil {
 					mtime = info.ModTime().UTC()
