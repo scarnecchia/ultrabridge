@@ -118,7 +118,8 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"tasks": tasks,
+		"tasks":     tasks,
+		"activeTab": "tasks",
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -327,6 +328,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
 			"filesError": "UB_NOTES_PATH is not configured",
+			"activeTab":  "files",
 		}); err != nil {
 			h.logger.Error("failed to render template", "error", err)
 		}
@@ -355,6 +357,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		"files":       files,
 		"relPath":     relPath,
 		"breadcrumbs": buildBreadcrumbs(relPath),
+		"activeTab":   "files",
 	}); err != nil {
 		h.logger.Error("failed to render template", "error", err)
 	}
@@ -376,6 +379,7 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if err := h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
 		"searchQuery":   query,
 		"searchResults": results,
+		"activeTab":     "search",
 	}); err != nil {
 		h.logger.Error("failed to render template", "error", err)
 	}

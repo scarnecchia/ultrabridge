@@ -221,10 +221,10 @@
         <h1>UltraBridge Tasks</h1>
 
         <div class="tabs">
-            <button class="tab-button active" onclick="switchTab('tasks')">Tasks</button>
-            <button class="tab-button" onclick="switchTab('logs')">Logs</button>
-            <button class="tab-button" onclick="switchTab('files')">Files</button>
-            <button class="tab-button" onclick="switchTab('search')">Search</button>
+            <button class="tab-button {{if eq .activeTab "tasks"}}active{{end}}" onclick="switchTab('tasks')">Tasks</button>
+            <button class="tab-button {{if eq .activeTab "logs"}}active{{end}}" onclick="switchTab('logs')">Logs</button>
+            <a class="tab-button {{if eq .activeTab "files"}}active{{end}}" href="/files" style="text-decoration:none;">Files</a>
+            <a class="tab-button {{if eq .activeTab "search"}}active{{end}}" href="/search" style="text-decoration:none;">Search</a>
         </div>
 
         <!-- Tasks Tab -->
@@ -497,6 +497,21 @@
             })
             .catch(function() {});
         }
+
+        // On page load, activate the tab the server designated (for /files and /search routes).
+        (function() {
+            const active = "{{.activeTab}}";
+            if (active && active !== "tasks") {
+                const tabs = document.querySelectorAll('.tab-content');
+                tabs.forEach(t => t.classList.remove('active'));
+                const el = document.getElementById(active);
+                if (el) el.classList.add('active');
+                if (active === 'files') {
+                    updateProcessorStatus();
+                    statusInterval = setInterval(updateProcessorStatus, 5000);
+                }
+            }
+        })();
 
         function switchTab(tabName) {
             // Hide all tabs
