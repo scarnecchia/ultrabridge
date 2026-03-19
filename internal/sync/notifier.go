@@ -20,6 +20,7 @@ type Notifier struct {
 	mu      sync.Mutex       // Protects conn field
 	conn    *websocket.Conn
 	writeMu sync.Mutex       // Serializes all WriteMessage calls
+	events  chan []byte      // inbound non-ping messages; buffered
 }
 
 func NewNotifier(socketIOURL string, logger *slog.Logger) *Notifier {
@@ -40,6 +41,7 @@ func NewNotifier(socketIOURL string, logger *slog.Logger) *Notifier {
 	return &Notifier{
 		url:    u.String(),
 		logger: logger,
+		events: make(chan []byte, 16),
 	}
 }
 
@@ -115,6 +117,12 @@ func (n *Notifier) dial(ctx context.Context) error {
 				conn.Close()
 				return fmt.Errorf("send pong: %w", err)
 			}
+		} else {
+			// Forward non-ping messages to the channel
+			select {
+			case n.events <- msg:
+			default: // drop if buffer full rather than block the read loop
+			}
 		}
 	}
 }
@@ -152,6 +160,11 @@ func (n *Notifier) Notify(ctx context.Context) error {
 
 	n.logger.Info("STARTSYNC sent")
 	return nil
+}
+
+// Events returns a channel of raw inbound Engine.IO frames.
+func (n *Notifier) Events() <-chan []byte {
+	return n.events
 }
 
 // Close shuts down the notifier connection.
