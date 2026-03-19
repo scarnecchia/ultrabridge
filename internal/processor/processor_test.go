@@ -64,9 +64,36 @@ func TestProcessor_StopGraceful(t *testing.T) {
 	s.Start(ctx)
 	seedNotesRow(t, s, "/fake/path.note")
 	s.Enqueue(ctx, "/fake/path.note")
-	time.Sleep(50 * time.Millisecond)
+
+	// Wait for the job to be claimed and start processing (with 7-second timeout).
+	// The poll interval in run() is 5 seconds, so we need to wait long enough for
+	// at least one iteration to claim the job.
+	deadline := time.Now().Add(7 * time.Second)
+	for time.Now().Before(deadline) {
+		j, _ := s.GetJob(ctx, "/fake/path.note")
+		if j != nil && j.Status != StatusPending {
+			// Job has been claimed, allow a brief moment for processJob to complete
+			time.Sleep(50 * time.Millisecond)
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	if err := s.Stop(); err != nil {
 		t.Errorf("Stop: %v", err)
+	}
+
+	// Verify the job completed before shutdown.
+	// After Stop() returns, the run() goroutine has exited, so all pending work
+	// should be complete. The job should be marked done.
+	j, err := s.GetJob(ctx, "/fake/path.note")
+	if err != nil {
+		t.Errorf("GetJob: %v", err)
+	}
+	if j == nil {
+		t.Error("expected job to exist after Stop")
+	} else if j.Status != StatusDone {
+		t.Errorf("job status = %q, want done (graceful stop should complete in-flight jobs)", j.Status)
 	}
 }
 

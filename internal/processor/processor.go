@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -24,6 +25,7 @@ type Processor interface {
 // Store implements Processor backed by SQLite.
 type Store struct {
 	db     *sql.DB
+	logger *slog.Logger
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -31,7 +33,11 @@ type Store struct {
 
 // New creates a Processor Store.
 func New(db *sql.DB) *Store {
-	return &Store{db: db}
+	logger := slog.Default()
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(nil, nil))
+	}
+	return &Store{db: db, logger: logger}
 }
 
 func (s *Store) Start(ctx context.Context) error {
@@ -68,8 +74,12 @@ func (s *Store) Status() ProcessorStatus {
 	s.mu.Unlock()
 
 	var pending, inFlight int
-	s.db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status=?", StatusPending).Scan(&pending)
-	s.db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status=?", StatusInProgress).Scan(&inFlight)
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status=?", StatusPending).Scan(&pending); err != nil {
+		s.logger.Error("failed to count pending jobs", "error", err)
+	}
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status=?", StatusInProgress).Scan(&inFlight); err != nil {
+		s.logger.Error("failed to count in-flight jobs", "error", err)
+	}
 	return ProcessorStatus{Running: running, Pending: pending, InFlight: inFlight}
 }
 
@@ -169,11 +179,14 @@ func (s *Store) markDone(ctx context.Context, jobID int64, errMsg string) {
 	if errMsg != "" {
 		status = StatusFailed
 	}
-	s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, `
 		UPDATE jobs SET status=?, last_error=?, finished_at=?, attempts=attempts+1
 		WHERE id=?`,
 		status, errMsg, time.Now().Unix(), jobID,
 	)
+	if err != nil {
+		s.logger.Error("failed to mark job done", "job_id", jobID, "error", err)
+	}
 }
 
 func (s *Store) run(ctx context.Context) {
