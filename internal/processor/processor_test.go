@@ -2,6 +2,7 @@ package processor
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -62,15 +63,27 @@ func TestProcessor_StopGraceful(t *testing.T) {
 	s := openTestProcessor(t)
 	ctx := context.Background()
 	s.Start(ctx)
-	seedNotesRow(t, s, "/fake/path.note")
-	s.Enqueue(ctx, "/fake/path.note")
+
+	// Copy test data file so executeJob can process it
+	src := filepath.Join("../../testdata", "20260318_154108 std one line.note")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Skipf("test file not found: %v", err)
+	}
+	tmpFile := filepath.Join(t.TempDir(), "test.note")
+	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	seedNotesRow(t, s, tmpFile)
+	s.Enqueue(ctx, tmpFile)
 
 	// Wait for the job to be claimed and start processing (with 7-second timeout).
 	// The poll interval in run() is 5 seconds, so we need to wait long enough for
 	// at least one iteration to claim the job.
 	deadline := time.Now().Add(7 * time.Second)
 	for time.Now().Before(deadline) {
-		j, _ := s.GetJob(ctx, "/fake/path.note")
+		j, _ := s.GetJob(ctx, tmpFile)
 		if j != nil && j.Status != StatusPending {
 			// Job has been claimed, allow a brief moment for processJob to complete
 			time.Sleep(50 * time.Millisecond)
@@ -86,7 +99,7 @@ func TestProcessor_StopGraceful(t *testing.T) {
 	// Verify the job completed before shutdown.
 	// After Stop() returns, the run() goroutine has exited, so all pending work
 	// should be complete. The job should be marked done.
-	j, err := s.GetJob(ctx, "/fake/path.note")
+	j, err := s.GetJob(ctx, tmpFile)
 	if err != nil {
 		t.Errorf("GetJob: %v", err)
 	}

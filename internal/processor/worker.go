@@ -19,11 +19,26 @@ import (
 
 // processJob executes the full pipeline for one job.
 func (s *Store) processJob(ctx context.Context, job *Job) {
-	if err := s.executeJob(ctx, job); err != nil {
+	err := s.executeJob(ctx, job)
+	if skipped, ok := err.(skipError); ok {
+		s.db.ExecContext(ctx, "UPDATE jobs SET status=?, skip_reason=? WHERE id=?",
+			StatusSkipped, skipped.Reason, job.ID)
+		return
+	}
+	if err != nil {
 		s.markDone(ctx, job.ID, err.Error())
 	} else {
 		s.markDone(ctx, job.ID, "")
 	}
+}
+
+// skipError signals that the job should be marked as skipped with a reason.
+type skipError struct {
+	Reason string
+}
+
+func (e skipError) Error() string {
+	return "skipped: " + e.Reason
 }
 
 func (s *Store) executeJob(ctx context.Context, job *Job) error {
@@ -34,10 +49,7 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 			return fmt.Errorf("stat: %w", err)
 		}
 		if info.Size() > int64(s.cfg.MaxFileMB)*1024*1024 {
-			s.db.ExecContext(ctx,
-				"UPDATE jobs SET status=?, skip_reason=? WHERE id=?",
-				StatusSkipped, SkipReasonSizeLimit, job.ID)
-			return nil
+			return skipError{SkipReasonSizeLimit}
 		}
 	}
 
