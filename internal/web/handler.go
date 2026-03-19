@@ -8,11 +8,13 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/logging"
+	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
 
@@ -22,6 +24,7 @@ var templateFS embed.FS
 type Handler struct {
 	store       ubcaldav.TaskStore
 	notifier    ubcaldav.SyncNotifier
+	noteStore   notestore.NoteStore
 	tmpl        *template.Template
 	mux         *http.ServeMux
 	logger      *slog.Logger
@@ -47,10 +50,11 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
 		store:       store,
 		notifier:    notifier,
+		noteStore:   noteStore,
 		logger:      logger,
 		mux:         http.NewServeMux(),
 		broadcaster: broadcaster,
@@ -58,8 +62,9 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger
 
 	// Parse the embedded templates with custom function map
 	funcMap := template.FuncMap{
-		"formatDueTime":  formatDueTime,
-		"formatCreated":  formatCreated,
+		"formatDueTime": formatDueTime,
+		"formatCreated": formatCreated,
+		"fileTypeStr":   func(ft notestore.FileType) string { return string(ft) },
 	}
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
@@ -72,6 +77,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, logger
 	h.mux.HandleFunc("POST /tasks", h.handleCreateTask)
 	h.mux.HandleFunc("POST /tasks/{id}/complete", h.handleCompleteTask)
 	h.mux.HandleFunc("POST /tasks/bulk", h.handleBulkAction)
+	h.mux.HandleFunc("GET /files", h.handleFiles)
 	h.registerLogStreamHandler(broadcaster)
 
 	return h
@@ -261,4 +267,74 @@ func (h *Handler) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// breadcrumb is a navigation segment for the Files tab.
+type breadcrumb struct {
+	Label   string
+	RelPath string
+}
+
+// buildBreadcrumbs returns the crumb chain for a relative path.
+// e.g. "Note/Folder" → [{Home,""},{Note,"Note"},{Folder,"Note/Folder"}]
+func buildBreadcrumbs(relPath string) []breadcrumb {
+	crumbs := []breadcrumb{{Label: "Home", RelPath: ""}}
+	if relPath == "" {
+		return crumbs
+	}
+	parts := strings.Split(relPath, "/")
+	for i, p := range parts {
+		crumbs = append(crumbs, breadcrumb{
+			Label:   p,
+			RelPath: strings.Join(parts[:i+1], "/"),
+		})
+	}
+	return crumbs
+}
+
+// safeRelPath validates and cleans a user-supplied relative path.
+// Returns the cleaned path and true on success, or "", false on traversal attempt.
+func safeRelPath(relPath string) (string, bool) {
+	if relPath == "" {
+		return "", true
+	}
+	cleaned := filepath.Clean(relPath)
+	if filepath.IsAbs(cleaned) || strings.HasPrefix(cleaned, "..") {
+		return "", false
+	}
+	return cleaned, true
+}
+
+func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
+	if h.noteStore == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
+			"filesError": "UB_NOTES_PATH is not configured",
+		})
+		return
+	}
+
+	rawPath := r.URL.Query().Get("path")
+	relPath, ok := safeRelPath(rawPath)
+	if !ok {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	files, err := h.noteStore.List(ctx, relPath)
+	if err != nil {
+		h.logger.Error("handleFiles list", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
+		"files":       files,
+		"relPath":     relPath,
+		"breadcrumbs": buildBreadcrumbs(relPath),
+	})
 }
