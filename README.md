@@ -1,6 +1,8 @@
-# UltraBridge CalDAV
+# UltraBridge
 
-UltraBridge is a CalDAV/WebDAV bridge for the Supernote Private Cloud, enabling synchronization of tasks between Supernote tablets and standard CalDAV clients (GNOME Evolution, DAVx5, 2Do, etc.). It sits alongside the Supernote stack as a companion microservice, reading from and writing to the same MariaDB database.
+UltraBridge is a "sidecar service" for the Supernote Private Cloud (and soon for other platforms!), which currently: 
+* Enables synchronization of tasks between Supernote tablets and standard CalDAV clients (GNOME Evolution, DAVx5, 2Do, etc.)
+* Sits alongside the Supernote stack as a companion microservice, reading from and writing to the same MariaDB database.
 
 ## Prerequisites
 
