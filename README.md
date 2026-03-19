@@ -1,5 +1,5 @@
-<p style="text-align: center;">
-  ![stylized representation of an Einstein-Rosen bridge](docs/erb.png)
+<p align="center">
+  <img src="https://github.com/jdkruzr/ultrabridge/blob/master/docs/erb.png?raw=true" alt="minimalistic depiction of Einstein-Rosen bridge"/>
 </p>
 
 # UltraBridge
