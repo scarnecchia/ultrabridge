@@ -15,6 +15,7 @@ import (
 
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/notestore"
+	"github.com/sysop/ultrabridge/internal/search"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
 
@@ -122,6 +123,18 @@ func (m *mockNoteStore) Scan(ctx context.Context) ([]string, error) {
 
 func (m *mockNoteStore) UpsertFile(_ context.Context, _ string) error { return nil }
 
+// mockSearchIndex implements SearchIndex for testing
+type mockSearchIndex struct{}
+
+func (m *mockSearchIndex) Index(_ context.Context, _ search.NoteDocument) error { return nil }
+func (m *mockSearchIndex) Search(_ context.Context, _ search.SearchQuery) ([]search.SearchResult, error) {
+	return nil, nil
+}
+func (m *mockSearchIndex) Delete(_ context.Context, _ string) error { return nil }
+func (m *mockSearchIndex) IndexPage(_ context.Context, _ string, _ int, _, _, _, _ string) error {
+	return nil
+}
+
 // TestListTasksReturnsNonDeletedTasks verifies AC4.1: store returns list of all non-deleted tasks
 func TestListTasksReturnsNonDeletedTasks(t *testing.T) {
 	store := newMockTaskStore()
@@ -189,7 +202,7 @@ func TestGetIndexResponseBodyVerifiesAC41(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, logger, broadcaster)
 
 	// Pre-populate with multiple tasks
 	task1 := &taskstore.Task{
@@ -239,7 +252,7 @@ func TestGetIndexFiltersDeletedTasks(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, logger, broadcaster)
 
 	// Add a non-deleted task
 	task1 := &taskstore.Task{
@@ -286,7 +299,7 @@ func TestPostCreateTaskMinimal(t *testing.T) {
 	notifier := &mockNotifier{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, notifier, nil, logger, broadcaster)
+	handler := NewHandler(store, notifier, nil, nil, logger, broadcaster)
 
 	// Create task via form POST
 	form := url.Values{}
@@ -334,7 +347,7 @@ func TestPostCreateTaskWithDueDate(t *testing.T) {
 	notifier := &mockNotifier{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, notifier, nil, logger, broadcaster)
+	handler := NewHandler(store, notifier, nil, nil, logger, broadcaster)
 
 	// Create task with due date
 	form := url.Values{}
@@ -370,7 +383,7 @@ func TestPostCreateTaskNoTitle(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, logger, broadcaster)
 
 	form := url.Values{}
 	form.Set("title", "")
@@ -393,7 +406,7 @@ func TestPostCreateTaskInvalidDueDate(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, logger, broadcaster)
 
 	form := url.Values{}
 	form.Set("title", "Task")
@@ -414,7 +427,7 @@ func TestPostCompleteTaskUpdatesStatus(t *testing.T) {
 	notifier := &mockNotifier{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, notifier, nil, logger, broadcaster)
+	handler := NewHandler(store, notifier, nil, nil, logger, broadcaster)
 
 	// Create a task
 	task := &taskstore.Task{
@@ -458,7 +471,7 @@ func TestPostCompleteTaskAlreadyCompleted(t *testing.T) {
 	notifier := &mockNotifier{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, notifier, nil, logger, broadcaster)
+	handler := NewHandler(store, notifier, nil, nil, logger, broadcaster)
 
 	// Create an already-completed task
 	completionTime := time.Now().UnixMilli()
@@ -492,7 +505,7 @@ func TestPostCompleteTaskNotFound(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, logger, broadcaster)
 
 	req := httptest.NewRequest("POST", "/tasks/nonexistent-id/complete", nil)
 	w := httptest.NewRecorder()
@@ -508,7 +521,7 @@ func TestPostCompleteTaskNoID(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, logger, broadcaster)
 
 	// Note: This test verifies the Go 1.22 route pattern parsing
 	// In practice, /tasks/{id}/complete always extracts an id (could be empty)
@@ -527,7 +540,7 @@ func TestHandlerNotifierNil(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, logger, broadcaster)
 
 	form := url.Values{}
 	form.Set("title", "Task without notifier")
@@ -551,7 +564,7 @@ func TestPostCreateTaskWithWhitespace(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, logger, broadcaster)
+	handler := NewHandler(store, nil, nil, nil, logger, broadcaster)
 
 	form := url.Values{}
 	form.Set("title", "  Task with spaces  ")
@@ -580,7 +593,7 @@ func TestBulkCompleteMultipleTasks(t *testing.T) {
 	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", Title: taskstore.SqlStr("Task 1"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
 	store.tasks["t2"] = &taskstore.Task{TaskID: "t2", Title: taskstore.SqlStr("Task 2"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
 	store.tasks["t3"] = &taskstore.Task{TaskID: "t3", Title: taskstore.SqlStr("Task 3"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
-	handler := NewHandler(store, nil, nil, slog.Default(), logging.NewLogBroadcaster())
+	handler := NewHandler(store, nil, nil, nil, slog.Default(), logging.NewLogBroadcaster())
 
 	form := url.Values{}
 	form.Set("action", "complete")
@@ -610,7 +623,7 @@ func TestBulkDeleteMultipleTasks(t *testing.T) {
 	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", Title: taskstore.SqlStr("Task 1"), IsDeleted: "N"}
 	store.tasks["t2"] = &taskstore.Task{TaskID: "t2", Title: taskstore.SqlStr("Task 2"), IsDeleted: "N"}
 	store.tasks["t3"] = &taskstore.Task{TaskID: "t3", Title: taskstore.SqlStr("Task 3"), IsDeleted: "N"}
-	handler := NewHandler(store, nil, nil, slog.Default(), logging.NewLogBroadcaster())
+	handler := NewHandler(store, nil, nil, nil, slog.Default(), logging.NewLogBroadcaster())
 
 	form := url.Values{}
 	form.Set("action", "delete")
@@ -637,7 +650,7 @@ func TestBulkDeleteMultipleTasks(t *testing.T) {
 
 func TestBulkActionNoSelection(t *testing.T) {
 	store := newMockTaskStore()
-	handler := NewHandler(store, nil, nil, slog.Default(), logging.NewLogBroadcaster())
+	handler := NewHandler(store, nil, nil, nil, slog.Default(), logging.NewLogBroadcaster())
 
 	form := url.Values{}
 	form.Set("action", "complete")
@@ -655,7 +668,7 @@ func TestBulkActionNoSelection(t *testing.T) {
 func TestBulkActionUnknown(t *testing.T) {
 	store := newMockTaskStore()
 	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", IsDeleted: "N"}
-	handler := NewHandler(store, nil, nil, slog.Default(), logging.NewLogBroadcaster())
+	handler := NewHandler(store, nil, nil, nil, slog.Default(), logging.NewLogBroadcaster())
 
 	form := url.Values{}
 	form.Set("action", "explode")
@@ -674,7 +687,7 @@ func TestBulkActionUnknown(t *testing.T) {
 func TestHandleFiles_NoteStoreNil(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, nil, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files", nil)
 	w := httptest.NewRecorder()
@@ -693,7 +706,7 @@ func TestHandleFiles_PathTraversal(t *testing.T) {
 	ns := newMockNoteStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, ns, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, ns, nil, logger, broadcaster)
 
 	for _, badPath := range []string{"../../etc", "../secrets", "/etc/passwd"} {
 		req := httptest.NewRequest("GET", "/files?path="+badPath, nil)
@@ -714,7 +727,7 @@ func TestHandleFiles_TopLevel(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, ns, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, ns, nil, logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files", nil)
 	w := httptest.NewRecorder()
@@ -743,7 +756,7 @@ func TestHandleFiles_WithPath(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, ns, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, ns, nil, logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files?path=Note/Folder", nil)
 	w := httptest.NewRecorder()
