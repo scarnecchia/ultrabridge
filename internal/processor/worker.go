@@ -169,10 +169,12 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 		}
 	}
 
-	s.db.ExecContext(ctx,
+	if _, err := s.db.ExecContext(ctx,
 		"UPDATE jobs SET ocr_source=?, api_model=? WHERE id=?",
 		"api", s.cfg.OCRClient.model, job.ID,
-	)
+	); err != nil {
+		s.logger.Error("failed to update ocr metadata", "job_id", job.ID, "err", err)
+	}
 	return nil
 }
 
@@ -181,7 +183,7 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 func (s *Store) ensureBackup(ctx context.Context, path string) error {
 	var backupPath sql.NullString
 	if err := s.db.QueryRowContext(ctx, "SELECT backup_path FROM notes WHERE path=?", path).Scan(&backupPath); err != nil {
-		if !errors.Is(err, sql.ErrNoRows) && err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
 			s.logger.Error("failed to query backup_path", "path", path, "err", err)
 		}
 	}
