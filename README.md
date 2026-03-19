@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-# UltraBridge
+ <h1>UltraBridge</h1>
 </p>
 
 UltraBridge is a "sidecar service" for the Supernote Private Cloud (and soon for other platforms!), which currently: 
