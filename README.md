@@ -111,9 +111,10 @@ All pipeline variables are optional. Omitting `UB_NOTES_PATH` disables the pipel
 | `UB_DB_PATH` | `/data/ultrabridge.db` | SQLite database for the pipeline |
 | `UB_BACKUP_PATH` | (empty) | Copy originals here before any OCR write |
 | `UB_OCR_ENABLED` | `false` | Enable vision-API OCR |
-| `UB_OCR_API_URL` | (empty) | API base URL — Anthropic or OpenRouter |
-| `UB_OCR_API_KEY` | (empty) | API key |
-| `UB_OCR_MODEL` | (empty) | Model name (e.g. `anthropic/claude-opus-4-6`) |
+| `UB_OCR_FORMAT` | `anthropic` | `anthropic` (Anthropic/OpenRouter) or `openai` (vLLM/Ollama) |
+| `UB_OCR_API_URL` | (empty) | API base URL (e.g. `https://openrouter.ai/api` or `http://localhost:8000`) |
+| `UB_OCR_API_KEY` | (empty) | API key — leave blank for unauthenticated local endpoints |
+| `UB_OCR_MODEL` | (empty) | Model name (e.g. `anthropic/claude-opus-4-6` or `Qwen3-VL-8B-Instruct`) |
 | `UB_OCR_CONCURRENCY` | `1` | Parallel OCR workers |
 | `UB_OCR_MAX_FILE_MB` | `0` | Skip files larger than N MB (0 = no limit) |
 

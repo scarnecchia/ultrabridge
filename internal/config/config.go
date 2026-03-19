@@ -56,6 +56,7 @@ type Config struct {
 	OCRModel       string
 	OCRConcurrency int
 	OCRMaxFileMB   int
+	OCRFormat      string // "anthropic" (default) or "openai"
 }
 
 func Load() (*Config, error) {
@@ -89,6 +90,7 @@ func Load() (*Config, error) {
 	cfg.OCRModel       = os.Getenv("UB_OCR_MODEL")
 	cfg.OCRConcurrency = envIntOrDefault("UB_OCR_CONCURRENCY", 1)
 	cfg.OCRMaxFileMB   = envIntOrDefault("UB_OCR_MAX_FILE_MB", 0)
+	cfg.OCRFormat      = envOrDefault("UB_OCR_FORMAT", "anthropic")
 
 	if err := cfg.loadDBEnv(); err != nil {
 		return nil, fmt.Errorf("loading .dbenv: %w", err)

@@ -126,11 +126,18 @@ if [[ -n "$UB_NOTES_PATH" ]]; then
     read -r yn
     if [[ "$yn" =~ ^[Yy] ]]; then
         UB_OCR_ENABLED=true
+        echo
+        echo "  API format:"
+        echo "    anthropic — Anthropic Messages API (direct Anthropic or OpenRouter)"
+        echo "    openai    — OpenAI Chat Completions API (vLLM, Ollama, or compatible)"
+        echo
+        prompt UB_OCR_FORMAT "API format" "anthropic"
         prompt UB_OCR_API_URL "API base URL" "https://openrouter.ai/api"
-        prompt UB_OCR_API_KEY "API key" ""
+        prompt UB_OCR_API_KEY "API key (leave blank for unauthenticated local endpoints)" ""
         prompt UB_OCR_MODEL "Model name" "anthropic/claude-opus-4-6"
     else
         UB_OCR_ENABLED=false
+        UB_OCR_FORMAT=""
         UB_OCR_API_URL=""
         UB_OCR_API_KEY=""
         UB_OCR_MODEL=""
@@ -138,6 +145,7 @@ if [[ -n "$UB_NOTES_PATH" ]]; then
 else
     UB_BACKUP_PATH=""
     UB_OCR_ENABLED=false
+    UB_OCR_FORMAT=""
     UB_OCR_API_URL=""
     UB_OCR_API_KEY=""
     UB_OCR_MODEL=""
@@ -199,6 +207,7 @@ $(if [[ -n "$UB_NOTES_PATH" ]]; then echo "UB_NOTES_PATH=$UB_NOTES_PATH"; fi)
 $(if [[ -n "$UB_BACKUP_PATH" ]]; then echo "UB_BACKUP_PATH=/backup"; fi)
 $(if [[ "$UB_OCR_ENABLED" == "true" ]]; then
 echo "UB_OCR_ENABLED=true"
+echo "UB_OCR_FORMAT=$UB_OCR_FORMAT"
 echo "UB_OCR_API_URL=$UB_OCR_API_URL"
 echo "UB_OCR_API_KEY=$UB_OCR_API_KEY"
 echo "UB_OCR_MODEL=$UB_OCR_MODEL"

@@ -11,78 +11,98 @@ import (
 	"time"
 )
 
+const (
+	// OCRFormatAnthropic uses the Anthropic Messages API (/v1/messages).
+	// Compatible with direct Anthropic API and OpenRouter.
+	OCRFormatAnthropic = "anthropic"
+
+	// OCRFormatOpenAI uses the OpenAI Chat Completions API (/v1/chat/completions).
+	// Compatible with vLLM, Ollama, and any OpenAI-compatible endpoint.
+	OCRFormatOpenAI = "openai"
+)
+
+const ocrPrompt = "Transcribe all handwritten text from this page exactly as written. Return only the text, no commentary."
+
 // OCRClient posts JPEG images to a vision API and returns transcribed text.
-// Compatible with Anthropic Messages API and OpenRouter (same request format).
+// Supports both Anthropic Messages API format and OpenAI Chat Completions format.
 type OCRClient struct {
 	apiURL string
 	apiKey string
 	model  string
+	format string
 	client *http.Client
 }
 
 // NewOCRClient creates an OCRClient.
-// apiURL is the API base (e.g. "https://api.anthropic.com" or "https://openrouter.ai/api").
-func NewOCRClient(apiURL, apiKey, model string) *OCRClient {
+// apiURL is the API base (e.g. "https://api.anthropic.com", "https://openrouter.ai/api",
+// or "http://localhost:8000" for a local vLLM instance).
+// format is OCRFormatAnthropic or OCRFormatOpenAI.
+func NewOCRClient(apiURL, apiKey, model, format string) *OCRClient {
+	if format != OCRFormatOpenAI {
+		format = OCRFormatAnthropic // default
+	}
 	return &OCRClient{
 		apiURL: apiURL,
 		apiKey: apiKey,
 		model:  model,
+		format: format,
 		client: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
-type visionRequest struct {
-	Model     string `json:"model"`
-	MaxTokens int    `json:"max_tokens"`
-	Messages  []vMsg `json:"messages"`
+// Recognize sends a JPEG page image to the vision API and returns the transcribed text.
+func (c *OCRClient) Recognize(ctx context.Context, jpegData []byte) (string, error) {
+	if c.format == OCRFormatOpenAI {
+		return c.recognizeOpenAI(ctx, jpegData)
+	}
+	return c.recognizeAnthropic(ctx, jpegData)
 }
 
-type vMsg struct {
-	Role    string     `json:"role"`
-	Content []vContent `json:"content"`
+// ── Anthropic Messages API ────────────────────────────────────────────────────
+
+type anthropicRequest struct {
+	Model     string          `json:"model"`
+	MaxTokens int             `json:"max_tokens"`
+	Messages  []anthropicMsg  `json:"messages"`
 }
 
-type vContent struct {
-	Type   string   `json:"type"`
-	Text   string   `json:"text,omitempty"`
-	Source *vSource `json:"source,omitempty"`
+type anthropicMsg struct {
+	Role    string             `json:"role"`
+	Content []anthropicContent `json:"content"`
 }
 
-type vSource struct {
+type anthropicContent struct {
+	Type   string          `json:"type"`
+	Text   string          `json:"text,omitempty"`
+	Source *anthropicSource `json:"source,omitempty"`
+}
+
+type anthropicSource struct {
 	Type      string `json:"type"`
 	MediaType string `json:"media_type"`
-	Data      string `json:"data"` // base64-encoded image bytes
+	Data      string `json:"data"`
 }
 
-type visionResponse struct {
+type anthropicResponse struct {
 	Content []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
 }
 
-// Recognize sends a JPEG page image to the vision API and returns the transcribed text.
-func (c *OCRClient) Recognize(ctx context.Context, jpegData []byte) (string, error) {
-	encoded := base64.StdEncoding.EncodeToString(jpegData)
-
-	reqBody := visionRequest{
+func (c *OCRClient) recognizeAnthropic(ctx context.Context, jpegData []byte) (string, error) {
+	reqBody := anthropicRequest{
 		Model:     c.model,
 		MaxTokens: 4096,
-		Messages: []vMsg{{
+		Messages: []anthropicMsg{{
 			Role: "user",
-			Content: []vContent{
-				{
-					Type: "text",
-					Text: "Transcribe all handwritten text from this page exactly as written. Return only the text, no commentary.",
-				},
-				{
-					Type: "image",
-					Source: &vSource{
-						Type:      "base64",
-						MediaType: "image/jpeg",
-						Data:      encoded,
-					},
-				},
+			Content: []anthropicContent{
+				{Type: "text", Text: ocrPrompt},
+				{Type: "image", Source: &anthropicSource{
+					Type:      "base64",
+					MediaType: "image/jpeg",
+					Data:      base64.StdEncoding.EncodeToString(jpegData),
+				}},
 			},
 		}},
 	}
@@ -97,10 +117,6 @@ func (c *OCRClient) Recognize(ctx context.Context, jpegData []byte) (string, err
 		return "", fmt.Errorf("ocrclient request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// Note: Direct Anthropic API uses "x-api-key" not "Authorization: Bearer".
-	// This client targets OpenRouter (https://openrouter.ai/api) which accepts Bearer.
-	// Set UB_OCR_API_URL=https://openrouter.ai/api for Anthropic model access via OpenRouter.
-	// For direct Anthropic API, swap to: req.Header.Set("x-api-key", c.apiKey)
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
@@ -115,7 +131,7 @@ func (c *OCRClient) Recognize(ctx context.Context, jpegData []byte) (string, err
 		return "", fmt.Errorf("ocrclient API error %d: %s", resp.StatusCode, b)
 	}
 
-	var vResp visionResponse
+	var vResp anthropicResponse
 	if err := json.NewDecoder(resp.Body).Decode(&vResp); err != nil {
 		return "", fmt.Errorf("ocrclient decode: %w", err)
 	}
@@ -123,4 +139,83 @@ func (c *OCRClient) Recognize(ctx context.Context, jpegData []byte) (string, err
 		return "", fmt.Errorf("ocrclient: empty response")
 	}
 	return vResp.Content[0].Text, nil
+}
+
+// ── OpenAI Chat Completions API ───────────────────────────────────────────────
+
+type openAIRequest struct {
+	Model     string        `json:"model"`
+	MaxTokens int           `json:"max_tokens"`
+	Messages  []openAIMsg   `json:"messages"`
+}
+
+type openAIMsg struct {
+	Role    string           `json:"role"`
+	Content []openAIContent  `json:"content"`
+}
+
+type openAIContent struct {
+	Type     string        `json:"type"`
+	Text     string        `json:"text,omitempty"`
+	ImageURL *openAIImgURL `json:"image_url,omitempty"`
+}
+
+type openAIImgURL struct {
+	URL string `json:"url"`
+}
+
+type openAIResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+}
+
+func (c *OCRClient) recognizeOpenAI(ctx context.Context, jpegData []byte) (string, error) {
+	dataURL := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(jpegData)
+
+	reqBody := openAIRequest{
+		Model:     c.model,
+		MaxTokens: 4096,
+		Messages: []openAIMsg{{
+			Role: "user",
+			Content: []openAIContent{
+				{Type: "text", Text: ocrPrompt},
+				{Type: "image_url", ImageURL: &openAIImgURL{URL: dataURL}},
+			},
+		}},
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("ocrclient marshal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.apiURL+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("ocrclient request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("ocrclient post: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", fmt.Errorf("ocrclient API error %d: %s", resp.StatusCode, b)
+	}
+
+	var vResp openAIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&vResp); err != nil {
+		return "", fmt.Errorf("ocrclient decode: %w", err)
+	}
+	if len(vResp.Choices) == 0 {
+		return "", fmt.Errorf("ocrclient: empty response")
+	}
+	return vResp.Choices[0].Message.Content, nil
 }

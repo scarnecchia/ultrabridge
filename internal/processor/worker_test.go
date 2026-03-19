@@ -29,7 +29,7 @@ func (m *mockIndexer) IndexPage(_ context.Context, path string, page int, source
 	return nil
 }
 
-// mockOCRServer returns a fixed JSON response matching the Anthropic format.
+// mockOCRServer returns a fixed JSON response matching the Anthropic Messages API format.
 func mockOCRServer(t *testing.T, responseText string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +149,7 @@ func TestWorker_BackupFails(t *testing.T) {
 	s := openWorkerStore(t, WorkerConfig{
 		BackupPath: badBackup,
 		OCREnabled: true,
-		OCRClient:  NewOCRClient("http://127.0.0.1:1", "", ""),
+		OCRClient:  NewOCRClient("http://127.0.0.1:1", "", "", OCRFormatAnthropic),
 	})
 	seedNote(t, s, notePath)
 
@@ -175,7 +175,7 @@ func TestWorker_OCREnabled(t *testing.T) {
 	idx := &mockIndexer{}
 	s := openWorkerStore(t, WorkerConfig{
 		OCREnabled: true,
-		OCRClient:  NewOCRClient(srv.URL, "test-key", "test-model"),
+		OCRClient:  NewOCRClient(srv.URL, "test-key", "test-model", OCRFormatAnthropic),
 		Indexer:    idx,
 	})
 	seedNote(t, s, notePath)
@@ -210,7 +210,7 @@ func TestWorker_OCRAPIError(t *testing.T) {
 
 	s := openWorkerStore(t, WorkerConfig{
 		OCREnabled: true,
-		OCRClient:  NewOCRClient(srv.URL, "key", "model"),
+		OCRClient:  NewOCRClient(srv.URL, "key", "model", OCRFormatAnthropic),
 	})
 	seedNote(t, s, notePath)
 
@@ -332,5 +332,58 @@ func TestWorker_KeywordExtraction(t *testing.T) {
 	}
 	if !hasKeywords {
 		t.Error("expected indexer to be called with extracted data")
+	}
+}
+
+// mockOCRServerOpenAI returns a fixed JSON response matching the OpenAI Chat Completions format.
+func mockOCRServerOpenAI(t *testing.T, responseText string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		type msg struct {
+			Content string `json:"content"`
+		}
+		type choice struct {
+			Message msg `json:"message"`
+		}
+		type mockResp struct {
+			Choices []choice `json:"choices"`
+		}
+		resp := mockResp{Choices: []choice{{Message: msg{Content: responseText}}}}
+		json.NewEncoder(w).Encode(resp)
+	}))
+}
+
+// TestWorker_OCREnabledOpenAIFormat verifies that the worker succeeds when the
+// OCR client is configured for the OpenAI Chat Completions API format (e.g. vLLM).
+func TestWorker_OCREnabledOpenAIFormat(t *testing.T) {
+	notePath := copyTestNote(t, "20260318_154108 std one line.note")
+	srv := mockOCRServerOpenAI(t, "hello from vllm")
+	defer srv.Close()
+
+	idx := &mockIndexer{}
+	s := openWorkerStore(t, WorkerConfig{
+		OCREnabled: true,
+		OCRClient:  NewOCRClient(srv.URL, "test-key", "test-model", OCRFormatOpenAI),
+		Indexer:    idx,
+	})
+	seedNote(t, s, notePath)
+
+	s.processJob(context.Background(), &Job{ID: 1, NotePath: notePath})
+
+	var status string
+	s.db.QueryRow("SELECT status FROM jobs WHERE id=1").Scan(&status)
+	if status != StatusDone {
+		t.Errorf("status = %q, want done", status)
+	}
+
+	var hasAPI bool
+	for _, c := range idx.calls {
+		if c.source == "api" {
+			hasAPI = true
+		}
+	}
+	if !hasAPI {
+		t.Error("expected indexer called with source=api for OpenAI format OCR")
 	}
 }

@@ -18,7 +18,10 @@ text extraction, optional vision-API OCR, RECOGNTEXT injection, and search index
 
 ## Key Decisions
 - SQLite job queue (not external broker): simplicity, single-process deployment
-- OCR via vision API (Anthropic Messages format): render page to JPEG, send to API, inject recognized text back
+- OCR via vision API — two formats supported:
+  - `OCRFormatAnthropic` (`anthropic`): Anthropic Messages API `/v1/messages` — used with direct Anthropic API or OpenRouter
+  - `OCRFormatOpenAI` (`openai`): OpenAI Chat Completions `/v1/chat/completions` — used with vLLM, Ollama, or any OpenAI-compatible endpoint
+  - Configured via `UB_OCR_FORMAT`; defaults to `anthropic`
 - Two-source indexing: "myScript" (existing RECOGNTEXT) indexed first, then "api" (OCR result) overwrites
 - File reloaded after each page injection: .note format offsets shift when RECOGNTEXT is written
 
@@ -30,5 +33,5 @@ text extraction, optional vision-API OCR, RECOGNTEXT injection, and search index
 
 ## Gotchas
 - `Indexer` interface defined here (not in search) to avoid circular import
-- OCRClient targets OpenRouter by default (Bearer auth); direct Anthropic needs header swap
+- Both OCR formats use `Authorization: Bearer` — no header difference from the caller's perspective
 - Worker polls every 5s when queue is empty; watchdog runs every 2 min

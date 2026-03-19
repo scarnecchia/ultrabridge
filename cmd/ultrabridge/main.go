@@ -98,7 +98,7 @@ func main() {
 		Indexer:    si,
 	}
 	if cfg.OCREnabled && cfg.OCRAPIURL != "" {
-		workerCfg.OCRClient = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel)
+		workerCfg.OCRClient = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel, cfg.OCRFormat)
 	}
 	proc := processor.New(noteDB, workerCfg)
 	if cfg.OCREnabled {
