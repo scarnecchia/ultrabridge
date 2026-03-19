@@ -145,6 +145,11 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 		}
 		newBytes, err := currentNote.InjectRecognText(pageIdx, content)
 		if err != nil {
+			// go-sn cannot inject into multi-page notes with non-adjacent metadata.
+			// Mark as skipped rather than failed so it doesn't loop.
+			if strings.Contains(err.Error(), "not supported") {
+				return skipError{Reason: "inject_unsupported"}
+			}
 			return fmt.Errorf("inject page %d: %w", pageIdx, err)
 		}
 		if err := os.WriteFile(job.NotePath, newBytes, 0644); err != nil {

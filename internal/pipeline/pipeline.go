@@ -78,6 +78,11 @@ func (p *Pipeline) runAll(ctx context.Context) {
 // enqueue adds a path to the processor queue if it is a .note file.
 // It first ensures the file exists in the notes table (FK constraint on jobs.note_path)
 // by running a targeted scan, then enqueues the job.
+//
+// Files whose last job is already "done" are intentionally skipped: the change
+// was most likely caused by the worker writing RECOGNTEXT back into the file.
+// Re-queuing those would create an infinite inject→detect→re-queue loop.
+// A user who wants to re-process a completed file should use the UI "Queue" button.
 func (p *Pipeline) enqueue(ctx context.Context, path string) {
 	if notestore.ClassifyFileType(filepath.Ext(path)) != notestore.FileTypeNote {
 		return
@@ -86,6 +91,12 @@ func (p *Pipeline) enqueue(ctx context.Context, path string) {
 	// UpsertFile is defined in Phase 2 NoteStore for exactly this purpose.
 	if err := p.store.UpsertFile(ctx, path); err != nil {
 		p.logger.Warn("pipeline upsert before enqueue failed", "path", path, "err", err)
+		return
+	}
+	// Skip files already successfully processed. Automatic detection should not
+	// re-queue completed files — the mtime change was caused by our own write.
+	job, err := p.proc.GetJob(ctx, path)
+	if err == nil && job != nil && job.Status == processor.StatusDone {
 		return
 	}
 	if err := p.proc.Enqueue(ctx, path); err != nil {
