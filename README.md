@@ -2,7 +2,9 @@
   <img src="https://github.com/jdkruzr/ultrabridge/blob/main/docs/erbwidesmall.png" alt="minimalistic depiction of Einstein-Rosen bridge"/>
 </p>
 
+<p align="center">
 # UltraBridge
+</p>
 
 UltraBridge is a "sidecar service" for the Supernote Private Cloud (and soon for other platforms!), which currently: 
 * Enables synchronization of tasks between Supernote tablets and standard CalDAV clients (GNOME Evolution, DAVx5, 2Do, etc.)
