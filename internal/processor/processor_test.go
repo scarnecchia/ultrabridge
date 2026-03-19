@@ -16,7 +16,7 @@ func openTestProcessor(t *testing.T) *Store {
 		t.Fatalf("notedb.Open: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return New(db)
+	return New(db, WorkerConfig{}) // WorkerConfig{} = no OCR, no backup
 }
 
 // seedNotesRow inserts a minimal notes row so the jobs FK constraint is satisfied.

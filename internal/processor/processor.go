@@ -10,6 +10,23 @@ import (
 	"time"
 )
 
+// Indexer is the interface the worker uses to index recognized text.
+// Defined here (not in the search package) to avoid a circular import.
+type Indexer interface {
+	// IndexPage indexes a single page. titleText and keywords are populated for
+	// page 0 only (they apply to the whole note); pass empty strings for other pages.
+	IndexPage(ctx context.Context, path string, pageIdx int, source, bodyText, titleText, keywords string) error
+}
+
+// WorkerConfig holds runtime configuration for the OCR worker.
+type WorkerConfig struct {
+	OCREnabled bool
+	BackupPath string
+	MaxFileMB  int
+	OCRClient  *OCRClient // nil = OCR disabled
+	Indexer    Indexer    // nil = indexing disabled
+}
+
 // Processor manages the background OCR job queue.
 type Processor interface {
 	Start(ctx context.Context) error
@@ -25,6 +42,7 @@ type Processor interface {
 // Store implements Processor backed by SQLite.
 type Store struct {
 	db     *sql.DB
+	cfg    WorkerConfig
 	logger *slog.Logger
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -32,12 +50,12 @@ type Store struct {
 }
 
 // New creates a Processor Store.
-func New(db *sql.DB) *Store {
+func New(db *sql.DB, cfg WorkerConfig) *Store {
 	logger := slog.Default()
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(nil, nil))
 	}
-	return &Store{db: db, logger: logger}
+	return &Store{db: db, cfg: cfg, logger: logger}
 }
 
 func (s *Store) Start(ctx context.Context) error {
@@ -210,9 +228,4 @@ func (s *Store) run(ctx context.Context) {
 
 		s.processJob(ctx, job)
 	}
-}
-
-// processJob is the stub for Phase 4. Phase 5 replaces this with real OCR logic.
-func (s *Store) processJob(ctx context.Context, job *Job) {
-	s.markDone(ctx, job.ID, "")
 }
