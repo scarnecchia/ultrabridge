@@ -902,3 +902,266 @@ func TestWorker_JIIX_RoundTrip(t *testing.T) {
 		t.Errorf("Elements length mismatch after round-trip: %d vs %d", len(rc1.Elements), len(rc2.Elements))
 	}
 }
+
+// TestWorker_JIIX_EndToEnd_RTR verifies jiix-recogntext.AC1.3, AC1.4, and AC5.1:
+// RTR notes with all pages ready inject JIIX without forbidden fields,
+// file is modified, and RECOGNTEXT round-trips correctly.
+func TestWorker_JIIX_EndToEnd_RTR(t *testing.T) {
+	notePath := copyTestNote(t, "20260318_134649 RTR Note.note")
+	originalBytes, _ := os.ReadFile(notePath)
+
+	srv := mockOCRServer(t, "rtf e2e test text")
+	defer srv.Close()
+
+	idx := &mockIndexer{}
+	s := openWorkerStore(t, WorkerConfig{
+		OCREnabled: true,
+		OCRClient:  NewOCRClient(srv.URL, "key", "model", OCRFormatAnthropic),
+		Indexer:    idx,
+	})
+	seedNote(t, s, notePath)
+
+	s.processJob(context.Background(), &Job{ID: 1, NotePath: notePath})
+
+	// Verify job completed successfully
+	var status string
+	s.db.QueryRow("SELECT status FROM jobs WHERE id=1").Scan(&status)
+	if status != StatusDone {
+		t.Errorf("status = %q, want done", status)
+	}
+
+	// AC5.1: Verify file was modified (injection happened for RTR with RECOGNSTATUS=1)
+	afterBytes, _ := os.ReadFile(notePath)
+	if string(originalBytes) == string(afterBytes) {
+		t.Error("RTR note file should be modified after injection")
+	}
+
+	// Read back the modified .note file
+	f, err := os.Open(notePath)
+	if err != nil {
+		t.Fatalf("failed to open modified note: %v", err)
+	}
+	defer f.Close()
+
+	loadedNote, err := gosnote.Load(f)
+	if err != nil {
+		t.Fatalf("failed to load modified note: %v", err)
+	}
+
+	if len(loadedNote.Pages) == 0 {
+		t.Skip("no pages in note")
+	}
+
+	// Extract and verify RECOGNTEXT from first page
+	p := loadedNote.Pages[0]
+	raw, err := loadedNote.ReadRecognText(p)
+	if err != nil {
+		t.Fatalf("failed to read RECOGNTEXT: %v", err)
+	}
+	if raw == nil {
+		t.Fatal("RECOGNTEXT is nil after injection")
+	}
+
+	// AC1.4: Verify round-trip through JSON encoding
+	var rc1 gosnote.RecognContent
+	if err := json.Unmarshal(raw, &rc1); err != nil {
+		t.Fatalf("failed to unmarshal RECOGNTEXT: %v", err)
+	}
+
+	// Re-marshal to test round-trip
+	marshalled, err := json.Marshal(rc1)
+	if err != nil {
+		t.Fatalf("failed to marshal RECOGNTEXT: %v", err)
+	}
+
+	var rc2 gosnote.RecognContent
+	if err := json.Unmarshal(marshalled, &rc2); err != nil {
+		t.Fatalf("failed to unmarshal round-tripped RECOGNTEXT: %v", err)
+	}
+
+	// Verify round-trip structure matches
+	if rc1.Type != rc2.Type {
+		t.Errorf("round-trip Type mismatch: %q vs %q", rc1.Type, rc2.Type)
+	}
+	if len(rc1.Elements) != len(rc2.Elements) {
+		t.Errorf("round-trip Elements length mismatch: %d vs %d", len(rc1.Elements), len(rc2.Elements))
+	}
+
+	// AC1.3: Verify no forbidden fields in JSON representation
+	// Marshal to map to inspect keys
+	var recogMap map[string]interface{}
+	if err := json.Unmarshal(raw, &recogMap); err != nil {
+		t.Fatalf("failed to unmarshal to map: %v", err)
+	}
+
+	forbiddenFields := []string{"version", "id", "candidates", "reflow-label"}
+	for _, field := range forbiddenFields {
+		if _, exists := recogMap[field]; exists {
+			t.Errorf("forbidden field %q found in RECOGNTEXT", field)
+		}
+	}
+
+	// Verify elements array structure
+	if elements, ok := recogMap["elements"].([]interface{}); ok && len(elements) > 0 {
+		elem0 := elements[0].(map[string]interface{})
+		// AC1.3: Check elements also don't have forbidden fields
+		for _, field := range forbiddenFields {
+			if _, exists := elem0[field]; exists {
+				t.Errorf("forbidden field %q found in element", field)
+			}
+		}
+	}
+
+	// Verify OCR text was indexed with "api" source
+	var hasAPIIndex bool
+	for _, call := range idx.calls {
+		if call.source == "api" && strings.Contains(call.text, "rtf e2e test text") {
+			hasAPIIndex = true
+			break
+		}
+	}
+	if !hasAPIIndex {
+		t.Error("expected OCR text indexed with source=api")
+	}
+}
+
+// TestWorker_JIIX_EndToEnd_NonRTR verifies jiix-recogntext.AC4.1:
+// Non-RTR notes skip injection, file is not modified, but OCR + indexing still happen.
+func TestWorker_JIIX_EndToEnd_NonRTR(t *testing.T) {
+	// Use standard (non-RTR) note
+	notePath := copyTestNote(t, "20260318_134309 Standard Note.note")
+	originalBytes, _ := os.ReadFile(notePath)
+
+	srv := mockOCRServer(t, "non-rtr ocr text")
+	defer srv.Close()
+
+	idx := &mockIndexer{}
+	s := openWorkerStore(t, WorkerConfig{
+		OCREnabled: true,
+		OCRClient:  NewOCRClient(srv.URL, "key", "model", OCRFormatAnthropic),
+		Indexer:    idx,
+	})
+	seedNote(t, s, notePath)
+
+	s.processJob(context.Background(), &Job{ID: 1, NotePath: notePath})
+
+	// Verify job completed successfully
+	var status string
+	s.db.QueryRow("SELECT status FROM jobs WHERE id=1").Scan(&status)
+	if status != StatusDone {
+		t.Errorf("status = %q, want done", status)
+	}
+
+	// AC4.1: Verify file bytes are identical to original (no injection for non-RTR)
+	afterBytes, _ := os.ReadFile(notePath)
+	if string(originalBytes) != string(afterBytes) {
+		t.Error("non-RTR note file should NOT be modified (AC4.1)")
+	}
+
+	// AC4.1: Verify OCR text was still indexed with "api" source despite no file modification
+	var hasAPIIndex bool
+	for _, call := range idx.calls {
+		if call.source == "api" && strings.Contains(call.text, "non-rtr ocr text") {
+			hasAPIIndex = true
+			break
+		}
+	}
+	if !hasAPIIndex {
+		t.Error("expected OCR text indexed with source=api even for non-RTR notes")
+	}
+
+	// Verify file hash was still computed and stored
+	var sha256 string
+	s.db.QueryRow("SELECT COALESCE(sha256, '') FROM notes WHERE path=?", notePath).Scan(&sha256)
+	if sha256 == "" {
+		t.Error("expected sha256 to be stored even for non-RTR notes")
+	}
+}
+
+// TestWorker_JIIX_ForbiddenFields_InElements verifies AC1.3:
+// Forbidden fields (version, id, candidates, reflow-label) never appear in elements either.
+func TestWorker_JIIX_ForbiddenFields_InElements(t *testing.T) {
+	notePath := copyTestNote(t, "20260318_134649 RTR Note.note")
+
+	srv := mockOCRServer(t, "forbidden fields test")
+	defer srv.Close()
+
+	s := openWorkerStore(t, WorkerConfig{
+		OCREnabled: true,
+		OCRClient:  NewOCRClient(srv.URL, "key", "model", OCRFormatAnthropic),
+	})
+	seedNote(t, s, notePath)
+
+	s.processJob(context.Background(), &Job{ID: 1, NotePath: notePath})
+
+	// Read back the modified .note file
+	f, err := os.Open(notePath)
+	if err != nil {
+		t.Fatalf("failed to open modified note: %v", err)
+	}
+	defer f.Close()
+
+	loadedNote, err := gosnote.Load(f)
+	if err != nil {
+		t.Fatalf("failed to load modified note: %v", err)
+	}
+
+	if len(loadedNote.Pages) == 0 {
+		t.Skip("no pages in note")
+	}
+
+	// Extract RECOGNTEXT bytes
+	p := loadedNote.Pages[0]
+	raw, err := loadedNote.ReadRecognText(p)
+	if err != nil {
+		t.Fatalf("failed to read RECOGNTEXT: %v", err)
+	}
+	if raw == nil {
+		t.Fatal("RECOGNTEXT is nil")
+	}
+
+	// Parse as raw map to inspect all keys at all levels
+	var recogMap map[string]interface{}
+	if err := json.Unmarshal(raw, &recogMap); err != nil {
+		t.Fatalf("failed to unmarshal to map: %v", err)
+	}
+
+	forbiddenFields := []string{"version", "id", "candidates", "reflow-label"}
+
+	// Check root level
+	for _, field := range forbiddenFields {
+		if _, exists := recogMap[field]; exists {
+			t.Errorf("forbidden field %q at root level", field)
+		}
+	}
+
+	// Check all elements
+	if elementsRaw, ok := recogMap["elements"]; ok {
+		if elements, ok := elementsRaw.([]interface{}); ok {
+			for i, elemRaw := range elements {
+				if elem, ok := elemRaw.(map[string]interface{}); ok {
+					for _, field := range forbiddenFields {
+						if _, exists := elem[field]; exists {
+							t.Errorf("forbidden field %q in element %d", field, i)
+						}
+					}
+
+					// Also check words array within elements
+					if wordsRaw, ok := elem["words"]; ok {
+						if words, ok := wordsRaw.([]interface{}); ok {
+							for j, wordRaw := range words {
+								if word, ok := wordRaw.(map[string]interface{}); ok {
+									for _, field := range forbiddenFields {
+										if _, exists := word[field]; exists {
+											t.Errorf("forbidden field %q in element %d word %d", field, i, j)
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
