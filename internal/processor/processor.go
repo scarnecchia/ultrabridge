@@ -106,7 +106,7 @@ func (s *Store) Enqueue(ctx context.Context, path string) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO jobs (note_path, status, queued_at)
 		VALUES (?, ?, ?)
-		ON CONFLICT(note_path) DO UPDATE SET status=excluded.status, queued_at=excluded.queued_at
+		ON CONFLICT(note_path) DO UPDATE SET status=excluded.status, queued_at=excluded.queued_at, requeue_after=NULL
 		WHERE status IN (?, ?, ?)`,
 		path, StatusPending, now,
 		StatusDone, StatusFailed, StatusSkipped,
@@ -219,10 +219,20 @@ func (s *Store) markDone(ctx context.Context, jobID int64, errMsg string) {
 // accidental status regression if the job was already marked done/failed.
 func (s *Store) Requeue(ctx context.Context, jobID int64, delay time.Duration) error {
 	requeueAt := time.Now().Add(delay).Unix()
-	_, err := s.db.ExecContext(ctx, `
+	result, err := s.db.ExecContext(ctx, `
 		UPDATE jobs SET status = ?, requeue_after = ?, attempts = attempts + 1
 		WHERE id = ? AND status = ?`, StatusPending, requeueAt, jobID, StatusInProgress)
-	return err
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("requeue job %d: job not in in_progress status", jobID)
+	}
+	return nil
 }
 
 func (s *Store) run(ctx context.Context) {

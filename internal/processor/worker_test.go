@@ -737,8 +737,8 @@ func TestWorker_Requeue_OnlyAffectsInProgress(t *testing.T) {
 
 	// Attempt to Requeue a done job
 	err := s.Requeue(context.Background(), jobID, 5*time.Minute)
-	if err != nil {
-		t.Fatalf("Requeue failed: %v", err)
+	if err == nil {
+		t.Fatalf("Requeue should return error for non-in_progress job, got nil")
 	}
 
 	// Verify status remains done (not regressed to pending)
