@@ -214,6 +214,17 @@ func (s *Store) markDone(ctx context.Context, jobID int64, errMsg string) {
 	}
 }
 
+// Requeue sets the job back to pending with a delay before it can be reclaimed.
+// Increments attempts counter. Only operates on in_progress jobs to prevent
+// accidental status regression if the job was already marked done/failed.
+func (s *Store) Requeue(ctx context.Context, jobID int64, delay time.Duration) error {
+	requeueAt := time.Now().Add(delay).Unix()
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE jobs SET status = ?, requeue_after = ?, attempts = attempts + 1
+		WHERE id = ? AND status = ?`, StatusPending, requeueAt, jobID, StatusInProgress)
+	return err
+}
+
 func (s *Store) run(ctx context.Context) {
 	defer close(s.done)
 	for {

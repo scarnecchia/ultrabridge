@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -502,5 +503,253 @@ func TestWorker_StoresHash_WithOCR(t *testing.T) {
 	}
 	if gotHash != wantHash {
 		t.Errorf("notes.sha256 = %q, want post-injection hash %q", gotHash, wantHash)
+	}
+}
+
+// TestWorker_NonRTR_NoFileModification verifies AC4.1 and AC7.2:
+// Non-RTR notes (FILE_RECOGN_TYPE=0) get OCR'd and indexed but file is not modified on disk.
+func TestWorker_NonRTR_NoFileModification(t *testing.T) {
+	notePath := copyTestNote(t, "20260318_134309 Standard Note.note")
+	originalBytes, _ := os.ReadFile(notePath)
+
+	srv := mockOCRServer(t, "ocr recognized text")
+	defer srv.Close()
+
+	idx := &mockIndexer{}
+	s := openWorkerStore(t, WorkerConfig{
+		OCREnabled: true,
+		OCRClient:  NewOCRClient(srv.URL, "key", "model", OCRFormatAnthropic),
+		Indexer:    idx,
+	})
+	seedNote(t, s, notePath)
+
+	s.processJob(context.Background(), &Job{ID: 1, NotePath: notePath})
+
+	// Verify job completed as done (AC4.2)
+	var status string
+	s.db.QueryRow("SELECT status FROM jobs WHERE id=1").Scan(&status)
+	if status != StatusDone {
+		t.Errorf("status = %q, want done", status)
+	}
+
+	// Verify file bytes unchanged (AC7.2)
+	afterBytes, _ := os.ReadFile(notePath)
+	if string(originalBytes) != string(afterBytes) {
+		t.Error("non-RTR note file should not be modified on disk")
+	}
+
+	// Verify text was indexed despite no file modification (AC7.1)
+	var hasAPIIndex bool
+	for _, c := range idx.calls {
+		if c.source == "api" && c.text != "" {
+			hasAPIIndex = true
+			break
+		}
+	}
+	if !hasAPIIndex {
+		t.Error("expected OCR text to be indexed even for non-RTR notes")
+	}
+}
+
+// TestWorker_RTR_WithRecognition verifies AC5.1:
+// RTR notes (FILE_RECOGN_TYPE=1) with all pages having RECOGNSTATUS=1 proceed to injection.
+func TestWorker_RTR_WithRecognition(t *testing.T) {
+	notePath := copyTestNote(t, "20260318_134649 RTR Note.note")
+	originalBytes, _ := os.ReadFile(notePath)
+
+	srv := mockOCRServer(t, "rtr ocr text")
+	defer srv.Close()
+
+	s := openWorkerStore(t, WorkerConfig{
+		OCREnabled: true,
+		OCRClient:  NewOCRClient(srv.URL, "key", "model", OCRFormatAnthropic),
+	})
+	seedNote(t, s, notePath)
+
+	s.processJob(context.Background(), &Job{ID: 1, NotePath: notePath})
+
+	// Verify job completed
+	var status string
+	s.db.QueryRow("SELECT status FROM jobs WHERE id=1").Scan(&status)
+	if status != StatusDone {
+		t.Errorf("status = %q, want done", status)
+	}
+
+	// Verify file was modified (injection happened)
+	afterBytes, _ := os.ReadFile(notePath)
+	if string(originalBytes) == string(afterBytes) {
+		t.Error("RTR note file should be modified after OCR injection")
+	}
+}
+
+// TestWorker_RTR_WithoutRecognition verifies AC5.2:
+// RTR notes with any page having RECOGNSTATUS != 1 trigger requeue.
+func TestWorker_RTR_WithoutRecognition(t *testing.T) {
+	// Use the RTR note with RECOGNSTATUS=2 (not complete)
+	notePath := copyTestNote(t, "20260318_154754 rtr one line plus one word plus digest.note")
+
+	s := openWorkerStore(t, WorkerConfig{
+		OCREnabled: true,
+		OCRClient:  NewOCRClient("http://127.0.0.1:1", "key", "model", OCRFormatAnthropic),
+	})
+	seedNote(t, s, notePath)
+
+	// Claim the job to set it to in_progress before processing
+	job, err := s.claimNext(context.Background())
+	if err != nil || job == nil {
+		t.Fatalf("claimNext: %v", err)
+	}
+
+	s.processJob(context.Background(), job)
+
+	// Verify job status is pending (was requeued)
+	var status string
+	var requeueAfter sql.NullInt64
+	var attempts int
+	s.db.QueryRow("SELECT status, requeue_after, attempts FROM jobs WHERE id=1").
+		Scan(&status, &requeueAfter, &attempts)
+
+	if status != StatusPending {
+		t.Errorf("status = %q, want pending (requeued)", status)
+	}
+	if !requeueAfter.Valid || requeueAfter.Int64 == 0 {
+		t.Error("expected requeue_after to be set")
+	}
+	if requeueAfter.Valid {
+		requeueTime := time.Unix(requeueAfter.Int64, 0)
+		if requeueTime.Before(time.Now()) {
+			t.Error("requeue_after should be in the future")
+		}
+	}
+	if attempts != 1 {
+		t.Errorf("attempts = %d, want 1 (should be incremented on requeue)", attempts)
+	}
+}
+
+// TestWorker_RTR_MaxRequeueAttempts verifies AC6.4:
+// When max requeue attempts is reached and device recognition is still not complete,
+// the job is marked failed instead of requeued.
+func TestWorker_RTR_MaxRequeueAttempts(t *testing.T) {
+	notePath := copyTestNote(t, "20260318_154754 rtr one line plus one word plus digest.note")
+
+	s := openWorkerStore(t, WorkerConfig{
+		OCREnabled: true,
+		OCRClient:  NewOCRClient("http://127.0.0.1:1", "key", "model", OCRFormatAnthropic),
+	})
+	seedNote(t, s, notePath)
+
+	// Set attempts to maxRequeueAttempts so next attempt triggers failure
+	s.db.Exec("UPDATE jobs SET attempts = ? WHERE id = 1", maxRequeueAttempts)
+
+	// Claim the job to set it to in_progress before processing
+	job, err := s.claimNext(context.Background())
+	if err != nil || job == nil {
+		t.Fatalf("claimNext: %v", err)
+	}
+
+	s.processJob(context.Background(), job)
+
+	// Verify job status is failed, not pending
+	var status, lastError string
+	s.db.QueryRow("SELECT status, last_error FROM jobs WHERE id=1").Scan(&status, &lastError)
+
+	if status != StatusFailed {
+		t.Errorf("status = %q, want failed (max attempts exceeded)", status)
+	}
+	if lastError == "" {
+		t.Error("expected last_error to be set with failure reason")
+	}
+	if !strings.Contains(lastError, "not complete after") {
+		t.Errorf("error message should mention max attempts, got: %s", lastError)
+	}
+}
+
+// TestWorker_Requeue_SetsCorrectDelay verifies AC6.1:
+// Requeue sets requeue_after to a future timestamp and job status to pending.
+func TestWorker_Requeue_SetsCorrectDelay(t *testing.T) {
+	s := openWorkerStore(t, WorkerConfig{})
+
+	// First insert a note, then a job
+	now := time.Now()
+	s.db.Exec(`INSERT INTO notes (path, rel_path, file_type, created_at, updated_at)
+		VALUES (?, 'test.note', 'note', ?, ?)`,
+		"/test/path.note", now.Unix(), now.Unix())
+
+	// Insert a job in in_progress status
+	s.db.Exec(`INSERT INTO jobs (note_path, status, queued_at, started_at, attempts)
+		VALUES (?, ?, ?, ?, ?)`,
+		"/test/path.note", StatusInProgress, now.Unix(), now.Unix(), 1)
+
+	// Get the job ID (since we didn't specify it)
+	var jobID int64
+	s.db.QueryRow("SELECT id FROM jobs WHERE note_path=?", "/test/path.note").Scan(&jobID)
+
+	// Call Requeue
+	err := s.Requeue(context.Background(), jobID, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("Requeue failed: %v", err)
+	}
+
+	// Verify status is pending and requeue_after is in future
+	var status string
+	var requeueAfter sql.NullInt64
+	var attempts int
+	s.db.QueryRow("SELECT status, requeue_after, attempts FROM jobs WHERE id=?", jobID).
+		Scan(&status, &requeueAfter, &attempts)
+
+	if status != StatusPending {
+		t.Errorf("status = %q, want pending", status)
+	}
+	if !requeueAfter.Valid || requeueAfter.Int64 == 0 {
+		t.Errorf("expected requeue_after to be set, got %v", requeueAfter)
+	}
+	if requeueAfter.Valid {
+		requeueTime := time.Unix(requeueAfter.Int64, 0)
+		if requeueTime.Before(now.Add(4 * time.Minute)) {
+			t.Errorf("requeue_after should be approximately 5 minutes in future, got %v (now=%v)", requeueTime, now)
+		}
+	}
+	if attempts != 2 {
+		t.Errorf("attempts = %d, want 2 (should be incremented)", attempts)
+	}
+}
+
+// TestWorker_Requeue_OnlyAffectsInProgress verifies that Requeue only operates
+// on jobs with status="in_progress", preventing accidental status regression.
+func TestWorker_Requeue_OnlyAffectsInProgress(t *testing.T) {
+	s := openWorkerStore(t, WorkerConfig{})
+
+	now := time.Now()
+
+	// First insert a note
+	s.db.Exec(`INSERT INTO notes (path, rel_path, file_type, created_at, updated_at)
+		VALUES (?, 'test2.note', 'note', ?, ?)`,
+		"/test/path2.note", now.Unix(), now.Unix())
+
+	// Insert a job that is already done
+	s.db.Exec(`INSERT INTO jobs (note_path, status, queued_at, started_at, finished_at, attempts)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		"/test/path2.note", StatusDone, now.Unix(), now.Unix(), now.Unix(), 5)
+
+	// Get the job ID
+	var jobID int64
+	s.db.QueryRow("SELECT id FROM jobs WHERE note_path=?", "/test/path2.note").Scan(&jobID)
+
+	// Attempt to Requeue a done job
+	err := s.Requeue(context.Background(), jobID, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("Requeue failed: %v", err)
+	}
+
+	// Verify status remains done (not regressed to pending)
+	var status string
+	var attempts int
+	s.db.QueryRow("SELECT status, attempts FROM jobs WHERE id=?", jobID).Scan(&status, &attempts)
+
+	if status != StatusDone {
+		t.Errorf("status = %q, want done (should not regress)", status)
+	}
+	if attempts != 5 {
+		t.Errorf("attempts = %d, want 5 (should not be incremented)", attempts)
 	}
 }

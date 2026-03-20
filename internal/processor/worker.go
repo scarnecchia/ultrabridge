@@ -19,9 +19,23 @@ import (
 	"github.com/sysop/ultrabridge/internal/notestore"
 )
 
+const (
+	requeueDelay       = 5 * time.Minute
+	maxRequeueAttempts = 12 // 12 × 5min = 1 hour max wait
+)
+
+// errRequeued is returned by executeJob when the job was requeued for later processing.
+// processJob checks for this to skip markDone — the job is already set back to pending.
+var errRequeued = errors.New("requeued")
+
 // processJob executes the full pipeline for one job.
 func (s *Store) processJob(ctx context.Context, job *Job) {
 	err := s.executeJob(ctx, job)
+	if errors.Is(err, errRequeued) {
+		// Job was requeued by executeJob — status already set to pending.
+		// Do NOT call markDone; just return.
+		return
+	}
 	if skipped, ok := err.(skipError); ok {
 		if _, err := s.db.ExecContext(ctx, "UPDATE jobs SET status=?, skip_reason=? WHERE id=?",
 			StatusSkipped, skipped.Reason, job.ID); err != nil {
@@ -85,6 +99,24 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 		return fmt.Errorf("note.Load: %w", err)
 	}
 
+	// Gate 1: RTR-only injection
+	isRTR := n.Header["FILE_RECOGN_TYPE"] == "1"
+
+	// Gate 2: Wait for device recognition on all pages (RTR notes only)
+	if isRTR {
+		for _, p := range n.Pages {
+			if p.Meta["RECOGNSTATUS"] != "1" {
+				if job.Attempts >= maxRequeueAttempts {
+					return fmt.Errorf("device recognition not complete after %d attempts", job.Attempts)
+				}
+				if err := s.Requeue(ctx, job.ID, requeueDelay); err != nil {
+					return fmt.Errorf("requeue: %w", err)
+				}
+				return errRequeued
+			}
+		}
+	}
+
 	// Extract TITLE and KEYWORD block text from the note footer (AC3.3).
 	// These apply to the note as a whole; we attach them to page 0's index entry.
 	footerTags, _ := n.FooterTags()
@@ -146,34 +178,37 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 			return fmt.Errorf("OCR page %d: %w", pageIdx, err)
 		}
 
-		content := gosnote.RecognContent{
-			Type: "Text",
-			Elements: []gosnote.RecognElement{
-				{Type: "Text", Label: text},
-			},
-		}
-		newBytes, err := currentNote.InjectRecognText(pageIdx, content)
-		if err != nil {
-			// go-sn cannot inject into multi-page notes with non-adjacent metadata.
-			// Mark as skipped rather than failed so it doesn't loop.
-			if strings.Contains(err.Error(), "not supported") {
-				return skipError{Reason: "inject_unsupported"}
+		// Only inject and write for RTR notes; non-RTR notes skip file modification
+		if isRTR {
+			content := gosnote.RecognContent{
+				Type: "Text",
+				Elements: []gosnote.RecognElement{
+					{Type: "Text", Label: text},
+				},
 			}
-			return fmt.Errorf("inject page %d: %w", pageIdx, err)
-		}
-		if err := os.WriteFile(job.NotePath, newBytes, 0644); err != nil {
-			return fmt.Errorf("write page %d: %w", pageIdx, err)
-		}
+			newBytes, err := currentNote.InjectRecognText(pageIdx, content)
+			if err != nil {
+				// go-sn cannot inject into multi-page notes with non-adjacent metadata.
+				// Mark as skipped rather than failed so it doesn't loop.
+				if strings.Contains(err.Error(), "not supported") {
+					return skipError{Reason: "inject_unsupported"}
+				}
+				return fmt.Errorf("inject page %d: %w", pageIdx, err)
+			}
+			if err := os.WriteFile(job.NotePath, newBytes, 0644); err != nil {
+				return fmt.Errorf("write page %d: %w", pageIdx, err)
+			}
 
-		// Reload so subsequent pages reference fresh raw bytes and correct offsets.
-		f2, err := os.Open(job.NotePath)
-		if err != nil {
-			return fmt.Errorf("reload after page %d: %w", pageIdx, err)
-		}
-		currentNote, err = gosnote.Load(f2)
-		f2.Close()
-		if err != nil {
-			return fmt.Errorf("re-parse after page %d: %w", pageIdx, err)
+			// Reload so subsequent pages reference fresh raw bytes and correct offsets.
+			f2, err := os.Open(job.NotePath)
+			if err != nil {
+				return fmt.Errorf("reload after page %d: %w", pageIdx, err)
+			}
+			currentNote, err = gosnote.Load(f2)
+			f2.Close()
+			if err != nil {
+				return fmt.Errorf("re-parse after page %d: %w", pageIdx, err)
+			}
 		}
 
 		if s.cfg.Indexer != nil {
