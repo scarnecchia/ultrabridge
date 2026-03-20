@@ -169,12 +169,15 @@ func (s *Store) GetJob(ctx context.Context, path string) (*Job, error) {
 
 // claimNext atomically claims the oldest pending job.
 // Returns nil, nil if no jobs are pending.
+// Skips jobs whose requeue_after is in the future.
 func (s *Store) claimNext(ctx context.Context) (*Job, error) {
 	now := time.Now().Unix()
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE jobs SET status=?, started_at=?
-		WHERE id = (SELECT id FROM jobs WHERE status=? ORDER BY queued_at ASC LIMIT 1)`,
-		StatusInProgress, now, StatusPending,
+		WHERE id = (SELECT id FROM jobs WHERE status=?
+		    AND (requeue_after IS NULL OR requeue_after <= ?)
+		    ORDER BY queued_at ASC LIMIT 1)`,
+		StatusInProgress, now, StatusPending, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("claimNext: %w", err)

@@ -189,3 +189,69 @@ func TestWatchdog_ReclaimsStuckJobs(t *testing.T) {
 		t.Errorf("after watchdog status = %q, want pending", status)
 	}
 }
+
+// AC6.2: claimNext skips jobs with future requeue_after
+func TestClaimNext_SkipsFutureRequeueAfter(t *testing.T) {
+	s := openTestProcessor(t)
+	ctx := context.Background()
+
+	// Seed the notes table (FK constraint)
+	seedNotesRow(t, s, "/future.note")
+
+	// Insert a pending job with requeue_after set 1 hour in the future
+	futureTime := time.Now().Add(1 * time.Hour).Unix()
+	s.db.ExecContext(ctx,
+		"INSERT INTO jobs (note_path, status, queued_at, requeue_after) VALUES (?, ?, ?, ?)",
+		"/future.note", StatusPending, time.Now().Unix(), futureTime,
+	)
+
+	// Attempt to claim the job
+	job, err := s.claimNext(ctx)
+
+	if err != nil {
+		t.Fatalf("claimNext: %v", err)
+	}
+	if job != nil {
+		t.Errorf("expected no job to be claimed (future requeue_after), but got job %d", job.ID)
+	}
+
+	// Verify the job is still pending
+	var status string
+	s.db.QueryRowContext(ctx, "SELECT status FROM jobs WHERE note_path=?", "/future.note").Scan(&status)
+	if status != StatusPending {
+		t.Errorf("job status = %q, want pending", status)
+	}
+}
+
+// AC6.3: claimNext picks up jobs with past requeue_after
+func TestClaimNext_ClaimsPastRequeueAfter(t *testing.T) {
+	s := openTestProcessor(t)
+	ctx := context.Background()
+
+	// Seed the notes table (FK constraint)
+	seedNotesRow(t, s, "/past.note")
+
+	// Insert a pending job with requeue_after set to a past time (10 minutes ago)
+	pastTime := time.Now().Add(-10 * time.Minute).Unix()
+	s.db.ExecContext(ctx,
+		"INSERT INTO jobs (note_path, status, queued_at, requeue_after) VALUES (?, ?, ?, ?)",
+		"/past.note", StatusPending, time.Now().Unix(), pastTime,
+	)
+
+	// Claim the job
+	job, err := s.claimNext(ctx)
+
+	if err != nil {
+		t.Fatalf("claimNext: %v", err)
+	}
+	if job == nil {
+		t.Error("expected a job to be claimed (past requeue_after), but got nil")
+	}
+
+	// Verify the job is now in_progress
+	var status string
+	s.db.QueryRowContext(ctx, "SELECT status FROM jobs WHERE note_path=?", "/past.note").Scan(&status)
+	if status != StatusInProgress {
+		t.Errorf("job status = %q, want in_progress", status)
+	}
+}
