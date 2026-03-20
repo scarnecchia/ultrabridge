@@ -1,6 +1,6 @@
 # UltraBridge
 
-Last verified: 2026-03-19
+Last verified: 2026-03-20
 
 Go sidecar service for Supernote Private Cloud. Two subsystems:
 1. **CalDAV task sync** -- reads/writes the Supernote MariaDB, pushes STARTSYNC via Engine.IO
@@ -56,4 +56,6 @@ go vet -C /home/sysop/src/ultrabridge/.worktrees/note-ingest-search ./...
 - Job statuses: pending -> in_progress -> done|failed|skipped
 - Backup before modification: original .note copied to backup tree, never overwritten
 - OCR source tracking: "myScript" (device RECOGNTEXT) vs "api" (vision API result)
+- RTR gate: only notes with FILE_RECOGN_TYPE=1 get RECOGNTEXT injection (JIIX v3 format); non-RTR notes are indexed only
+- Requeue with delay: jobs can be set back to pending with a future `requeue_after` timestamp
 - Pipeline env vars: UB_NOTES_PATH, UB_DB_PATH, UB_BACKUP_PATH, UB_OCR_*

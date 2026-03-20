@@ -1,6 +1,6 @@
 # Note Database
 
-Last verified: 2026-03-19
+Last verified: 2026-03-20
 
 ## Purpose
 Opens and migrates the SQLite database used by the notes pipeline.
@@ -28,6 +28,6 @@ Centralizes schema ownership so all pipeline packages share one DB connection.
 
 ## Schema Tables
 - `notes` -- file metadata (path, type, size, mtime, backup state)
-- `jobs` -- processing queue (status, attempts, timestamps)
+- `jobs` -- processing queue (status, attempts, timestamps, requeue_after)
 - `note_content` -- extracted text per page (title, body, keywords, source)
 - `note_fts` -- FTS5 virtual table for full-text search
