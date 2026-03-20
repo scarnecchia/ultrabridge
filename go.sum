@@ -24,6 +24,8 @@ github.com/jdkruzr/go-sn v0.0.0-20260319010016-530bc2633faf h1:2GVqM66aAhkBoaEqV
 github.com/jdkruzr/go-sn v0.0.0-20260319010016-530bc2633faf/go.mod h1:IRAba0APDRI/hNAicDf4DBXBJv/C/GVy9MbZl9QdnC0=
 github.com/jdkruzr/go-sn v0.0.0-20260320002629-9602bb2e87ab h1:vqfYOb4F4pluMZ0+OLB+DjhBuCSpKRi2Z6B3in87lag=
 github.com/jdkruzr/go-sn v0.0.0-20260320002629-9602bb2e87ab/go.mod h1:IRAba0APDRI/hNAicDf4DBXBJv/C/GVy9MbZl9QdnC0=
+github.com/jdkruzr/go-sn v0.0.0-20260320044529-531f771b4d16 h1:6HlvVfvjn72PAv3S12RkjjkZDcf0YMZj2nmfcI+89g8=
+github.com/jdkruzr/go-sn v0.0.0-20260320044529-531f771b4d16/go.mod h1:IRAba0APDRI/hNAicDf4DBXBJv/C/GVy9MbZl9QdnC0=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
