@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	gosnote "github.com/jdkruzr/go-sn/note"
 	"github.com/sysop/ultrabridge/internal/notedb"
 	"github.com/sysop/ultrabridge/internal/notestore"
 )
@@ -751,5 +752,153 @@ func TestWorker_Requeue_OnlyAffectsInProgress(t *testing.T) {
 	}
 	if attempts != 5 {
 		t.Errorf("attempts = %d, want 5 (should not be incremented)", attempts)
+	}
+}
+
+// TestWorker_JIIX_ValidStructure verifies jiix-recogntext.AC1.1 and AC1.2:
+// Injected RECOGNTEXT is valid JIIX with correct root type, elements array, and bounding boxes.
+func TestWorker_JIIX_ValidStructure(t *testing.T) {
+	notePath := copyTestNote(t, "20260318_134649 RTR Note.note")
+
+	srv := mockOCRServer(t, "test jiix content")
+	defer srv.Close()
+
+	s := openWorkerStore(t, WorkerConfig{
+		OCREnabled: true,
+		OCRClient:  NewOCRClient(srv.URL, "key", "model", OCRFormatAnthropic),
+	})
+	seedNote(t, s, notePath)
+
+	s.processJob(context.Background(), &Job{ID: 1, NotePath: notePath})
+
+	// Verify job completed
+	var status string
+	s.db.QueryRow("SELECT status FROM jobs WHERE id=1").Scan(&status)
+	if status != StatusDone {
+		t.Errorf("status = %q, want done", status)
+	}
+
+	// Read back the modified .note file and extract injected RECOGNTEXT
+	f, err := os.Open(notePath)
+	if err != nil {
+		t.Fatalf("failed to open modified note: %v", err)
+	}
+	defer f.Close()
+
+	loadedNote, err := gosnote.Load(f)
+	if err != nil {
+		t.Fatalf("failed to load modified note: %v", err)
+	}
+
+	if len(loadedNote.Pages) == 0 {
+		t.Skip("no pages in note")
+	}
+
+	// Read RECOGNTEXT from first page
+	p := loadedNote.Pages[0]
+	raw, err := loadedNote.ReadRecognText(p)
+	if err != nil {
+		t.Fatalf("failed to read RECOGNTEXT: %v", err)
+	}
+	if raw == nil {
+		t.Fatal("RECOGNTEXT is nil")
+	}
+
+	var rc gosnote.RecognContent
+	if err := json.Unmarshal(raw, &rc); err != nil {
+		t.Fatalf("failed to unmarshal RECOGNTEXT JSON: %v", err)
+	}
+
+	// AC1.1: Verify root type is "Raw Content"
+	if rc.Type != "Raw Content" {
+		t.Errorf("RecognContent.Type = %q, want %q", rc.Type, "Raw Content")
+	}
+
+	// AC1.1: Verify elements array exists
+	if rc.Elements == nil {
+		t.Error("RecognContent.Elements is nil, want array")
+	}
+
+	// AC1.2: Verify Text element has label and words
+	if len(rc.Elements) == 0 {
+		t.Error("RecognContent.Elements is empty, expected at least one element")
+	} else {
+		el := rc.Elements[0]
+		if el.Type != "Text" {
+			t.Errorf("element.Type = %q, want Text", el.Type)
+		}
+		if el.Label == "" {
+			t.Error("element.Label is empty, want non-empty")
+		}
+		if el.Words == nil || len(el.Words) == 0 {
+			t.Error("element.Words is nil or empty, want array with bounding boxes")
+		}
+	}
+}
+
+// TestWorker_JIIX_RoundTrip verifies jiix-recogntext.AC1.4:
+// Injected RECOGNTEXT can round-trip through JSON encoding/decoding.
+func TestWorker_JIIX_RoundTrip(t *testing.T) {
+	notePath := copyTestNote(t, "20260318_134649 RTR Note.note")
+
+	srv := mockOCRServer(t, "round trip test")
+	defer srv.Close()
+
+	s := openWorkerStore(t, WorkerConfig{
+		OCREnabled: true,
+		OCRClient:  NewOCRClient(srv.URL, "key", "model", OCRFormatAnthropic),
+	})
+	seedNote(t, s, notePath)
+
+	s.processJob(context.Background(), &Job{ID: 1, NotePath: notePath})
+
+	// Read back the modified .note file
+	f, err := os.Open(notePath)
+	if err != nil {
+		t.Fatalf("failed to open modified note: %v", err)
+	}
+	defer f.Close()
+
+	loadedNote2, err := gosnote.Load(f)
+	if err != nil {
+		t.Fatalf("failed to load modified note: %v", err)
+	}
+
+	if len(loadedNote2.Pages) == 0 {
+		t.Skip("no pages in note")
+	}
+
+	// Extract RECOGNTEXT bytes
+	p := loadedNote2.Pages[0]
+	raw, err := loadedNote2.ReadRecognText(p)
+	if err != nil {
+		t.Fatalf("failed to read RECOGNTEXT: %v", err)
+	}
+	if raw == nil {
+		t.Fatal("RECOGNTEXT is nil")
+	}
+
+	// Round-trip through JSON
+	var rc1 gosnote.RecognContent
+	if err := json.Unmarshal(raw, &rc1); err != nil {
+		t.Fatalf("unmarshal 1: %v", err)
+	}
+
+	data, err := json.Marshal(rc1)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var rc2 gosnote.RecognContent
+	if err := json.Unmarshal(data, &rc2); err != nil {
+		t.Fatalf("unmarshal 2: %v", err)
+	}
+
+	// Verify round-trip is identical
+	if rc1.Type != rc2.Type {
+		t.Errorf("Type mismatch after round-trip: %q vs %q", rc1.Type, rc2.Type)
+	}
+	if len(rc1.Elements) != len(rc2.Elements) {
+		t.Errorf("Elements length mismatch after round-trip: %d vs %d", len(rc1.Elements), len(rc2.Elements))
 	}
 }

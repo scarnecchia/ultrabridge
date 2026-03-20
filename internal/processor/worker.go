@@ -150,6 +150,9 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 		return nil
 	}
 
+	// Extract equipment string once before the page loop (from the original note header)
+	equipment := n.Header["APPLY_EQUIPMENT"]
+
 	// Iterate by page index, always fetching the page from currentNote after each reload.
 	// Using n.Pages only for the count — never pass a page from n to currentNote methods.
 	currentNote := n
@@ -180,12 +183,19 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 
 		// Only inject and write for RTR notes; non-RTR notes skip file modification
 		if isRTR {
-			content := gosnote.RecognContent{
-				Type: "Text",
-				Elements: []gosnote.RecognElement{
-					{Type: "Text", Label: text},
-				},
+			// Compute stroke bounds for bounding box
+			strokes, err := gosnote.DecodeTotalPath(tp, pageW, pageH)
+			if err != nil {
+				s.logger.Warn("no TOTALPATH data", "page", pageIdx, "err", err)
+				strokes = nil
 			}
+			var strokeBounds gosnote.Rect
+			if strokes != nil {
+				strokeBounds = gosnote.StrokeBounds(strokes)
+			}
+
+			// Build JIIX-compatible RECOGNTEXT using equipment string
+			content := gosnote.BuildRecognText(text, strokeBounds, equipment)
 			newBytes, err := currentNote.InjectRecognText(pageIdx, content)
 			if err != nil {
 				// go-sn cannot inject into multi-page notes with non-adjacent metadata.
