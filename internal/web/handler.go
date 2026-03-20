@@ -561,13 +561,14 @@ func (h *Handler) handleFilesRender(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no stroke data for page", http.StatusNoContent)
 		return
 	}
-	objs, err := gosnote.DecodeObjects(tp, n.PageWidth(), n.PageHeight())
+	pageW, pageH := n.PageDimensions(p)
+	objs, err := gosnote.DecodeObjects(tp, pageW, pageH)
 	if err != nil {
 		h.logger.Error("render: decode failed", "path", path, "page", pageIdx, "err", err)
 		http.Error(w, "decode error", http.StatusInternalServerError)
 		return
 	}
-	img := gosnote.RenderObjects(objs, n.PageWidth(), n.PageHeight(), nil)
+	img := gosnote.RenderObjects(objs, pageW, pageH, nil)
 
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {

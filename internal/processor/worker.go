@@ -74,9 +74,6 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 		return fmt.Errorf("note.Load: %w", err)
 	}
 
-	pageW := n.PageWidth()
-	pageH := n.PageHeight()
-
 	// Extract TITLE and KEYWORD block text from the note footer (AC3.3).
 	// These apply to the note as a whole; we attach them to page 0's index entry.
 	footerTags, _ := n.FooterTags()
@@ -121,6 +118,7 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 		if err != nil || tp == nil {
 			continue
 		}
+		pageW, pageH := currentNote.PageDimensions(p)
 		objs, err := gosnote.DecodeObjects(tp, pageW, pageH)
 		if err != nil {
 			continue

@@ -7,7 +7,7 @@ require (
 	github.com/emersion/go-webdav v0.7.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gorilla/websocket v1.5.3
-	github.com/jdkruzr/go-sn v0.0.0-20260319010016-530bc2633faf
+	github.com/jdkruzr/go-sn v0.0.0-20260320002629-9602bb2e87ab
 	golang.org/x/crypto v0.23.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	modernc.org/sqlite v1.30.2
