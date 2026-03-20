@@ -52,6 +52,11 @@ func (p *Pipeline) Start(ctx context.Context) {
 	go p.runAll(ctx)
 }
 
+// ScanNow triggers an immediate reconciliation scan (filesystem walk + orphan pruning).
+func (p *Pipeline) ScanNow(ctx context.Context) {
+	p.reconcile(ctx)
+}
+
 // Close stops all pipeline goroutines and waits for clean exit.
 func (p *Pipeline) Close() {
 	if p.cancel != nil {

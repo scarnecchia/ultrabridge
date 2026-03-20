@@ -1,14 +1,14 @@
 # internal/web
 
-Last verified: 2026-03-19
+Last verified: 2026-03-20
 
 HTTP handler and HTML templates for the UltraBridge web UI.
 
 ## Handler contract
 
-`NewHandler(store, notifier, noteStore, searchIndex, proc, logger, broadcaster) *Handler`
+`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, logger, broadcaster) *Handler`
 
-- All five domain dependencies (`noteStore`, `searchIndex`, `proc`, `notifier`) are **nil-safe** — passing nil disables the corresponding feature gracefully (no crash, renders an informative state).
+- All six domain dependencies (`noteStore`, `searchIndex`, `proc`, `scanner`, `notifier`) are **nil-safe** — passing nil disables the corresponding feature gracefully (no crash, renders an informative state).
 - `Handler` implements `http.Handler` via an internal `*http.ServeMux`.
 
 ## Routes
@@ -27,6 +27,7 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 | POST | `/files/force` | `handleFilesForce` | Unskip + enqueue (overrides size_limit) |
 | GET | `/files/status` | `handleFilesStatus` | JSON: ProcessorStatus |
 | GET | `/files/history` | `handleFilesHistory` | JSON: Job record for a path |
+| POST | `/files/scan` | `handleFilesScan` | Trigger immediate filesystem scan |
 | POST | `/processor/start` | `handleProcessorStart` | |
 | POST | `/processor/stop` | `handleProcessorStop` | |
 | GET | `/search` | `handleSearch` | FTS5 keyword search |
@@ -56,3 +57,4 @@ All POST handlers to processor methods (`Enqueue`, `Skip`, `Unskip`, `Start`, `S
 - `mockNoteStore` — configurable file map per relPath
 - `mockSearchIndex` — no-op SearchIndex
 - `mockProcessor` — in-memory job map; tracks running state
+- `mockScanner` — counts ScanNow calls

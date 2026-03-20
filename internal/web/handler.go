@@ -31,12 +31,18 @@ import (
 //go:embed templates
 var templateFS embed.FS
 
+// FileScanner triggers a filesystem scan. Implemented by pipeline.Pipeline.
+type FileScanner interface {
+	ScanNow(ctx context.Context)
+}
+
 type Handler struct {
 	store       ubcaldav.TaskStore
 	notifier    ubcaldav.SyncNotifier
 	noteStore   notestore.NoteStore
 	searchIndex search.SearchIndex
 	proc        processor.Processor
+	scanner     FileScanner
 	tmpl        *template.Template
 	mux         *http.ServeMux
 	logger      *slog.Logger
@@ -62,13 +68,14 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
 		store:       store,
 		notifier:    notifier,
 		noteStore:   noteStore,
 		searchIndex: searchIndex,
 		proc:        proc,
+		scanner:     scanner,
 		logger:      logger,
 		mux:         http.NewServeMux(),
 		broadcaster: broadcaster,
@@ -103,6 +110,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("GET /files/render", h.handleFilesRender)
 	h.mux.HandleFunc("POST /processor/start", h.handleProcessorStart)
 	h.mux.HandleFunc("POST /processor/stop", h.handleProcessorStop)
+	h.mux.HandleFunc("POST /files/scan", h.handleFilesScan)
 	h.registerLogStreamHandler(broadcaster)
 
 	return h
@@ -596,6 +604,13 @@ func (h *Handler) handleProcessorStop(w http.ResponseWriter, r *http.Request) {
 		if err := h.proc.Stop(); err != nil {
 			h.logger.Error("failed to stop processor", "error", err)
 		}
+	}
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesScan(w http.ResponseWriter, r *http.Request) {
+	if h.scanner != nil {
+		h.scanner.ScanNow(r.Context())
 	}
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }

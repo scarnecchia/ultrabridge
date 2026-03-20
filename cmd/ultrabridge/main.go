@@ -147,7 +147,7 @@ func main() {
 
 	// Wire web UI if enabled
 	if cfg.WebEnabled {
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, logger, broadcaster)
+		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, logger, broadcaster)
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 
