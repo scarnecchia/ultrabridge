@@ -76,5 +76,15 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("migration statement %d: %w", i, err)
 		}
 	}
+
+	// Add requeue_after column to jobs table (idempotent — check first, then ALTER)
+	var count int
+	_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name='requeue_after'`).Scan(&count)
+	if count == 0 {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE jobs ADD COLUMN requeue_after INTEGER`); err != nil {
+			return fmt.Errorf("add requeue_after column: %w", err)
+		}
+	}
+
 	return nil
 }

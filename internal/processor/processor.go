@@ -138,13 +138,13 @@ func (s *Store) Unskip(ctx context.Context, path string) error {
 
 func (s *Store) GetJob(ctx context.Context, path string) (*Job, error) {
 	var j Job
-	var startedAt, finishedAt, queuedAt sql.NullInt64
+	var startedAt, finishedAt, queuedAt, requeueAfter sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, note_path, status, COALESCE(skip_reason,''), attempts, COALESCE(last_error,''),
-		       queued_at, started_at, finished_at
+		       queued_at, started_at, finished_at, requeue_after
 		FROM jobs WHERE note_path=? LIMIT 1`, path).
 		Scan(&j.ID, &j.NotePath, &j.Status, &j.SkipReason, &j.Attempts, &j.LastError,
-			&queuedAt, &startedAt, &finishedAt)
+			&queuedAt, &startedAt, &finishedAt, &requeueAfter)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -159,6 +159,10 @@ func (s *Store) GetJob(ctx context.Context, path string) (*Job, error) {
 	}
 	if finishedAt.Valid {
 		j.FinishedAt = time.Unix(finishedAt.Int64, 0)
+	}
+	if requeueAfter.Valid {
+		t := time.Unix(requeueAfter.Int64, 0)
+		j.RequeueAfter = &t
 	}
 	return &j, nil
 }
