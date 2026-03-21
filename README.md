@@ -232,6 +232,30 @@ docker build -t ultrabridge:dev .
 docker run --rm ultrabridge:dev hash-password "yourpassword"
 ```
 
+## Appendix: Standalone OCR Injection
+
+The [go-sn](https://github.com/jdkruzr/go-sn) library includes `sninject`, a standalone tool for processing `.note` files outside of UltraBridge's pipeline. It renders each page, sends it to a vision API, injects JIIX RECOGNTEXT, and optionally zeros RECOGNFILE to prevent device re-recognition. No database, sync, or watcher involved.
+
+```bash
+go install github.com/jdkruzr/go-sn/cmd/sninject@latest
+
+# Process a note using the same vLLM endpoint as UltraBridge
+sninject -in original.note -out processed.note \
+  -api-url http://192.168.9.199:8000 \
+  -model Qwen/Qwen3-VL-8B-Instruct
+
+# Dry run — see OCR results without modifying the file
+sninject -in original.note -out /dev/null -dry-run
+```
+
+This is useful for debugging injection issues, testing OCR quality on specific files, or one-off processing without starting the full pipeline. See the [go-sn README](https://github.com/jdkruzr/go-sn#sninject) for full usage.
+
+### Why `-zero-recognfile`?
+
+When UltraBridge (or `sninject`) injects RECOGNTEXT into an RTR note, the device's MyScript engine detects a mismatch between the injected text and its own RECOGNFILE (iink recognition data). On the next sync, the device re-runs recognition from RECOGNFILE and overwrites the injected text — often with lower quality results (especially for math, symbols, and measurements).
+
+Zeroing RECOGNFILE removes the data the device uses to re-derive RECOGNTEXT, preventing this clobbering. The trade-off: if you later add new strokes to that page on the device, it may need to do a full recognition pass instead of an incremental update.
+
 ## Known Limitations
 
 1. **CalDAV — tier 3 fields dropped:** Only title, description, priority, due date, and status are synchronised. Recurrence, reminders, and other advanced fields are not mapped.
