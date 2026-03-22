@@ -1,6 +1,6 @@
 # Processor
 
-Last verified: 2026-03-20
+Last verified: 2026-03-22
 
 ## Purpose
 Background OCR job queue. Processes .note files through a pipeline of backup,
@@ -24,8 +24,7 @@ text extraction, optional vision-API OCR, RECOGNTEXT injection, and search index
   - Configured via `UB_OCR_FORMAT`; defaults to `anthropic`
 - Two-source indexing: "myScript" (existing RECOGNTEXT) indexed first, then "api" (OCR result) overwrites
 - File reloaded after each page injection: .note format offsets shift when RECOGNTEXT is written
-- RTR gate: only notes with `FILE_RECOGN_TYPE=1` get RECOGNTEXT injection; non-RTR notes are OCR'd and indexed but not modified
-- RECOGNSTATUS gate: RTR notes are requeued (5 min delay, up to 12 attempts / 1 hour) until device recognition is complete on all pages
+- Standard-only injection: only notes with `FILE_RECOGN_TYPE=0` (Standard) get RECOGNTEXT injection; RTR notes (`FILE_RECOGN_TYPE=1`) are OCR'd and indexed but the file is NOT modified. Reason: device AUTO_CONVERT clobbers injected RECOGNTEXT on RTR notes ~40s after opening, and silently converting RTR→Standard removes the real-time recognition sidebar.
 - JIIX format: injection uses `BuildRecognText` (JIIX v3 "Raw Content" with word-level bounding boxes in mm) to produce device-compatible RECOGNTEXT that survives SPC sync
 - SPC catalog sync after successful injection: updates f_user_file (size, md5, update_time), inserts f_file_action audit row, adjusts f_capacity quota delta. Each step independent -- one failure does not block others.
 

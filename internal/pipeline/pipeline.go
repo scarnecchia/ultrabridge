@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/processor"
@@ -90,6 +91,11 @@ func (p *Pipeline) runAll(ctx context.Context) {
 // A user who wants to re-process a completed file should use the UI "Queue" button.
 func (p *Pipeline) enqueue(ctx context.Context, path string) {
 	if notestore.ClassifyFileType(filepath.Ext(path)) != notestore.FileTypeNote {
+		return
+	}
+	// Skip _CONFLICT_ files created by the device when both local and cloud
+	// versions changed since last sync. Processing these causes feedback loops.
+	if strings.Contains(filepath.Base(path), "_CONFLICT_") {
 		return
 	}
 	// Ensure the notes row exists before inserting the job (FK constraint on jobs.note_path).

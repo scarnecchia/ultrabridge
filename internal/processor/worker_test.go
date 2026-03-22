@@ -519,53 +519,8 @@ func TestWorker_StoresHash_WithOCR(t *testing.T) {
 	}
 }
 
-// TestWorker_NonRTR_NoFileModification verifies AC4.1 and AC7.2:
-// Non-RTR notes (FILE_RECOGN_TYPE=0) get OCR'd and indexed but file is not modified on disk.
-func TestWorker_NonRTR_NoFileModification(t *testing.T) {
-	notePath := copyTestNote(t, "20260318_134309 Standard Note.note")
-	originalBytes, _ := os.ReadFile(notePath)
-
-	srv := mockOCRServer(t, "ocr recognized text")
-	defer srv.Close()
-
-	idx := &mockIndexer{}
-	s := openWorkerStore(t, WorkerConfig{
-		OCREnabled: true,
-		OCRClient:  NewOCRClient(srv.URL, "key", "model", OCRFormatAnthropic),
-		Indexer:    idx,
-	})
-	seedNote(t, s, notePath)
-
-	s.processJob(context.Background(), &Job{ID: 1, NotePath: notePath})
-
-	// Verify job completed as done (AC4.2)
-	var status string
-	s.db.QueryRow("SELECT status FROM jobs WHERE id=1").Scan(&status)
-	if status != StatusDone {
-		t.Errorf("status = %q, want done", status)
-	}
-
-	// Verify file bytes unchanged (AC7.2)
-	afterBytes, _ := os.ReadFile(notePath)
-	if string(originalBytes) != string(afterBytes) {
-		t.Error("non-RTR note file should not be modified on disk")
-	}
-
-	// Verify text was indexed despite no file modification (AC7.1)
-	var hasAPIIndex bool
-	for _, c := range idx.calls {
-		if c.source == "api" && c.text != "" {
-			hasAPIIndex = true
-			break
-		}
-	}
-	if !hasAPIIndex {
-		t.Error("expected OCR text to be indexed even for non-RTR notes")
-	}
-}
-
-// TestWorker_RTR_WithRecognition verifies AC5.1:
-// RTR notes (FILE_RECOGN_TYPE=1) with all pages having RECOGNSTATUS=1 proceed to injection.
+// TestWorker_RTR_WithRecognition verifies RTR notes are OCR'd but NOT injected.
+// File must remain unmodified. Job completes as done.
 func TestWorker_RTR_WithRecognition(t *testing.T) {
 	notePath := copyTestNote(t, "20260318_134649 RTR Note.note")
 	originalBytes, _ := os.ReadFile(notePath)
@@ -588,92 +543,10 @@ func TestWorker_RTR_WithRecognition(t *testing.T) {
 		t.Errorf("status = %q, want done", status)
 	}
 
-	// Verify file was modified (injection happened)
+	// RTR note file must NOT be modified — injection is Standard-only.
 	afterBytes, _ := os.ReadFile(notePath)
-	if string(originalBytes) == string(afterBytes) {
-		t.Error("RTR note file should be modified after OCR injection")
-	}
-}
-
-// TestWorker_RTR_WithoutRecognition verifies AC5.2:
-// RTR notes with any page having RECOGNSTATUS != 1 trigger requeue.
-func TestWorker_RTR_WithoutRecognition(t *testing.T) {
-	// Use the RTR note with RECOGNSTATUS=2 (not complete)
-	notePath := copyTestNote(t, "20260318_154754 rtr one line plus one word plus digest.note")
-
-	s := openWorkerStore(t, WorkerConfig{
-		OCREnabled: true,
-		OCRClient:  NewOCRClient("http://127.0.0.1:1", "key", "model", OCRFormatAnthropic),
-	})
-	seedNote(t, s, notePath)
-
-	// Claim the job to set it to in_progress before processing
-	job, err := s.claimNext(context.Background())
-	if err != nil || job == nil {
-		t.Fatalf("claimNext: %v", err)
-	}
-
-	s.processJob(context.Background(), job)
-
-	// Verify job status is pending (was requeued)
-	var status string
-	var requeueAfter sql.NullInt64
-	var attempts int
-	s.db.QueryRow("SELECT status, requeue_after, attempts FROM jobs WHERE id=1").
-		Scan(&status, &requeueAfter, &attempts)
-
-	if status != StatusPending {
-		t.Errorf("status = %q, want pending (requeued)", status)
-	}
-	if !requeueAfter.Valid || requeueAfter.Int64 == 0 {
-		t.Error("expected requeue_after to be set")
-	}
-	if requeueAfter.Valid {
-		requeueTime := time.Unix(requeueAfter.Int64, 0)
-		if requeueTime.Before(time.Now()) {
-			t.Error("requeue_after should be in the future")
-		}
-	}
-	if attempts != 1 {
-		t.Errorf("attempts = %d, want 1 (should be incremented on requeue)", attempts)
-	}
-}
-
-// TestWorker_RTR_MaxRequeueAttempts verifies AC6.4:
-// When max requeue attempts is reached and device recognition is still not complete,
-// the job is marked failed instead of requeued.
-func TestWorker_RTR_MaxRequeueAttempts(t *testing.T) {
-	notePath := copyTestNote(t, "20260318_154754 rtr one line plus one word plus digest.note")
-
-	s := openWorkerStore(t, WorkerConfig{
-		OCREnabled: true,
-		OCRClient:  NewOCRClient("http://127.0.0.1:1", "key", "model", OCRFormatAnthropic),
-	})
-	seedNote(t, s, notePath)
-
-	// Set attempts to maxRequeueAttempts so next attempt triggers failure
-	s.db.Exec("UPDATE jobs SET attempts = ? WHERE id = 1", maxRequeueAttempts)
-
-	// Claim the job to set it to in_progress before processing
-	job, err := s.claimNext(context.Background())
-	if err != nil || job == nil {
-		t.Fatalf("claimNext: %v", err)
-	}
-
-	s.processJob(context.Background(), job)
-
-	// Verify job status is failed, not pending
-	var status, lastError string
-	s.db.QueryRow("SELECT status, last_error FROM jobs WHERE id=1").Scan(&status, &lastError)
-
-	if status != StatusFailed {
-		t.Errorf("status = %q, want failed (max attempts exceeded)", status)
-	}
-	if lastError == "" {
-		t.Error("expected last_error to be set with failure reason")
-	}
-	if !strings.Contains(lastError, "not complete after") {
-		t.Errorf("error message should mention max attempts, got: %s", lastError)
+	if string(originalBytes) != string(afterBytes) {
+		t.Error("RTR note file should NOT be modified — injection is Standard-only")
 	}
 }
 
@@ -770,7 +643,7 @@ func TestWorker_Requeue_OnlyAffectsInProgress(t *testing.T) {
 // TestWorker_JIIX_ValidStructure verifies jiix-recogntext.AC1.1 and AC1.2:
 // Injected RECOGNTEXT is valid JIIX with correct root type, elements array, and bounding boxes.
 func TestWorker_JIIX_ValidStructure(t *testing.T) {
-	notePath := copyTestNote(t, "20260318_134649 RTR Note.note")
+	notePath := copyTestNote(t, "20260318_154108 std one line.note")
 
 	srv := mockOCRServer(t, "test jiix content")
 	defer srv.Close()
@@ -851,7 +724,7 @@ func TestWorker_JIIX_ValidStructure(t *testing.T) {
 // TestWorker_JIIX_RoundTrip verifies jiix-recogntext.AC1.4:
 // Injected RECOGNTEXT can round-trip through JSON encoding/decoding.
 func TestWorker_JIIX_RoundTrip(t *testing.T) {
-	notePath := copyTestNote(t, "20260318_134649 RTR Note.note")
+	notePath := copyTestNote(t, "20260318_154108 std one line.note")
 
 	srv := mockOCRServer(t, "round trip test")
 	defer srv.Close()
@@ -915,14 +788,14 @@ func TestWorker_JIIX_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestWorker_JIIX_EndToEnd_RTR verifies jiix-recogntext.AC1.3, AC1.4, and AC5.1:
-// RTR notes with all pages ready inject JIIX without forbidden fields,
-// file is modified, and RECOGNTEXT round-trips correctly.
-func TestWorker_JIIX_EndToEnd_RTR(t *testing.T) {
-	notePath := copyTestNote(t, "20260318_134649 RTR Note.note")
+// TestWorker_JIIX_EndToEnd_Standard verifies JIIX injection into Standard notes:
+// Standard notes get OCR + injection, RECOGNTEXT is valid JIIX with no forbidden fields,
+// and round-trips correctly through JSON encoding.
+func TestWorker_JIIX_EndToEnd_Standard(t *testing.T) {
+	notePath := copyTestNote(t, "20260318_154108 std one line.note")
 	originalBytes, _ := os.ReadFile(notePath)
 
-	srv := mockOCRServer(t, "rtf e2e test text")
+	srv := mockOCRServer(t, "std e2e test text")
 	defer srv.Close()
 
 	idx := &mockIndexer{}
@@ -942,10 +815,10 @@ func TestWorker_JIIX_EndToEnd_RTR(t *testing.T) {
 		t.Errorf("status = %q, want done", status)
 	}
 
-	// AC5.1: Verify file was modified (injection happened for RTR with RECOGNSTATUS=1)
+	// Standard note file MUST be modified (injection happened).
 	afterBytes, _ := os.ReadFile(notePath)
 	if string(originalBytes) == string(afterBytes) {
-		t.Error("RTR note file should be modified after injection")
+		t.Error("Standard note file should be modified after injection")
 	}
 
 	// Read back the modified .note file
@@ -974,13 +847,12 @@ func TestWorker_JIIX_EndToEnd_RTR(t *testing.T) {
 		t.Fatal("RECOGNTEXT is nil after injection")
 	}
 
-	// AC1.4: Verify round-trip through JSON encoding
+	// Verify round-trip through JSON encoding
 	var rc1 gosnote.RecognContent
 	if err := json.Unmarshal(raw, &rc1); err != nil {
 		t.Fatalf("failed to unmarshal RECOGNTEXT: %v", err)
 	}
 
-	// Re-marshal to test round-trip
 	marshalled, err := json.Marshal(rc1)
 	if err != nil {
 		t.Fatalf("failed to marshal RECOGNTEXT: %v", err)
@@ -991,7 +863,6 @@ func TestWorker_JIIX_EndToEnd_RTR(t *testing.T) {
 		t.Fatalf("failed to unmarshal round-tripped RECOGNTEXT: %v", err)
 	}
 
-	// Verify round-trip structure matches
 	if rc1.Type != rc2.Type {
 		t.Errorf("round-trip Type mismatch: %q vs %q", rc1.Type, rc2.Type)
 	}
@@ -999,8 +870,7 @@ func TestWorker_JIIX_EndToEnd_RTR(t *testing.T) {
 		t.Errorf("round-trip Elements length mismatch: %d vs %d", len(rc1.Elements), len(rc2.Elements))
 	}
 
-	// AC1.3: Verify no forbidden fields in JSON representation
-	// Marshal to map to inspect keys
+	// Verify no forbidden fields in JSON representation
 	var recogMap map[string]interface{}
 	if err := json.Unmarshal(raw, &recogMap); err != nil {
 		t.Fatalf("failed to unmarshal to map: %v", err)
@@ -1013,10 +883,8 @@ func TestWorker_JIIX_EndToEnd_RTR(t *testing.T) {
 		}
 	}
 
-	// Verify elements array structure
 	if elements, ok := recogMap["elements"].([]interface{}); ok && len(elements) > 0 {
 		elem0 := elements[0].(map[string]interface{})
-		// AC1.3: Check elements also don't have forbidden fields
 		for _, field := range forbiddenFields {
 			if _, exists := elem0[field]; exists {
 				t.Errorf("forbidden field %q found in element", field)
@@ -1027,7 +895,7 @@ func TestWorker_JIIX_EndToEnd_RTR(t *testing.T) {
 	// Verify OCR text was indexed with "api" source
 	var hasAPIIndex bool
 	for _, call := range idx.calls {
-		if call.source == "api" && strings.Contains(call.text, "rtf e2e test text") {
+		if call.source == "api" && strings.Contains(call.text, "std e2e test text") {
 			hasAPIIndex = true
 			break
 		}
@@ -1037,63 +905,10 @@ func TestWorker_JIIX_EndToEnd_RTR(t *testing.T) {
 	}
 }
 
-// TestWorker_JIIX_EndToEnd_NonRTR verifies jiix-recogntext.AC4.1:
-// Non-RTR notes skip injection, file is not modified, but OCR + indexing still happen.
-func TestWorker_JIIX_EndToEnd_NonRTR(t *testing.T) {
-	// Use standard (non-RTR) note
-	notePath := copyTestNote(t, "20260318_134309 Standard Note.note")
-	originalBytes, _ := os.ReadFile(notePath)
-
-	srv := mockOCRServer(t, "non-rtr ocr text")
-	defer srv.Close()
-
-	idx := &mockIndexer{}
-	s := openWorkerStore(t, WorkerConfig{
-		OCREnabled: true,
-		OCRClient:  NewOCRClient(srv.URL, "key", "model", OCRFormatAnthropic),
-		Indexer:    idx,
-	})
-	seedNote(t, s, notePath)
-
-	s.processJob(context.Background(), &Job{ID: 1, NotePath: notePath})
-
-	// Verify job completed successfully
-	var status string
-	s.db.QueryRow("SELECT status FROM jobs WHERE id=1").Scan(&status)
-	if status != StatusDone {
-		t.Errorf("status = %q, want done", status)
-	}
-
-	// AC4.1: Verify file bytes are identical to original (no injection for non-RTR)
-	afterBytes, _ := os.ReadFile(notePath)
-	if string(originalBytes) != string(afterBytes) {
-		t.Error("non-RTR note file should NOT be modified (AC4.1)")
-	}
-
-	// AC4.1: Verify OCR text was still indexed with "api" source despite no file modification
-	var hasAPIIndex bool
-	for _, call := range idx.calls {
-		if call.source == "api" && strings.Contains(call.text, "non-rtr ocr text") {
-			hasAPIIndex = true
-			break
-		}
-	}
-	if !hasAPIIndex {
-		t.Error("expected OCR text indexed with source=api even for non-RTR notes")
-	}
-
-	// Verify file hash was still computed and stored
-	var sha256 string
-	s.db.QueryRow("SELECT COALESCE(sha256, '') FROM notes WHERE path=?", notePath).Scan(&sha256)
-	if sha256 == "" {
-		t.Error("expected sha256 to be stored even for non-RTR notes")
-	}
-}
-
 // TestWorker_JIIX_ForbiddenFields_InElements verifies AC1.3:
 // Forbidden fields (version, id, candidates, reflow-label) never appear in elements either.
 func TestWorker_JIIX_ForbiddenFields_InElements(t *testing.T) {
-	notePath := copyTestNote(t, "20260318_134649 RTR Note.note")
+	notePath := copyTestNote(t, "20260318_154108 std one line.note")
 
 	srv := mockOCRServer(t, "forbidden fields test")
 	defer srv.Close()
@@ -1237,5 +1052,124 @@ func TestWorker_NilCatalogUpdater(t *testing.T) {
 	s.db.QueryRow("SELECT status FROM jobs WHERE id=1").Scan(&status)
 	if status != StatusDone {
 		t.Errorf("status = %q, want done", status)
+	}
+}
+
+// TestWorker_StandardNote_Injection verifies that Standard notes (FILE_RECOGN_TYPE=0)
+// get OCR'd AND injected — the file MUST be modified on disk with RECOGNTEXT.
+func TestWorker_StandardNote_Injection(t *testing.T) {
+	notePath := copyTestNote(t, "20260318_154108 std one line.note")
+	originalBytes, _ := os.ReadFile(notePath)
+
+	srv := mockOCRServer(t, "standard note ocr text")
+	defer srv.Close()
+
+	idx := &mockIndexer{}
+	s := openWorkerStore(t, WorkerConfig{
+		OCREnabled: true,
+		OCRClient:  NewOCRClient(srv.URL, "key", "model", OCRFormatAnthropic),
+		Indexer:    idx,
+	})
+	seedNote(t, s, notePath)
+
+	s.processJob(context.Background(), &Job{ID: 1, NotePath: notePath})
+
+	// Job must complete as done.
+	var status string
+	s.db.QueryRow("SELECT status FROM jobs WHERE id=1").Scan(&status)
+	if status != StatusDone {
+		t.Fatalf("status = %q, want done", status)
+	}
+
+	// Standard note file MUST be modified (RECOGNTEXT injected).
+	afterBytes, _ := os.ReadFile(notePath)
+	if string(originalBytes) == string(afterBytes) {
+		t.Error("Standard note file should be modified after OCR injection")
+	}
+
+	// Verify injected RECOGNTEXT is valid JIIX.
+	f, err := os.Open(notePath)
+	if err != nil {
+		t.Fatalf("open modified note: %v", err)
+	}
+	defer f.Close()
+	loadedNote, err := gosnote.Load(f)
+	if err != nil {
+		t.Fatalf("load modified note: %v", err)
+	}
+	if len(loadedNote.Pages) == 0 {
+		t.Fatal("no pages in note")
+	}
+	raw, err := loadedNote.ReadRecognText(loadedNote.Pages[0])
+	if err != nil {
+		t.Fatalf("ReadRecognText: %v", err)
+	}
+	if raw == nil {
+		t.Fatal("RECOGNTEXT is nil after injection")
+	}
+	var rc gosnote.RecognContent
+	if err := json.Unmarshal(raw, &rc); err != nil {
+		t.Fatalf("unmarshal RECOGNTEXT: %v", err)
+	}
+	if rc.Type != "Raw Content" {
+		t.Errorf("RecognContent.Type = %q, want %q", rc.Type, "Raw Content")
+	}
+
+	// OCR text must also be indexed.
+	var hasAPIIndex bool
+	for _, c := range idx.calls {
+		if c.source == "api" && strings.Contains(c.text, "standard note ocr text") {
+			hasAPIIndex = true
+			break
+		}
+	}
+	if !hasAPIIndex {
+		t.Error("expected OCR text indexed with source=api for Standard note")
+	}
+}
+
+// TestWorker_RTR_NoInjection verifies that RTR notes (FILE_RECOGN_TYPE=1) get
+// OCR'd and indexed but the file is NOT modified — no RECOGNTEXT injection.
+// Job completes as done (no requeue).
+func TestWorker_RTR_NoInjection(t *testing.T) {
+	notePath := copyTestNote(t, "20260318_134649 RTR Note.note")
+	originalBytes, _ := os.ReadFile(notePath)
+
+	srv := mockOCRServer(t, "rtr ocr text no inject")
+	defer srv.Close()
+
+	idx := &mockIndexer{}
+	s := openWorkerStore(t, WorkerConfig{
+		OCREnabled: true,
+		OCRClient:  NewOCRClient(srv.URL, "key", "model", OCRFormatAnthropic),
+		Indexer:    idx,
+	})
+	seedNote(t, s, notePath)
+
+	s.processJob(context.Background(), &Job{ID: 1, NotePath: notePath})
+
+	// Job must complete as done — NOT requeued, NOT failed.
+	var status string
+	s.db.QueryRow("SELECT status FROM jobs WHERE id=1").Scan(&status)
+	if status != StatusDone {
+		t.Fatalf("status = %q, want done (RTR notes should not requeue)", status)
+	}
+
+	// RTR note file must NOT be modified.
+	afterBytes, _ := os.ReadFile(notePath)
+	if string(originalBytes) != string(afterBytes) {
+		t.Error("RTR note file should NOT be modified — injection is Standard-only")
+	}
+
+	// OCR text must still be indexed despite no injection.
+	var hasAPIIndex bool
+	for _, c := range idx.calls {
+		if c.source == "api" && strings.Contains(c.text, "rtr ocr text no inject") {
+			hasAPIIndex = true
+			break
+		}
+	}
+	if !hasAPIIndex {
+		t.Error("expected OCR text indexed with source=api even for RTR notes")
 	}
 }

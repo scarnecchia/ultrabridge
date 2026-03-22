@@ -175,6 +175,32 @@ func TestPipeline_MoveDetection_JobTransferred(t *testing.T) {
 	}
 }
 
+// TestEnqueue_SkipsConflictFiles verifies that files containing _CONFLICT_ in
+// the name are not enqueued. The device creates these when both local and cloud
+// versions of a file changed since last sync; processing them causes feedback loops.
+func TestEnqueue_SkipsConflictFiles(t *testing.T) {
+	ns, proc, dir := openTestComponents(t)
+	pl := New(Config{NotesPath: dir, Store: ns, Proc: proc, Logger: slog.Default()})
+
+	// Create a _CONFLICT_ file
+	conflictPath := filepath.Join(dir, "myfile_CONFLICT_20260322.note")
+	os.WriteFile(conflictPath, []byte("data"), 0644)
+
+	pl.enqueue(context.Background(), conflictPath)
+
+	if proc.Status().Pending != 0 {
+		t.Errorf("pending = %d, want 0 (_CONFLICT_ files should be skipped)", proc.Status().Pending)
+	}
+
+	// Verify a normal file IS still enqueued
+	normalPath := filepath.Join(dir, "normal.note")
+	os.WriteFile(normalPath, []byte("data"), 0644)
+	pl.enqueue(context.Background(), normalPath)
+	if proc.Status().Pending != 1 {
+		t.Errorf("pending = %d, want 1 (normal files should be enqueued)", proc.Status().Pending)
+	}
+}
+
 // TestPipeline_MoveDetection_ContentChanged verifies AC1.4:
 // when the moved file has different content, it gets enqueued normally.
 func TestPipeline_MoveDetection_ContentChanged(t *testing.T) {

@@ -1,6 +1,6 @@
 # Pipeline
 
-Last verified: 2026-03-19
+Last verified: 2026-03-22
 
 ## Purpose
 Owns file detection: discovers new/changed .note files and feeds them to the
@@ -28,5 +28,6 @@ processor queue. Three detection strategies run concurrently.
 
 ## Invariants
 - Only files with `.note` extension are enqueued (ClassifyFileType filter)
+- Files containing `_CONFLICT_` in the name are skipped (device creates these during sync conflicts; processing them causes feedback loops)
 - Watcher adds new subdirectories dynamically on CREATE events
 - Close() blocks until all goroutines exit cleanly
