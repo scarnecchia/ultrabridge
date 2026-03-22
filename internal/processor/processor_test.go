@@ -302,3 +302,34 @@ func TestEnqueue_WithRequeueAfter_SetsFutureTime(t *testing.T) {
 		t.Errorf("requeue_after = %d, expected between %d and %d", requeueAfterUnix, expectedMin, expectedMax)
 	}
 }
+
+// AC2.1 backward compat: Re-enqueue without options keeps requeue_after NULL
+func TestEnqueue_BackwardCompat_ReEnqueueWithoutOptions(t *testing.T) {
+	s := openTestProcessor(t)
+	ctx := context.Background()
+	seedNotesRow(t, s, "/test.note")
+
+	// Initial enqueue with delay
+	delay := 30 * time.Second
+	if err := s.Enqueue(ctx, "/test.note", WithRequeueAfter(delay)); err != nil {
+		t.Fatalf("initial Enqueue: %v", err)
+	}
+
+	// Mark job as done to allow re-enqueue
+	s.db.ExecContext(ctx, "UPDATE jobs SET status=? WHERE note_path=?", StatusDone, "/test.note")
+
+	// Re-enqueue without options (backward compatible behavior)
+	if err := s.Enqueue(ctx, "/test.note"); err != nil {
+		t.Fatalf("re-enqueue: %v", err)
+	}
+
+	// Verify requeue_after is now NULL (overwritten by re-enqueue without options)
+	var requeueAfter interface{}
+	err := s.db.QueryRowContext(ctx, "SELECT requeue_after FROM jobs WHERE note_path=?", "/test.note").Scan(&requeueAfter)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if requeueAfter != nil {
+		t.Errorf("after re-enqueue without options, requeue_after = %v, want NULL", requeueAfter)
+	}
+}
