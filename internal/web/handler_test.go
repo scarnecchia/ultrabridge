@@ -126,6 +126,8 @@ func (m *mockNoteStore) UpsertFile(_ context.Context, _ string) error { return n
 
 func (m *mockNoteStore) SetHash(_ context.Context, _, _ string) error { return nil }
 
+func (m *mockNoteStore) GetHash(_ context.Context, _ string) (string, error) { return "", nil }
+
 func (m *mockNoteStore) LookupByHash(_ context.Context, _ string) (string, bool, error) {
 	return "", false, nil
 }
