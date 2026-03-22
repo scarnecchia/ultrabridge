@@ -299,6 +299,63 @@ func TestSetHash(t *testing.T) {
 	}
 }
 
+// TestGetHash_WithStoredHash verifies GetHash returns the stored SHA-256 digest.
+func TestGetHash_WithStoredHash(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	// Seed a notes row with a hash.
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO notes (path, rel_path, file_type, size_bytes, mtime, created_at, updated_at, sha256)
+		VALUES (?, ?, 'note', 0, ?, ?, ?, ?)`, "/a.note", "a.note", now, now, now, "abc123def456")
+	if err != nil {
+		t.Fatalf("seed notes: %v", err)
+	}
+
+	hash, err := s.GetHash(ctx, "/a.note")
+	if err != nil {
+		t.Fatalf("GetHash: %v", err)
+	}
+	if hash != "abc123def456" {
+		t.Errorf("hash = %q, want abc123def456", hash)
+	}
+}
+
+// TestGetHash_WithNullHash verifies GetHash returns empty string for NULL sha256.
+func TestGetHash_WithNullHash(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	// Seed a notes row without setting sha256 (defaults to NULL).
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO notes (path, rel_path, file_type, size_bytes, mtime, created_at, updated_at)
+		VALUES (?, ?, 'note', 0, ?, ?, ?)`, "/b.note", "b.note", now, now, now)
+	if err != nil {
+		t.Fatalf("seed notes: %v", err)
+	}
+
+	hash, err := s.GetHash(ctx, "/b.note")
+	if err != nil {
+		t.Fatalf("GetHash: %v", err)
+	}
+	if hash != "" {
+		t.Errorf("hash = %q, want empty string for NULL sha256", hash)
+	}
+}
+
+// TestGetHash_NotFound verifies GetHash returns ErrNotFound for nonexistent path.
+func TestGetHash_NotFound(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	_, err := s.GetHash(ctx, "/nonexistent.note")
+	if !IsNotFound(err) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
 // TestLookupByHash_Found verifies LookupByHash returns the path when a matching
 // sha256 exists with a done job.
 func TestLookupByHash_Found(t *testing.T) {

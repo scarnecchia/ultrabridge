@@ -35,6 +35,9 @@ type NoteStore interface {
 	// Called by the worker after successful job completion and by the pipeline
 	// after a job is transferred to a new path.
 	SetHash(ctx context.Context, path, hash string) error
+	// GetHash returns the stored SHA-256 hex digest for the file at path.
+	// Returns empty string if no hash is stored (NULL sha256).
+	GetHash(ctx context.Context, path string) (string, error)
 	// LookupByHash returns the path and job status of any note whose sha256 matches hash
 	// and which has a completed (done) job. Returns found=false if no match exists.
 	// Used at enqueue time to detect moved or renamed files.
@@ -165,6 +168,24 @@ func (s *Store) List(ctx context.Context, relPath string) ([]NoteFile, error) {
 func (s *Store) SetHash(ctx context.Context, path, hash string) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE notes SET sha256=? WHERE path=?", hash, path)
 	return err
+}
+
+// GetHash returns the stored SHA-256 hex digest for the file at path.
+// Returns empty string with nil error if the hash is NULL.
+func (s *Store) GetHash(ctx context.Context, path string) (string, error) {
+	var hash sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		"SELECT sha256 FROM notes WHERE path=?", path).Scan(&hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("get hash %s: %w", path, err)
+	}
+	if !hash.Valid {
+		return "", nil
+	}
+	return hash.String, nil
 }
 
 // LookupByHash returns the path of any note whose sha256 matches hash and which has
