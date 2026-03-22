@@ -10,8 +10,8 @@ import (
 )
 
 // runEngineIOListener watches for inbound Engine.IO events and enqueues
-// affected note paths. The specific event names and payload format must be
-// verified by observing live traffic (see Task 1 investigation step).
+// affected note paths. Parses FILE-SYN and DOWNLOADFILE frames from the
+// Supernote Private Cloud service.
 //
 // If supernote-service emits no useful sync-complete events, extractNotePaths
 // returns nil and file detection falls back to the watcher and reconciler.
