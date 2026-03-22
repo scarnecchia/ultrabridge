@@ -255,3 +255,50 @@ func TestClaimNext_ClaimsPastRequeueAfter(t *testing.T) {
 		t.Errorf("job status = %q, want in_progress", status)
 	}
 }
+
+// AC2.1: Enqueue with no options sets requeue_after to NULL
+func TestEnqueue_NoOptions_RequeueAfterNull(t *testing.T) {
+	s := openTestProcessor(t)
+	ctx := context.Background()
+	seedNotesRow(t, s, "/test.note")
+
+	if err := s.Enqueue(ctx, "/test.note"); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	var requeueAfter interface{}
+	err := s.db.QueryRowContext(ctx, "SELECT requeue_after FROM jobs WHERE note_path=?", "/test.note").Scan(&requeueAfter)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if requeueAfter != nil {
+		t.Errorf("requeue_after = %v, want NULL", requeueAfter)
+	}
+}
+
+// AC2.2: Enqueue with WithRequeueAfter sets requeue_after to now+delay
+func TestEnqueue_WithRequeueAfter_SetsFutureTime(t *testing.T) {
+	s := openTestProcessor(t)
+	ctx := context.Background()
+	seedNotesRow(t, s, "/test.note")
+
+	delay := 30 * time.Second
+	beforeEnqueue := time.Now().Unix()
+	if err := s.Enqueue(ctx, "/test.note", WithRequeueAfter(delay)); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	afterEnqueue := time.Now().Unix()
+
+	var requeueAfterUnix int64
+	err := s.db.QueryRowContext(ctx, "SELECT requeue_after FROM jobs WHERE note_path=?", "/test.note").Scan(&requeueAfterUnix)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+
+	expectedMin := beforeEnqueue + int64(delay.Seconds())
+	expectedMax := afterEnqueue + int64(delay.Seconds()) + 2 // 2-second tolerance
+
+	if requeueAfterUnix < expectedMin || requeueAfterUnix > expectedMax {
+		t.Errorf("requeue_after = %d, expected between %d and %d", requeueAfterUnix, expectedMin, expectedMax)
+	}
+}

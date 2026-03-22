@@ -166,7 +166,7 @@ func (m *mockProcessor) Stop() error                     { m.running = false; re
 func (m *mockProcessor) Status() processor.ProcessorStatus {
 	return processor.ProcessorStatus{Running: m.running, Pending: len(m.jobs)}
 }
-func (m *mockProcessor) Enqueue(_ context.Context, path string) error {
+func (m *mockProcessor) Enqueue(_ context.Context, path string, _ ...processor.EnqueueOption) error {
 	m.jobs[path] = processor.StatusPending
 	return nil
 }

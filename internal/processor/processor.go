@@ -38,12 +38,27 @@ type WorkerConfig struct {
 	CatalogUpdater CatalogUpdater // nil = SPC catalog sync disabled
 }
 
+// EnqueueOption configures optional behavior for Enqueue.
+type EnqueueOption func(*enqueueConfig)
+
+type enqueueConfig struct {
+	requeueAfter *time.Duration
+}
+
+// WithRequeueAfter sets a delay before the re-enqueued job can be claimed.
+// claimNext will skip the job until the delay has elapsed.
+func WithRequeueAfter(d time.Duration) EnqueueOption {
+	return func(c *enqueueConfig) {
+		c.requeueAfter = &d
+	}
+}
+
 // Processor manages the background OCR job queue.
 type Processor interface {
 	Start(ctx context.Context) error
 	Stop() error
 	Status() ProcessorStatus
-	Enqueue(ctx context.Context, path string) error
+	Enqueue(ctx context.Context, path string, opts ...EnqueueOption) error
 	Skip(ctx context.Context, path, reason string) error
 	Unskip(ctx context.Context, path string) error
 	// GetJob returns the latest job record for a file path, or nil if none exists.
@@ -112,14 +127,24 @@ func (s *Store) Status() ProcessorStatus {
 	return ProcessorStatus{Running: running, Pending: pending, InFlight: inFlight}
 }
 
-func (s *Store) Enqueue(ctx context.Context, path string) error {
-	now := time.Now().Unix()
+func (s *Store) Enqueue(ctx context.Context, path string, opts ...EnqueueOption) error {
+	var cfg enqueueConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	now := time.Now()
+	var requeueAfter any
+	if cfg.requeueAfter != nil {
+		requeueAfter = now.Add(*cfg.requeueAfter).Unix()
+	}
+
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO jobs (note_path, status, queued_at)
-		VALUES (?, ?, ?)
-		ON CONFLICT(note_path) DO UPDATE SET status=excluded.status, queued_at=excluded.queued_at, requeue_after=NULL
+		INSERT INTO jobs (note_path, status, queued_at, requeue_after)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(note_path) DO UPDATE SET status=excluded.status, queued_at=excluded.queued_at, requeue_after=excluded.requeue_after
 		WHERE status IN (?, ?, ?)`,
-		path, StatusPending, now,
+		path, StatusPending, now.Unix(), requeueAfter,
 		StatusDone, StatusFailed, StatusSkipped,
 	)
 	if err != nil {
