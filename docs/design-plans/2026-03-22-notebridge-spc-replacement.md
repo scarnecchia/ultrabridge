@@ -207,11 +207,15 @@ Web browser   ──→ web/handler.go ──→ notestore, search, processor, s
 9. `synchronous/end` → releases lock
 10. Socket.IO: bidirectional keepalive + `ServerMessage` push for cross-device notifications
 
+### Injection Policy
+
+RECOGNTEXT injection applies only to Standard notes (FILE_RECOGN_TYPE=0). RTR notes (FILE_RECOGN_TYPE=1) are OCR'd and indexed for search but the file is never modified — the device's auto-convert clobbers injected RECOGNTEXT within ~40 seconds of opening an RTR note, and silently converting RTR→Standard removes the real-time recognition sidebar.
+
 ### CONFLICT Bug Resolution
 
 The CONFLICT file problem is solved structurally. NoteBridge owns file storage — there is no second system to conflict with. Post-injection flow:
 
-1. Worker finishes RECOGNTEXT injection → writes file to blob storage
+1. Worker finishes RECOGNTEXT injection (Standard notes only) → writes file to blob storage
 2. Worker updates `syncdb.files` row with new MD5, size, update_time
 3. Worker stores SHA-256 in `notestore.notes` for re-processing detection
 4. Socket.IO pushes notification to connected tablets
