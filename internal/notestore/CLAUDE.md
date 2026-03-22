@@ -1,19 +1,19 @@
 # Note Store
 
-Last verified: 2026-03-19
+Last verified: 2026-03-22
 
 ## Purpose
 Maintains file inventory in the SQLite `notes` table and provides directory
 listing for the web UI Files tab. Bridges the filesystem with the database.
 
 ## Contracts
-- **Exposes**: `NoteStore` interface (Scan, List, Get, UpsertFile), `NoteFile` model, `FileType` classification, `ComputeSHA256`.
+- **Exposes**: `NoteStore` interface (Scan, List, Get, UpsertFile, GetHash), `NoteFile` model, `FileType` classification, `ComputeSHA256`.
 - **Guarantees**: Scan returns only new-or-changed paths (mtime comparison). List returns directories from live FS + files from DB with latest job status. UpsertFile satisfies the `jobs.note_path` FK before enqueue.
 - **Expects**: SQLite `*sql.DB` with `notes` and `jobs` tables. Absolute `notesPath` root directory.
 
 ## Dependencies
 - **Uses**: `notedb` schema (notes + jobs tables)
-- **Used by**: `pipeline` (Scan for reconciliation, UpsertFile before enqueue), `web` (List/Get for Files tab)
+- **Used by**: `pipeline` (Scan for reconciliation, UpsertFile before enqueue, GetHash + ComputeSHA256 for change detection), `web` (List/Get for Files tab)
 - **Boundary**: No processing logic. Does not read .note file contents.
 
 ## Key Decisions

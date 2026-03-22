@@ -7,13 +7,13 @@ Background OCR job queue. Processes .note files through a pipeline of backup,
 text extraction, optional vision-API OCR, RECOGNTEXT injection, and search indexing.
 
 ## Contracts
-- **Exposes**: `Processor` interface (Start, Stop, Status, Enqueue, Skip, Unskip, GetJob), `Job` model (includes `RequeueAfter`), `ProcessorStatus`, `OCRClient`, `Indexer` interface, `Requeue(ctx, jobID, delay)`, `CatalogUpdater` interface, `NewSPCCatalog`.
+- **Exposes**: `Processor` interface (Start, Stop, Status, Enqueue, Skip, Unskip, GetJob), `Job` model (includes `RequeueAfter`), `ProcessorStatus`, `OCRClient`, `Indexer` interface, `Requeue(ctx, jobID, delay)`, `CatalogUpdater` interface, `NewSPCCatalog`, `EnqueueOption` type, `WithRequeueAfter(duration)`.
 - **Guarantees**: Single worker loop claims jobs atomically. Watchdog reclaims stuck jobs (>10 min in_progress). Backup before any file modification. Graceful shutdown waits for current job. Requeued jobs respect delay before re-claim. SPC catalog updates are best-effort (logged, never fail the job).
 - **Expects**: SQLite `*sql.DB` with `notes` and `jobs` tables (including `requeue_after` column). `WorkerConfig` with optional OCRClient, Indexer, and CatalogUpdater.
 
 ## Dependencies
 - **Uses**: `notedb` schema, `go-sn/note` (parse/render/inject), vision API (Anthropic/OpenRouter), SPC MariaDB (f_user_file, f_file_action, f_capacity -- via CatalogUpdater)
-- **Used by**: `pipeline` (Enqueue), `web` (Start/Stop/Status/Skip/Unskip/GetJob for C&C routes)
+- **Used by**: `pipeline` (Enqueue with WithRequeueAfter, GetJob), `web` (Start/Stop/Status/Skip/Unskip/GetJob for C&C routes)
 - **Boundary**: Does not own file discovery -- that is `pipeline`'s responsibility.
 
 ## Key Decisions
@@ -33,6 +33,7 @@ text extraction, optional vision-API OCR, RECOGNTEXT injection, and search index
 - Requeue only operates on in_progress jobs (prevents status regression)
 - Backup is created exactly once per note (idempotent check via `backup_path` column)
 - Size guard skips files exceeding `MaxFileMB` (status=skipped, reason=size_limit)
+- Enqueue accepts variadic EnqueueOption (functional options pattern); WithRequeueAfter sets requeue_after on INSERT and ON CONFLICT UPDATE
 - Only .note files are processable (enforced by pipeline enqueue filter)
 
 ## Gotchas

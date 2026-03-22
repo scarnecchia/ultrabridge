@@ -12,14 +12,14 @@ processor queue. Three detection strategies run concurrently.
 - **Expects**: `notestore.NoteStore` for scanning/upserting, `processor.Processor` for enqueueing, optional Engine.IO events channel.
 
 ## Dependencies
-- **Uses**: `notestore` (Scan, UpsertFile), `processor` (Enqueue), `fsnotify`, `sync.Notifier.Events()`
+- **Uses**: `notestore` (Scan, UpsertFile, GetHash, ComputeSHA256), `processor` (Enqueue with WithRequeueAfter, GetJob), `fsnotify`, `sync.Notifier.Events()`
 - **Used by**: `cmd/ultrabridge` (startup wiring)
 - **Boundary**: No direct DB access. No file content reading.
 
 ## Detection Strategies
 1. **Watcher** (fsnotify): real-time CREATE/WRITE/RENAME events, 2s debounce, recursive directory watching
 2. **Reconciler**: full Scan() every 15 min to catch missed events
-3. **Engine.IO listener**: inbound events from Supernote service (stub -- awaiting live traffic investigation)
+3. **Engine.IO listener**: parses FILE-SYN and DOWNLOADFILE frames from Supernote service, extracts .note paths, resolves to absolute paths against notesPath
 
 ## Key Decisions
 - UpsertFile before Enqueue: satisfies jobs.note_path FK constraint
@@ -29,5 +29,6 @@ processor queue. Three detection strategies run concurrently.
 ## Invariants
 - Only files with `.note` extension are enqueued (ClassifyFileType filter)
 - Files containing `_CONFLICT_` in the name are skipped (device creates these during sync conflicts; processing them causes feedback loops)
+- Done files are hash-checked before re-enqueue: stored SHA-256 compared against current file. Match = UB's own write (skip). Mismatch = user edit (re-queue with 30s delay to debounce rapid syncs)
 - Watcher adds new subdirectories dynamically on CREATE events
 - Close() blocks until all goroutines exit cleanly
