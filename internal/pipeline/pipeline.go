@@ -109,7 +109,6 @@ func (p *Pipeline) enqueue(ctx context.Context, path string) {
 	// Compare stored hash with current file to distinguish UB's own write from a user edit.
 	job, err := p.proc.GetJob(ctx, path)
 	if err == nil && job != nil && job.Status == processor.StatusDone {
-		// Compare stored hash with current file to distinguish UB's own write from a user edit.
 		storedHash, hashErr := p.store.GetHash(ctx, path)
 		if hashErr != nil {
 			p.logger.Warn("pipeline: failed to get stored hash, skipping re-enqueue", "path", path, "err", hashErr)
