@@ -356,6 +356,36 @@ func TestGetHash_NotFound(t *testing.T) {
 	}
 }
 
+// TestGetHash_SetHash_Roundtrip verifies the SetHash -> GetHash roundtrip integration.
+func TestGetHash_SetHash_Roundtrip(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	// Seed a notes row.
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO notes (path, rel_path, file_type, size_bytes, mtime, created_at, updated_at)
+		VALUES (?, ?, 'note', 0, ?, ?, ?)`, "/roundtrip.note", "roundtrip.note", now, now, now)
+	if err != nil {
+		t.Fatalf("seed notes: %v", err)
+	}
+
+	// SetHash should store the digest.
+	testDigest := "deadbeefcafebabe1234567890abcdef"
+	if err := s.SetHash(ctx, "/roundtrip.note", testDigest); err != nil {
+		t.Fatalf("SetHash: %v", err)
+	}
+
+	// GetHash should retrieve the same digest.
+	retrieved, err := s.GetHash(ctx, "/roundtrip.note")
+	if err != nil {
+		t.Fatalf("GetHash: %v", err)
+	}
+	if retrieved != testDigest {
+		t.Errorf("GetHash returned %q, want %q", retrieved, testDigest)
+	}
+}
+
 // TestLookupByHash_Found verifies LookupByHash returns the path when a matching
 // sha256 exists with a done job.
 func TestLookupByHash_Found(t *testing.T) {
