@@ -68,7 +68,8 @@ func (c *spcCatalog) AfterInject(ctx context.Context, path string) error {
 		return nil
 	}
 
-	now := time.Now().UnixMilli()
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	nowMillis := time.Now().UTC().Format("2006-01-02 15:04:05.000")
 
 	// Step 3: update f_user_file with new size, md5, and timestamp.
 	if _, err := c.db.ExecContext(ctx,
@@ -84,7 +85,7 @@ func (c *spcCatalog) AfterInject(ctx context.Context, path string) error {
 		`INSERT INTO f_file_action
 			(id, user_id, file_id, file_name, inner_name, path, is_folder, size, md5, action, create_time, update_time)
 			VALUES (?, ?, ?, ?, ?, 'NOTE/Note/', 'N', ?, ?, 'A', ?, ?)`,
-		actionID, userID, fileID, fileName, innerName, newSize, newMD5, now, now,
+		actionID, userID, fileID, fileName, innerName, newSize, newMD5, nowMillis, nowMillis,
 	); err != nil {
 		slog.Warn("spc catalog: insert f_file_action failed", "file_id", fileID, "err", err)
 	}
