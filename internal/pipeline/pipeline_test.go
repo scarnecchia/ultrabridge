@@ -239,3 +239,272 @@ func TestPipeline_MoveDetection_ContentChanged(t *testing.T) {
 		t.Errorf("pathB job status = %q, want pending", jobB.Status)
 	}
 }
+
+// TestEnqueue_HashChange_FileChanged verifies note-reprocessing.AC3.1:
+// When a done job's file content has changed (hash differs), the file is re-queued as pending with requeue delay.
+func TestEnqueue_HashChange_FileChanged(t *testing.T) {
+	ns, proc, db, dir := openTestComponentsWithDB(t)
+	ctx := context.Background()
+
+	// Create a file with initial content.
+	path := filepath.Join(dir, "test.note")
+	v1Content := []byte("version 1 content")
+	if err := os.WriteFile(path, v1Content, 0644); err != nil {
+		t.Fatalf("write v1: %v", err)
+	}
+
+	pl := New(Config{NotesPath: dir, Store: ns, Proc: proc, Logger: slog.Default()})
+
+	// First reconcile: discovers the file, creates pending job.
+	pl.reconcile(ctx)
+
+	// Simulate completed processing: mark job as done, store hash.
+	hash1, err := notestore.ComputeSHA256(path)
+	if err != nil {
+		t.Fatalf("ComputeSHA256 v1: %v", err)
+	}
+	if err := ns.SetHash(ctx, path, hash1); err != nil {
+		t.Fatalf("SetHash: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"UPDATE jobs SET status='done', finished_at=? WHERE note_path=?",
+		time.Now().Unix(), path); err != nil {
+		t.Fatalf("mark done: %v", err)
+	}
+
+	// Verify job is done.
+	job, err := proc.GetJob(ctx, path)
+	if err != nil {
+		t.Fatalf("GetJob after done: %v", err)
+	}
+	if job.Status != processor.StatusDone {
+		t.Errorf("job status = %q, want done", job.Status)
+	}
+
+	// Now modify file content (simulating user edit on device).
+	v2Content := []byte("version 2 content - user edited")
+	if err := os.WriteFile(path, v2Content, 0644); err != nil {
+		t.Fatalf("write v2: %v", err)
+	}
+
+	// Call enqueue again — should detect hash mismatch and re-queue with delay.
+	pl.enqueue(ctx, path)
+
+	// AC3.1: Job should now be pending with requeue_after set.
+	job, err = proc.GetJob(ctx, path)
+	if err != nil {
+		t.Fatalf("GetJob after re-enqueue: %v", err)
+	}
+	if job == nil {
+		t.Fatal("expected job after re-enqueue, got nil")
+	}
+	if job.Status != processor.StatusPending {
+		t.Errorf("job status = %q, want pending after file change", job.Status)
+	}
+	if job.RequeueAfter == nil {
+		t.Error("expected requeue_after to be set, got nil")
+	}
+}
+
+// TestEnqueue_HashChange_FileUnchanged verifies note-reprocessing.AC3.2:
+// When a done job's file content hasn't changed (hash matches), the file is skipped.
+func TestEnqueue_HashChange_FileUnchanged(t *testing.T) {
+	ns, proc, db, dir := openTestComponentsWithDB(t)
+	ctx := context.Background()
+
+	// Create a file.
+	path := filepath.Join(dir, "test.note")
+	content := []byte("file content that won't change")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	pl := New(Config{NotesPath: dir, Store: ns, Proc: proc, Logger: slog.Default()})
+
+	// First reconcile: discovers the file, creates pending job.
+	pl.reconcile(ctx)
+
+	// Simulate completed processing: mark job as done, store hash.
+	hash, err := notestore.ComputeSHA256(path)
+	if err != nil {
+		t.Fatalf("ComputeSHA256: %v", err)
+	}
+	if err := ns.SetHash(ctx, path, hash); err != nil {
+		t.Fatalf("SetHash: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"UPDATE jobs SET status='done', finished_at=? WHERE note_path=?",
+		time.Now().Unix(), path); err != nil {
+		t.Fatalf("mark done: %v", err)
+	}
+
+	// Verify job is done.
+	job, err := proc.GetJob(ctx, path)
+	if err != nil {
+		t.Fatalf("GetJob after done: %v", err)
+	}
+	if job.Status != processor.StatusDone {
+		t.Errorf("job status = %q, want done", job.Status)
+	}
+
+	// Call enqueue again WITHOUT changing file — should skip.
+	pl.enqueue(ctx, path)
+
+	// AC3.2: Job should still be done, not re-queued.
+	job, err = proc.GetJob(ctx, path)
+	if err != nil {
+		t.Fatalf("GetJob after enqueue: %v", err)
+	}
+	if job == nil {
+		t.Fatal("expected job, got nil")
+	}
+	if job.Status != processor.StatusDone {
+		t.Errorf("job status = %q, want done (no re-queue)", job.Status)
+	}
+}
+
+// TestEnqueue_HashChange_NoStoredHash verifies note-reprocessing.AC3.3:
+// When a done job has no stored hash (NULL sha256), the file is re-queued (conservative behavior).
+func TestEnqueue_HashChange_NoStoredHash(t *testing.T) {
+	ns, proc, db, dir := openTestComponentsWithDB(t)
+	ctx := context.Background()
+
+	// Create a file.
+	path := filepath.Join(dir, "test.note")
+	content := []byte("file with no stored hash")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	pl := New(Config{NotesPath: dir, Store: ns, Proc: proc, Logger: slog.Default()})
+
+	// First reconcile: discovers the file, creates pending job.
+	pl.reconcile(ctx)
+
+	// Mark job as done but DO NOT store hash (simulating legacy file).
+	if _, err := db.ExecContext(ctx,
+		"UPDATE jobs SET status='done', finished_at=? WHERE note_path=?",
+		time.Now().Unix(), path); err != nil {
+		t.Fatalf("mark done: %v", err)
+	}
+
+	// Verify job is done and hash is NULL.
+	var status string
+	var storedHash sql.NullString
+	if err := db.QueryRowContext(ctx,
+		"SELECT status, COALESCE(sha256, NULL) FROM jobs j JOIN notes n ON n.path=j.note_path WHERE j.note_path=?",
+		path).Scan(&status, &storedHash); err != nil {
+		t.Fatalf("query job: %v", err)
+	}
+	if status != processor.StatusDone {
+		t.Errorf("job status = %q, want done", status)
+	}
+	if storedHash.Valid {
+		t.Error("expected NULL hash, got value")
+	}
+
+	// Call enqueue — should detect NULL hash and re-queue (conservative).
+	pl.enqueue(ctx, path)
+
+	// AC3.3: Job should now be pending (re-queued due to NULL hash).
+	job, err := proc.GetJob(ctx, path)
+	if err != nil {
+		t.Fatalf("GetJob after enqueue: %v", err)
+	}
+	if job == nil {
+		t.Fatal("expected job, got nil")
+	}
+	if job.Status != processor.StatusPending {
+		t.Errorf("job status = %q, want pending (re-queued due to NULL hash)", job.Status)
+	}
+}
+
+// TestEnqueue_RapidEdits verifies note-reprocessing.AC3.4:
+// Rapid successive file edits within the requeue delay window result in only one pending job.
+func TestEnqueue_RapidEdits(t *testing.T) {
+	ns, proc, db, dir := openTestComponentsWithDB(t)
+	ctx := context.Background()
+
+	// Create a file.
+	path := filepath.Join(dir, "test.note")
+	content := []byte("initial content")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	pl := New(Config{NotesPath: dir, Store: ns, Proc: proc, Logger: slog.Default()})
+
+	// First reconcile: discovers the file, creates pending job.
+	pl.reconcile(ctx)
+
+	// Simulate completed processing: mark job as done, store hash.
+	hash1, err := notestore.ComputeSHA256(path)
+	if err != nil {
+		t.Fatalf("ComputeSHA256: %v", err)
+	}
+	if err := ns.SetHash(ctx, path, hash1); err != nil {
+		t.Fatalf("SetHash: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"UPDATE jobs SET status='done', finished_at=? WHERE note_path=?",
+		time.Now().Unix(), path); err != nil {
+		t.Fatalf("mark done: %v", err)
+	}
+
+	// Modify file.
+	if err := os.WriteFile(path, []byte("edit 1"), 0644); err != nil {
+		t.Fatalf("write edit 1: %v", err)
+	}
+
+	// First enqueue: detects change, re-queues to pending.
+	pl.enqueue(ctx, path)
+
+	// Verify job is now pending.
+	job1, err := proc.GetJob(ctx, path)
+	if err != nil {
+		t.Fatalf("GetJob after first enqueue: %v", err)
+	}
+	if job1 == nil {
+		t.Fatal("expected job after first enqueue, got nil")
+	}
+	if job1.Status != processor.StatusPending {
+		t.Errorf("job status after first enqueue = %q, want pending", job1.Status)
+	}
+	initialRequeueAfter := job1.RequeueAfter
+
+	// Modify file again (rapid edit within delay window).
+	if err := os.WriteFile(path, []byte("edit 2"), 0644); err != nil {
+		t.Fatalf("write edit 2: %v", err)
+	}
+
+	// Second enqueue: ON CONFLICT clause only affects done/failed/skipped jobs.
+	// Since the job is now pending, the second enqueue is a no-op (no row match).
+	pl.enqueue(ctx, path)
+
+	// AC3.4: Job should still be pending with the SAME requeue_after from first enqueue.
+	job2, err := proc.GetJob(ctx, path)
+	if err != nil {
+		t.Fatalf("GetJob after second enqueue: %v", err)
+	}
+	if job2 == nil {
+		t.Fatal("expected job after second enqueue, got nil")
+	}
+	if job2.Status != processor.StatusPending {
+		t.Errorf("job status after second enqueue = %q, want pending", job2.Status)
+	}
+	if (job2.RequeueAfter == nil) != (initialRequeueAfter == nil) ||
+		(job2.RequeueAfter != nil && initialRequeueAfter != nil && !job2.RequeueAfter.Equal(*initialRequeueAfter)) {
+		var t2, t1 string
+		if job2.RequeueAfter == nil {
+			t2 = "nil"
+		} else {
+			t2 = job2.RequeueAfter.String()
+		}
+		if initialRequeueAfter == nil {
+			t1 = "nil"
+		} else {
+			t1 = initialRequeueAfter.String()
+		}
+		t.Errorf("requeue_after changed from %s to %s (should be unchanged)", t1, t2)
+	}
+}

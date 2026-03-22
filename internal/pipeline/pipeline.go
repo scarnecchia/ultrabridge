@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/processor"
@@ -83,12 +84,12 @@ func (p *Pipeline) runAll(ctx context.Context) {
 
 // enqueue adds a path to the processor queue if it is a .note file.
 // It first ensures the file exists in the notes table (FK constraint on jobs.note_path)
-// by running a targeted scan, then enqueues the job.
+// by running a targeted upsert, then enqueues the job.
 //
-// Files whose last job is already "done" are intentionally skipped: the change
-// was most likely caused by the worker writing RECOGNTEXT back into the file.
-// Re-queuing those would create an infinite inject→detect→re-queue loop.
-// A user who wants to re-process a completed file should use the UI "Queue" button.
+// Files whose last job is "done" are checked for content changes: the stored
+// SHA-256 from job completion is compared against the current file. If they match
+// (UB's own RECOGNTEXT injection), the file is skipped. If they differ (user edit
+// on the device), the file is re-queued with a 30-second delay to debounce rapid syncs.
 func (p *Pipeline) enqueue(ctx context.Context, path string) {
 	if notestore.ClassifyFileType(filepath.Ext(path)) != notestore.FileTypeNote {
 		return
@@ -104,10 +105,30 @@ func (p *Pipeline) enqueue(ctx context.Context, path string) {
 		p.logger.Warn("pipeline upsert before enqueue failed", "path", path, "err", err)
 		return
 	}
-	// Skip files already successfully processed. Automatic detection should not
-	// re-queue completed files — the mtime change was caused by our own write.
+	// Skip files already successfully processed unless content changed.
+	// Compare stored hash with current file to distinguish UB's own write from a user edit.
 	job, err := p.proc.GetJob(ctx, path)
 	if err == nil && job != nil && job.Status == processor.StatusDone {
+		// Compare stored hash with current file to distinguish UB's own write from a user edit.
+		storedHash, hashErr := p.store.GetHash(ctx, path)
+		if hashErr != nil {
+			p.logger.Warn("pipeline: failed to get stored hash, skipping re-enqueue", "path", path, "err", hashErr)
+			return
+		}
+		currentHash, hashErr := notestore.ComputeSHA256(path)
+		if hashErr != nil {
+			p.logger.Warn("pipeline: failed to compute file hash, skipping re-enqueue", "path", path, "err", hashErr)
+			return
+		}
+		if storedHash != "" && storedHash == currentHash {
+			return // hashes match — UB wrote this file, no re-processing needed
+		}
+		// Hash differs or no stored hash — user edited the file, re-queue with delay.
+		if enqErr := p.proc.Enqueue(ctx, path, processor.WithRequeueAfter(30*time.Second)); enqErr != nil {
+			p.logger.Warn("pipeline: re-enqueue after hash change failed", "path", path, "err", enqErr)
+		} else {
+			p.logger.Info("pipeline: re-queued changed file", "path", path, "storedHash", storedHash, "currentHash", currentHash)
+		}
 		return
 	}
 
