@@ -30,7 +30,7 @@ func openCatalogDB(t *testing.T) (*sql.DB, *spcCatalog) {
 		file_name TEXT,
 		size INTEGER NOT NULL DEFAULT 0,
 		md5 TEXT NOT NULL DEFAULT '',
-		update_time INTEGER
+		update_time TEXT
 	)`)
 	mustExec(t, db, `CREATE TABLE f_file_action (
 		id INTEGER PRIMARY KEY,
@@ -43,14 +43,14 @@ func openCatalogDB(t *testing.T) (*sql.DB, *spcCatalog) {
 		size INTEGER,
 		md5 TEXT,
 		action TEXT,
-		create_time INTEGER,
-		update_time INTEGER
+		create_time TEXT,
+		update_time TEXT
 	)`)
 	mustExec(t, db, `CREATE TABLE f_capacity (
 		user_id INTEGER PRIMARY KEY,
 		used_capacity INTEGER NOT NULL DEFAULT 0,
 		total_capacity INTEGER NOT NULL DEFAULT 0,
-		update_time INTEGER
+		update_time TEXT
 	)`)
 	return db, &spcCatalog{db: db}
 }
@@ -90,9 +90,8 @@ func TestAfterInject_UpdatesUserFile(t *testing.T) {
 		VALUES (?, ?)`,
 		1, 1000)
 
-	beforeTime := time.Now().UnixMilli()
+	beforeTime := time.Now().UTC()
 	err := catalog.AfterInject(context.Background(), path)
-	afterTime := time.Now().UnixMilli()
 
 	if err != nil {
 		t.Fatalf("AfterInject returned error: %v", err)
@@ -106,7 +105,7 @@ func TestAfterInject_UpdatesUserFile(t *testing.T) {
 	// Query f_user_file to verify updates.
 	var size int64
 	var md5Hex string
-	var updateTime int64
+	var updateTime string
 	err = db.QueryRow(`SELECT size, md5, update_time FROM f_user_file WHERE inner_name = ?`,
 		filepath.Base(path)).
 		Scan(&size, &md5Hex, &updateTime)
@@ -120,8 +119,12 @@ func TestAfterInject_UpdatesUserFile(t *testing.T) {
 	if md5Hex != expectedMD5 {
 		t.Errorf("md5 mismatch: want %s, got %s", expectedMD5, md5Hex)
 	}
-	if updateTime < beforeTime || updateTime > afterTime {
-		t.Errorf("update_time out of bounds: want [%d, %d], got %d", beforeTime, afterTime, updateTime)
+	// Verify update_time is a valid datetime string close to now.
+	parsed, parseErr := time.Parse("2006-01-02 15:04:05", updateTime)
+	if parseErr != nil {
+		t.Errorf("update_time %q is not a valid datetime: %v", updateTime, parseErr)
+	} else if parsed.Before(beforeTime.Add(-time.Second)) {
+		t.Errorf("update_time %q is too old (before %v)", updateTime, beforeTime)
 	}
 }
 
@@ -182,7 +185,7 @@ func TestAfterInject_InsertsFileAction(t *testing.T) {
 
 	var actionID, fileID, userID, size int64
 	var md5Hex, innerName, action string
-	var createTime, updateTime int64
+	var createTime, updateTime string
 	err = db.QueryRow(`SELECT id, file_id, user_id, size, md5, inner_name, action, create_time, update_time
 		FROM f_file_action LIMIT 1`).
 		Scan(&actionID, &fileID, &userID, &size, &md5Hex, &innerName, &action, &createTime, &updateTime)
@@ -212,7 +215,7 @@ func TestAfterInject_InsertsFileAction(t *testing.T) {
 		t.Errorf("action: want 'A', got %s", action)
 	}
 	if createTime != updateTime {
-		t.Errorf("create_time != update_time: %d != %d", createTime, updateTime)
+		t.Errorf("create_time != update_time: %q != %q", createTime, updateTime)
 	}
 }
 
