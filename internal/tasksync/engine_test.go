@@ -29,7 +29,7 @@ func waitForSync(t *testing.T, engine *SyncEngine, beforeTs int64) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		s := engine.Status()
-		if s.LastSyncAt > beforeTs && !s.InProgress {
+		if s.LastSyncAt >= beforeTs && !s.InProgress {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
