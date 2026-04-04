@@ -58,4 +58,4 @@ func ResolveUserID(ctx context.Context, db *sql.DB, explicitID int64) (int64, er
 		return 0, fmt.Errorf("discover user_id: %w", err)
 	}
 	return userID, nil
-}}
+}
