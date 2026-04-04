@@ -58,16 +58,4 @@ func ResolveUserID(ctx context.Context, db *sql.DB, explicitID int64) (int64, er
 		return 0, fmt.Errorf("discover user_id: %w", err)
 	}
 	return userID, nil
-}
-
-// ResolveEquipmentNo returns the device serial number for a given user ID.
-func ResolveEquipmentNo(ctx context.Context, database *sql.DB, userID int64) (string, error) {
-	var equipNo string
-	err := database.QueryRowContext(ctx,
-		"SELECT equipment_number FROM e_user_equipment WHERE user_id = ? LIMIT 1",
-		userID).Scan(&equipNo)
-	if err != nil {
-		return "", fmt.Errorf("resolve equipment_number for user %d: %w", userID, err)
-	}
-	return equipNo, nil
-}
+}}
