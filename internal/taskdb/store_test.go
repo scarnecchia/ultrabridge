@@ -3,6 +3,7 @@ package taskdb
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -197,8 +198,8 @@ func TestStore_Delete_SoftDeletesAndHides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List after delete: %v", err)
 	}
-	for _, t := range list {
-		if t.TaskID == taskID {
+	for _, tsk := range list {
+		if tsk.TaskID == taskID {
 			t.Error("Deleted task should not appear in List")
 		}
 	}
@@ -255,10 +256,11 @@ func TestStore_MaxLastModified_TracksChanges(t *testing.T) {
 		t.Fatalf("MaxLastModified after delete: %v", err)
 	}
 
-	// After delete, MaxLastModified should reflect only non-deleted tasks
-	// Since we deleted the only task, it should return 0
-	if maxAfterDelete != 0 {
-		t.Errorf("MaxLastModified with no active tasks should be 0, got %d", maxAfterDelete)
+	// After delete, MaxLastModified should still return task1's last_modified
+	// (the most recent non-deleted task), which equals ctagAfterUpdate since
+	// task1 was updated after task2 was created.
+	if maxAfterDelete != maxAfterUpdate {
+		t.Errorf("MaxLastModified after delete should equal the last update of surviving task: got %d, want %d", maxAfterDelete, maxAfterUpdate)
 	}
 }
 
@@ -372,7 +374,7 @@ func TestStore_List_ReturnsAllNonDeleted(t *testing.T) {
 	// Create 3 tasks
 	for i := 1; i <= 3; i++ {
 		task := &taskstore.Task{
-			Title:     sql.NullString{String: "Task " + string(rune(i)), Valid: true},
+			Title:     sql.NullString{String: fmt.Sprintf("Task %d", i), Valid: true},
 			IsDeleted: "N",
 		}
 		if err := store.Create(context.Background(), task); err != nil {

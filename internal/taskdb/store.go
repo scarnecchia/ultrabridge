@@ -96,7 +96,7 @@ func (s *Store) Update(ctx context.Context, t *taskstore.Task) error {
 	now := time.Now().UnixMilli()
 	t.LastModified = sql.NullInt64{Int64: now, Valid: true}
 
-	_, err := s.db.ExecContext(ctx, `UPDATE tasks SET
+	result, err := s.db.ExecContext(ctx, `UPDATE tasks SET
 		title = ?, detail = ?, status = ?, importance = ?, due_time = ?,
 		completed_time = ?, last_modified = ?, recurrence = ?,
 		is_reminder_on = ?, links = ?, updated_at = ?
@@ -108,17 +108,31 @@ func (s *Store) Update(ctx context.Context, t *taskstore.Task) error {
 	if err != nil {
 		return fmt.Errorf("update task %s: %w", t.TaskID, err)
 	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update task %s rows affected: %w", t.TaskID, err)
+	}
+	if affected == 0 {
+		return taskstore.ErrNotFound
+	}
 	return nil
 }
 
 func (s *Store) Delete(ctx context.Context, taskID string) error {
 	now := time.Now().UnixMilli()
-	_, err := s.db.ExecContext(ctx, `UPDATE tasks SET
+	result, err := s.db.ExecContext(ctx, `UPDATE tasks SET
 		is_deleted = 'Y', last_modified = ?, updated_at = ?
 		WHERE task_id = ?`,
 		now, now, taskID)
 	if err != nil {
 		return fmt.Errorf("delete task %s: %w", taskID, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete task %s rows affected: %w", taskID, err)
+	}
+	if affected == 0 {
+		return taskstore.ErrNotFound
 	}
 	return nil
 }
