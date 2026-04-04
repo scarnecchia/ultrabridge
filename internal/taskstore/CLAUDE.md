@@ -1,6 +1,6 @@
 # Task Store
 
-Last verified: 2026-03-17
+Last verified: 2026-04-04
 
 ## Purpose
 CRUD access to Supernote's `t_schedule_task` table with field mapping between

@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Last verified: 2026-04-04
 
-Go sidecar service for Supernote Private Cloud. Two subsystems:
-1. **CalDAV task sync** -- reads/writes the Supernote MariaDB, pushes STARTSYNC via Engine.IO
-2. **Notes pipeline** -- scans .note files, extracts/OCRs text, indexes for full-text search
+Go sidecar service for Supernote Private Cloud. Three subsystems:
+1. **CalDAV task sync** -- CalDAV VTODO over local SQLite task store
+2. **Device sync** -- bidirectional task sync with Supernote via SPC REST API (adapter-based)
+3. **Notes pipeline** -- scans .note files, extracts/OCRs text, indexes for full-text search
 
 ## Bash Commands: No `cd &&` Compounds
 
@@ -17,14 +18,17 @@ Instead: `git -C /path`, `go -C /path build`, or absolute paths.
 ## Project Structure
 
 - `cmd/ultrabridge/` -- entry point, wires all components
-- `internal/caldav/` -- CalDAV backend (go-webdav), VTODO conversion (see domain CLAUDE.md)
-- `internal/taskstore/` -- task CRUD against t_schedule_task, field mapping (see domain CLAUDE.md)
+- `internal/caldav/` -- CalDAV backend (go-webdav), VTODO conversion with iCal blob overlay (see domain CLAUDE.md)
+- `internal/taskstore/` -- Task model, field mapping helpers, MariaDB CRUD (legacy), ErrNotFound sentinel (see domain CLAUDE.md)
+- `internal/taskdb/` -- SQLite task store: Open/migrate DB, implements caldav.TaskStore (see domain CLAUDE.md)
+- `internal/tasksync/` -- adapter-agnostic sync engine: reconciliation, sync map, conflict resolution (see domain CLAUDE.md)
+- `internal/tasksync/supernote/` -- Supernote SPC REST adapter: JWT auth, field mapping, migration (see domain CLAUDE.md)
 - `internal/sync/` -- Engine.IO v3 notifier: STARTSYNC push + inbound events (see domain CLAUDE.md)
 - `internal/auth/` -- Basic Auth middleware (bcrypt)
-- `internal/config/` -- env vars (UB_ prefix) + .dbenv file loading + pipeline config
+- `internal/config/` -- env vars (UB_ prefix) + .dbenv file loading + pipeline config + sync config
 - `internal/db/` -- MariaDB pool + single-user discovery
 - `internal/logging/` -- structured slog, file rotation, syslog, WebSocket broadcast
-- `internal/web/` -- HTML UI: task list, Files tab, Search tab, processor C&C, SSE log stream
+- `internal/web/` -- HTML UI: task list, Files tab, Search tab, processor C&C, sync status, SSE log stream (see domain CLAUDE.md)
 - `internal/notedb/` -- SQLite DB opener + schema migrations for notes pipeline (see domain CLAUDE.md)
 - `internal/notestore/` -- file inventory (scan, list, get), content hashing, job transfer against SQLite notes table (see domain CLAUDE.md)
 - `internal/processor/` -- background OCR job queue: backup, extract, render, OCR, inject, SPC catalog sync (see domain CLAUDE.md)
@@ -73,14 +77,24 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 - Config: all env vars prefixed `UB_`, DB creds from shared `.dbenv` file
 - Auth: single-user Basic Auth, password stored as bcrypt hash
 
-### CalDAV Subsystem (MariaDB)
+### CalDAV Subsystem (SQLite)
+- Local SQLite task store (internal/taskdb) replaces direct MariaDB access for CalDAV
 - DB timestamps: millisecond UTC unix timestamps, 0 = unset
 - IDs: MD5(title + timestamp) for task IDs (matches Supernote device convention)
 - Supernote quirk: `completed_time` holds creation time; `last_modified` holds actual completion time
 - Soft deletes only: `is_deleted = 'Y'`, never hard delete
+- iCal blob: VTODO round-trip fidelity via `ical_blob` column; DB fields overlaid on read
+
+### Device Sync (tasksync)
+- Adapter-based: sync engine is device-agnostic, adapters implement DeviceAdapter interface
+- UB-wins conflict resolution: local task store is authoritative
+- Sync map: per-task local-to-remote ID mapping in SQLite tables (sync_state, task_sync_map)
+- Supernote adapter: SPC REST API with JWT challenge-response auth
+- Config: UB_SN_SYNC_ENABLED, UB_SN_SYNC_INTERVAL, UB_SN_API_URL, UB_SN_PASSWORD
+- Task DB path: UB_TASK_DB_PATH (SQLite file for local task store)
 
 ### Notes Pipeline (SQLite + MariaDB catalog sync)
-- Two databases: MariaDB for tasks, SQLite for notes pipeline (separate concerns)
+- Three databases: SQLite for tasks (taskdb), SQLite for notes pipeline (notedb), MariaDB for SPC catalog sync
 - After OCR injection, processor updates SPC MariaDB catalog (f_user_file, f_file_action, f_capacity) so the device sees correct file size/md5 -- best-effort, failures logged not propagated
 - SQLite in WAL mode, MaxOpenConns=1 (single-writer)
 - Job statuses: pending -> in_progress -> done|failed|skipped
