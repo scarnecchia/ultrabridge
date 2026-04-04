@@ -22,6 +22,21 @@ func openTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+// waitForSync waits for a sync cycle to complete after being triggered at beforeTs.
+// It polls the engine status until LastSyncAt > beforeTs and InProgress is false, or timeout.
+func waitForSync(t *testing.T, engine *SyncEngine, beforeTs int64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		s := engine.Status()
+		if s.LastSyncAt > beforeTs && !s.InProgress {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("sync did not complete within timeout")
+}
+
 // mockAdapter is a hand-rolled mock adapter for testing.
 type mockAdapter struct {
 	id        string
@@ -102,6 +117,7 @@ func (m *mockAdapter) Push(ctx context.Context, changes []Change) ([]PushResult,
 
 // setInitialTasks populates the mock adapter with tasks for Pull.
 func (m *mockAdapter) setInitialTasks(tasks []RemoteTask) {
+	m.tasks = make(map[string]RemoteTask)
 	for _, t := range tasks {
 		m.tasks[t.RemoteID] = t
 	}
@@ -139,8 +155,9 @@ func TestSyncEngine_AC51_RegisterAndSync(t *testing.T) {
 	defer engine.Stop()
 
 	// Trigger sync
+	beforeTs := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond) // Give sync time to complete
+	waitForSync(t, engine, beforeTs)
 
 	// Verify both tasks exist in local store
 	tasks, err := store.List(ctx)
@@ -190,8 +207,9 @@ func TestSyncEngine_AC51_CreateLocalAndPush(t *testing.T) {
 	}
 
 	// Trigger sync
+	beforeTs := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
+	waitForSync(t, engine, beforeTs)
 
 	// Verify Push was called with ChangeCreate
 	if len(adapter.pushes) != 1 {
@@ -259,8 +277,9 @@ func TestSyncEngine_AC52_MultipleAdapters(t *testing.T) {
 	defer engine.Stop()
 
 	// Verify second adapter can sync without code changes
+	beforeTs := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
+	waitForSync(t, engine, beforeTs)
 
 	// Status should reflect adapter2
 	status := engine.Status()
@@ -300,24 +319,19 @@ func TestSyncEngine_UBWinsConflict(t *testing.T) {
 	}
 	defer engine.Stop()
 
+	beforeTs := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
+	waitForSync(t, engine, beforeTs)
 
-	// Get the remote ID assigned by adapter's Push
+	// Get the remote ID from the sync map (set by engine after first sync)
 	if len(adapter.pushes) == 0 {
 		t.Fatalf("expected Push to be called")
 	}
 	if len(adapter.pushes[0]) == 0 {
 		t.Fatalf("expected changes in Push")
 	}
-	remoteID := adapter.pushes[0][0].Remote.RemoteID
-	if remoteID == "" {
-		// Check results
-		results, _ := adapter.Push(ctx, adapter.pushes[0])
-		if len(results) > 0 {
-			remoteID = results[0].RemoteID
-		}
-	}
+	// Remote ID is assigned by mock's Push method: "remote-" + taskID[:8]
+	remoteID := "remote-" + taskID[:8]
 
 	// Step 3: Modify both local and remote
 	localTask.Title = taskstore.SqlStr("Task - Local Edit")
@@ -338,8 +352,9 @@ func TestSyncEngine_UBWinsConflict(t *testing.T) {
 	adapter.pushes = nil
 
 	// Step 4: Second sync - local should win
+	beforeTs2 := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
+	waitForSync(t, engine, beforeTs2)
 
 	// Verify local version is still in store
 	current, err := store.Get(ctx, taskID)
@@ -351,12 +366,12 @@ func TestSyncEngine_UBWinsConflict(t *testing.T) {
 	}
 
 	// Verify local version was pushed to remote
-	if len(adapter.pushes) > 0 && len(adapter.pushes[0]) > 0 {
+	if len(adapter.pushes) == 0 || len(adapter.pushes[0]) == 0 {
+		t.Errorf("expected Push to be called with local version after conflict")
+	} else {
 		change := adapter.pushes[0][0]
-		if change.Type == ChangeUpdate && change.Remote.Title == "Task - Local Edit" {
-			// Good - local version pushed
-		} else {
-			t.Logf("Warning: expected local version pushed, got change type %v with title %q",
+		if change.Type != ChangeUpdate || change.Remote.Title != "Task - Local Edit" {
+			t.Errorf("expected ChangeUpdate with local title, got change type %v with title %q",
 				change.Type, change.Remote.Title)
 		}
 	}
@@ -387,8 +402,9 @@ func TestSyncEngine_RemoteCreate(t *testing.T) {
 	}
 	defer engine.Stop()
 
+	beforeTs := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
+	waitForSync(t, engine, beforeTs)
 
 	// Verify task exists in local store
 	tasks, err := store.List(ctx)
@@ -432,17 +448,12 @@ func TestSyncEngine_RemoteUpdate(t *testing.T) {
 	}
 	defer engine.Stop()
 
+	beforeTs := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
+	waitForSync(t, engine, beforeTs)
 
-	// Get remote ID from first sync
-	var remoteID string
-	if len(adapter.pushes) > 0 && len(adapter.pushes[0]) > 0 {
-		results, _ := adapter.Push(ctx, adapter.pushes[0])
-		if len(results) > 0 {
-			remoteID = results[0].RemoteID
-		}
-	}
+	// Get remote ID from first sync (deterministic: "remote-" + taskID[:8])
+	remoteID := "remote-" + localTask.TaskID[:8]
 
 	// Update remote version with different content
 	adapter.pushes = nil
@@ -454,8 +465,9 @@ func TestSyncEngine_RemoteUpdate(t *testing.T) {
 	}})
 
 	// Second sync
+	beforeTs2 := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
+	waitForSync(t, engine, beforeTs2)
 
 	// Verify local task was updated with remote content
 	current, err := store.Get(ctx, localTask.TaskID)
@@ -498,8 +510,9 @@ func TestSyncEngine_LocalDelete(t *testing.T) {
 	}
 	defer engine.Stop()
 
+	beforeTs := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
+	waitForSync(t, engine, beforeTs)
 
 	// Delete local task
 	if err := store.Delete(ctx, localTask.TaskID); err != nil {
@@ -509,15 +522,20 @@ func TestSyncEngine_LocalDelete(t *testing.T) {
 	adapter.pushes = nil
 
 	// Sync again
+	beforeTs2 := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
+	waitForSync(t, engine, beforeTs2)
 
 	// Verify ChangeDelete was pushed
-	if len(adapter.pushes) > 0 && len(adapter.pushes[0]) > 0 {
-		change := adapter.pushes[0][0]
-		if change.Type != ChangeDelete {
-			t.Errorf("expected ChangeDelete, got %v", change.Type)
-		}
+	if len(adapter.pushes) == 0 {
+		t.Fatal("expected Push to be called for delete")
+	}
+	if len(adapter.pushes[0]) == 0 {
+		t.Fatal("expected changes in Push call")
+	}
+	change := adapter.pushes[0][0]
+	if change.Type != ChangeDelete {
+		t.Errorf("expected ChangeDelete, got %v", change.Type)
 	}
 }
 
@@ -552,17 +570,9 @@ func TestSyncEngine_RemoteHardDelete(t *testing.T) {
 	}
 	defer engine.Stop()
 
+	beforeTs := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
-
-	// Get remote ID
-	var remoteID string
-	if len(adapter.pushes) > 0 && len(adapter.pushes[0]) > 0 {
-		results, _ := adapter.Push(ctx, adapter.pushes[0])
-		if len(results) > 0 {
-			remoteID = results[0].RemoteID
-		}
-	}
+	waitForSync(t, engine, beforeTs)
 
 	// Verify task exists before remote delete
 	task, err := store.Get(ctx, taskID)
@@ -577,8 +587,9 @@ func TestSyncEngine_RemoteHardDelete(t *testing.T) {
 	adapter.pushes = nil
 	adapter.setInitialTasks([]RemoteTask{}) // No tasks
 
+	beforeTs2 := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
+	waitForSync(t, engine, beforeTs2)
 
 	// Verify task is soft-deleted locally
 	task, err = store.Get(ctx, taskID)
@@ -622,8 +633,9 @@ func TestSyncEngine_StatusReporting(t *testing.T) {
 		t.Logf("Warning: InProgress true before sync trigger")
 	}
 
+	beforeTs := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
+	waitForSync(t, engine, beforeTs)
 
 	// After sync
 	status = engine.Status()
@@ -666,8 +678,9 @@ func TestSyncEngine_ManualTrigger(t *testing.T) {
 	defer engine.Stop()
 
 	// Manually trigger
+	beforeTs := time.Now().UnixMilli()
 	engine.TriggerSync()
-	time.Sleep(500 * time.Millisecond)
+	waitForSync(t, engine, beforeTs)
 
 	// Verify sync happened (task imported)
 	tasks, err := store.List(ctx)

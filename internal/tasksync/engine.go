@@ -146,6 +146,12 @@ func (e *SyncEngine) runCycle(ctx context.Context) {
 	e.status.InProgress = true
 	e.mu.Unlock()
 
+	defer func() {
+		e.mu.Lock()
+		e.status.InProgress = false
+		e.mu.Unlock()
+	}()
+
 	if adapter == nil {
 		return
 	}
@@ -153,7 +159,6 @@ func (e *SyncEngine) runCycle(ctx context.Context) {
 	err := e.reconcile(ctx, adapter)
 
 	e.mu.Lock()
-	e.status.InProgress = false
 	now := time.Now().UnixMilli()
 	e.status.LastSyncAt = now
 	e.status.NextSyncAt = now + e.interval.Milliseconds()
@@ -205,7 +210,9 @@ func (e *SyncEngine) reconcile(ctx context.Context, adapter DeviceAdapter) error
 			if err := e.store.Delete(ctx, entry.TaskID); err != nil {
 				e.logger.Warn("soft-delete for remote hard-delete failed", "task_id", entry.TaskID, "error", err)
 			}
-			e.syncMap.DeleteByTaskID(ctx, entry.TaskID, adapterID)
+			if err := e.syncMap.DeleteByTaskID(ctx, entry.TaskID, adapterID); err != nil {
+				e.logger.Warn("delete sync map entry failed", "task_id", entry.TaskID, "error", err)
+			}
 			e.logger.Info("remote hard-delete detected, soft-deleted locally", "task_id", entry.TaskID, "remote_id", entry.RemoteID)
 		}
 	}
@@ -350,12 +357,12 @@ func (e *SyncEngine) findLocalChanges(ctx context.Context, adapterID string) ([]
 			continue
 		}
 
-		// Check if local changed since last push
+		// Check if local changed since last push or pull
 		localModified := int64(0)
 		if t.LastModified.Valid {
 			localModified = t.LastModified.Int64
 		}
-		if localModified > entry.LastPushed {
+		if localModified > maxInt64(entry.LastPushed, entry.LastPulled) {
 			changes = append(changes, Change{
 				Type:     ChangeUpdate,
 				TaskID:   t.TaskID,
@@ -415,6 +422,14 @@ func applyRemoteToLocal(local *taskstore.Task, rt RemoteTask) {
 	local.Recurrence = taskstore.SqlStr(rt.Recurrence)
 	local.IsReminderOn = rt.IsReminderOn
 	local.Links = taskstore.SqlStr(rt.Links)
+}
+
+// maxInt64 returns the maximum of two int64 values.
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // localToRemote converts a local Task to a RemoteTask for pushing.
