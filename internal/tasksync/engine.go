@@ -237,18 +237,22 @@ func (e *SyncEngine) reconcile(ctx context.Context, adapter DeviceAdapter) error
 		}
 		for _, c := range changes {
 			if c.Type == ChangeDelete {
-				e.syncMap.DeleteByTaskID(ctx, c.TaskID, adapterID)
+				if err := e.syncMap.DeleteByTaskID(ctx, c.TaskID, adapterID); err != nil {
+					e.logger.Warn("delete sync map after push failed", "task_id", c.TaskID, "error", err)
+				}
 			} else {
 				remoteID := c.RemoteID
 				if r, ok := resultByTaskID[c.TaskID]; ok && r.RemoteID != "" {
 					remoteID = r.RemoteID
 				}
-				e.syncMap.Upsert(ctx, &SyncMapEntry{
+				if err := e.syncMap.Upsert(ctx, &SyncMapEntry{
 					TaskID:    c.TaskID,
 					AdapterID: adapterID,
 					RemoteID:  remoteID,
 					LastPushed: now,
-				})
+				}); err != nil {
+					e.logger.Warn("upsert sync map after push failed", "task_id", c.TaskID, "error", err)
+				}
 			}
 		}
 	}

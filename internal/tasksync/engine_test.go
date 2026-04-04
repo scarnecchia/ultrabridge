@@ -103,10 +103,14 @@ func (m *mockAdapter) Push(ctx context.Context, changes []Change) ([]PushResult,
 		if c.Type == ChangeCreate {
 			// Simulate server assigning a remote ID
 			r.RemoteID = "remote-" + c.TaskID[:8]
-			m.tasks[r.RemoteID] = c.Remote
+			stored := c.Remote
+			stored.RemoteID = r.RemoteID
+			m.tasks[r.RemoteID] = stored
 		} else if c.Type == ChangeUpdate {
 			r.RemoteID = c.RemoteID
-			m.tasks[c.RemoteID] = c.Remote
+			stored := c.Remote
+			stored.RemoteID = c.RemoteID
+			m.tasks[c.RemoteID] = stored
 		} else if c.Type == ChangeDelete {
 			delete(m.tasks, c.RemoteID)
 		}
