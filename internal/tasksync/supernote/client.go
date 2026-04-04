@@ -55,6 +55,9 @@ func (c *Client) Login(ctx context.Context, equipmentNo string) error {
 	if err := c.postJSON(ctx, "/api/official/user/query/random/code", codeBody, &codeResp, false); err != nil {
 		return fmt.Errorf("get random code: %w", err)
 	}
+	if !codeResp.Success {
+		return fmt.Errorf("get random code: SPC returned success=false")
+	}
 
 	// Step 2: Hash password with challenge
 	hash := sha256.Sum256([]byte(c.password + codeResp.RandomCode))
@@ -76,6 +79,9 @@ func (c *Client) Login(ctx context.Context, equipmentNo string) error {
 	}
 	if err := c.postJSON(ctx, "/api/official/user/account/login/equipment", loginBody, &loginResp, false); err != nil {
 		return fmt.Errorf("login: %w", err)
+	}
+	if !loginResp.Success || loginResp.Token == "" {
+		return fmt.Errorf("login: SPC returned success=%v (wrong password or account?)", loginResp.Success)
 	}
 
 	c.mu.Lock()
