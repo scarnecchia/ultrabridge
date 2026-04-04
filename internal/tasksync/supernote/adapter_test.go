@@ -182,7 +182,7 @@ func TestAdapter_AC2_1_Push_Create_SendsNotification(t *testing.T) {
 	defer mock.close()
 
 	notifier := &mockNotifier{}
-	adapter := NewAdapter(mock.server.URL, "testpass", notifier, testLogger())
+	adapter := NewAdapter(mock.server.URL, "test@example.com", "testpass", "SN000TEST", notifier, testLogger())
 
 	ctx := context.Background()
 	if err := adapter.Start(ctx); err != nil {
@@ -240,7 +240,7 @@ func TestAdapter_AC2_2_Push_Update_Status(t *testing.T) {
 	mock.mu.Unlock()
 
 	notifier := &mockNotifier{}
-	adapter := NewAdapter(mock.server.URL, "testpass", notifier, testLogger())
+	adapter := NewAdapter(mock.server.URL, "test@example.com", "testpass", "SN000TEST", notifier, testLogger())
 
 	ctx := context.Background()
 	if err := adapter.Start(ctx); err != nil {
@@ -302,7 +302,7 @@ func TestAdapter_AC2_3_Pull_FieldMapping(t *testing.T) {
 	}
 	mock.mu.Unlock()
 
-	adapter := NewAdapter(mock.server.URL, "testpass", nil, testLogger())
+	adapter := NewAdapter(mock.server.URL, "test@example.com", "testpass", "SN000TEST", nil, testLogger())
 
 	ctx := context.Background()
 	if err := adapter.Start(ctx); err != nil {
@@ -370,7 +370,7 @@ func TestAdapter_AC2_4_Pull_TitleChange(t *testing.T) {
 	}
 	mock.mu.Unlock()
 
-	adapter := NewAdapter(mock.server.URL, "testpass", nil, testLogger())
+	adapter := NewAdapter(mock.server.URL, "test@example.com", "testpass", "SN000TEST", nil, testLogger())
 
 	ctx := context.Background()
 	if err := adapter.Start(ctx); err != nil {
@@ -424,7 +424,7 @@ func TestAdapter_AC2_5_Conflict_UBVersion(t *testing.T) {
 	mock.mu.Unlock()
 
 	notifier := &mockNotifier{}
-	adapter := NewAdapter(mock.server.URL, "testpass", notifier, testLogger())
+	adapter := NewAdapter(mock.server.URL, "test@example.com", "testpass", "SN000TEST", notifier, testLogger())
 
 	ctx := context.Background()
 	if err := adapter.Start(ctx); err != nil {
@@ -473,7 +473,7 @@ func TestAdapter_AC2_6_ReAuth_On401(t *testing.T) {
 	}
 	mock.mu.Unlock()
 
-	adapter := NewAdapter(mock.server.URL, "testpass", nil, testLogger())
+	adapter := NewAdapter(mock.server.URL, "test@example.com", "testpass", "SN000TEST", nil, testLogger())
 
 	ctx := context.Background()
 	if err := adapter.Start(ctx); err != nil {
@@ -504,7 +504,7 @@ func TestAdapter_AC2_7_SPC_Unreachable(t *testing.T) {
 	url := mock.server.URL
 	mock.close() // Close server before using adapter
 
-	adapter := NewAdapter(url, "testpass", nil, testLogger())
+	adapter := NewAdapter(url, "test@example.com", "testpass", "SN000TEST", nil, testLogger())
 
 	ctx := context.Background()
 	err := adapter.Start(ctx)
@@ -522,7 +522,7 @@ func TestAdapter_AC2_8_Auth_Failure(t *testing.T) {
 	mock.loginFails = true
 	mock.mu.Unlock()
 
-	adapter := NewAdapter(mock.server.URL, "wrongpass", nil, testLogger())
+	adapter := NewAdapter(mock.server.URL, "test@example.com", "wrongpass", "SN000TEST", nil, testLogger())
 
 	ctx := context.Background()
 	err := adapter.Start(ctx)
@@ -551,7 +551,7 @@ func TestAdapter_Pull_FiltersDeleted(t *testing.T) {
 	}
 	mock.mu.Unlock()
 
-	adapter := NewAdapter(mock.server.URL, "testpass", nil, testLogger())
+	adapter := NewAdapter(mock.server.URL, "test@example.com", "testpass", "SN000TEST", nil, testLogger())
 
 	ctx := context.Background()
 	if err := adapter.Start(ctx); err != nil {
@@ -656,7 +656,7 @@ func TestAdapter_ETag_Stability(t *testing.T) {
 
 // Test: Adapter ID
 func TestAdapter_ID(t *testing.T) {
-	adapter := NewAdapter("http://localhost", "pass", nil, testLogger())
+	adapter := NewAdapter("http://localhost", "test@example.com", "pass", "SN000TEST", nil, testLogger())
 	if adapter.ID() != "supernote" {
 		t.Errorf("expected ID=supernote, got %s", adapter.ID())
 	}
@@ -664,7 +664,7 @@ func TestAdapter_ID(t *testing.T) {
 
 // Test: Stop is no-op
 func TestAdapter_Stop(t *testing.T) {
-	adapter := NewAdapter("http://localhost", "pass", nil, testLogger())
+	adapter := NewAdapter("http://localhost", "test@example.com", "pass", "SN000TEST", nil, testLogger())
 	if err := adapter.Stop(); err != nil {
 		t.Errorf("Stop failed: %v", err)
 	}

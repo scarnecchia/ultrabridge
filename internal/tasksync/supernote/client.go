@@ -18,18 +18,21 @@ import (
 // Client is an HTTP client for the Supernote Private Cloud REST API.
 type Client struct {
 	apiURL   string
+	account  string
 	password string
 	logger   *slog.Logger
 	client   http.Client
 
-	mu    sync.Mutex
-	token string
+	mu          sync.Mutex
+	token       string
+	equipmentNo string
 }
 
 // NewClient creates a new SPC REST API client.
-func NewClient(apiURL, password string, logger *slog.Logger) *Client {
+func NewClient(apiURL, account, password string, logger *slog.Logger) *Client {
 	return &Client{
 		apiURL:   apiURL,
+		account:  account,
 		password: password,
 		logger:   logger,
 		client:   http.Client{Timeout: 30 * time.Second},
@@ -37,14 +40,19 @@ func NewClient(apiURL, password string, logger *slog.Logger) *Client {
 }
 
 // Login performs the challenge-response JWT authentication flow.
-func (c *Client) Login(ctx context.Context) error {
-	// Step 1: Get random code
+// equipmentNo is the Supernote device serial number (from e_user_equipment table).
+func (c *Client) Login(ctx context.Context, equipmentNo string) error {
+	// Step 1: Get random code (requires account)
+	codeBody := map[string]any{
+		"countryCode": nil,
+		"account":     c.account,
+	}
 	var codeResp struct {
 		Success    bool   `json:"success"`
 		RandomCode string `json:"randomCode"`
 		Timestamp  int64  `json:"timestamp"`
 	}
-	if err := c.postJSON(ctx, "/api/official/user/query/random/code", nil, &codeResp, false); err != nil {
+	if err := c.postJSON(ctx, "/api/official/user/query/random/code", codeBody, &codeResp, false); err != nil {
 		return fmt.Errorf("get random code: %w", err)
 	}
 
@@ -52,11 +60,15 @@ func (c *Client) Login(ctx context.Context) error {
 	hash := sha256.Sum256([]byte(c.password + codeResp.RandomCode))
 	hashedPW := fmt.Sprintf("%x", hash)
 
-	// Step 3: Login
+	// Step 3: Login as equipment
 	loginBody := map[string]any{
-		"password":   hashedPW,
-		"randomCode": codeResp.RandomCode,
-		"timestamp":  codeResp.Timestamp,
+		"account":     c.account,
+		"equipment":   3,
+		"equipmentNo": equipmentNo,
+		"loginMethod": "2",
+		"password":    hashedPW,
+		"timestamp":   codeResp.Timestamp,
+		"version":     "202407",
 	}
 	var loginResp struct {
 		Success bool   `json:"success"`
@@ -68,6 +80,7 @@ func (c *Client) Login(ctx context.Context) error {
 
 	c.mu.Lock()
 	c.token = loginResp.Token
+	c.equipmentNo = equipmentNo
 	c.mu.Unlock()
 
 	c.logger.Info("SPC login successful")
@@ -141,7 +154,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, r
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized && auth && !retried {
-		if err := c.Login(ctx); err != nil {
+		if err := c.Login(ctx, c.equipmentNo); err != nil {
 			return fmt.Errorf("re-auth failed: %w", err)
 		}
 		return c.doRequest(ctx, method, path, body, result, auth, true)

@@ -142,6 +142,7 @@ All pipeline variables are optional. Omitting `UB_NOTES_PATH` disables the pipel
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `UB_SN_SYNC_ENABLED` | `false` | Enable task sync with Supernote device via SPC |
+| `UB_SN_ACCOUNT` | _(none)_ | Supernote account email (used for SPC auth) |
 | `UB_SN_SYNC_INTERVAL` | `300` | Sync interval in seconds |
 | `UB_SN_API_URL` | `http://supernote-service:8080` | SPC REST API URL |
 | `UB_SN_PASSWORD` | _(none)_ | SPC password for challenge-response auth |

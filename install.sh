@@ -234,6 +234,7 @@ UB_SN_PASSWORD=""
 read -rp "Enable Supernote task sync? (y/N): " enable_sync
 if [[ "${enable_sync,,}" == "y" ]]; then
     UB_SN_SYNC_ENABLED="true"
+    prompt UB_SN_ACCOUNT "Supernote account (email)" ""
     prompt UB_SN_API_URL "SPC API URL" "http://supernote-service:8080"
     prompt UB_SN_SYNC_INTERVAL "Sync interval (seconds)" "300"
     prompt_password UB_SN_PASSWORD "Supernote Private Cloud password"
@@ -319,6 +320,7 @@ ok "Environment file written (permissions: 600)"
 # Conditionally append sync-specific vars when enabled
 if [[ "$UB_SN_SYNC_ENABLED" == "true" ]]; then
 cat >> "$SUPERNOTE_DIR/.ultrabridge.env" <<EOF_SYNC
+UB_SN_ACCOUNT=${UB_SN_ACCOUNT}
 UB_SN_SYNC_INTERVAL=${UB_SN_SYNC_INTERVAL}
 UB_SN_API_URL=${UB_SN_API_URL}
 UB_SN_PASSWORD=${UB_SN_PASSWORD}

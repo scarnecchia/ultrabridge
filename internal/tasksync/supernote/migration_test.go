@@ -219,8 +219,8 @@ func TestMigration_AC4_1_ImportsTasks(t *testing.T) {
 	defer db.Close()
 
 	// Create clients
-	client := NewClient(mock.server.URL, "testpass", testLogger())
-	if err := client.Login(context.Background()); err != nil {
+	client := NewClient(mock.server.URL, "test@example.com", "testpass", testLogger())
+	if err := client.Login(context.Background(), "SN000TEST"); err != nil {
 		t.Fatalf("client login failed: %v", err)
 	}
 
@@ -351,8 +351,8 @@ func TestMigration_AC4_2_IsEmpty(t *testing.T) {
 	})
 	defer mock.close()
 
-	client := NewClient(mock.server.URL, "testpass", testLogger())
-	if err := client.Login(context.Background()); err != nil {
+	client := NewClient(mock.server.URL, "test@example.com", "testpass", testLogger())
+	if err := client.Login(context.Background(), "SN000TEST"); err != nil {
 		t.Fatalf("client login failed: %v", err)
 	}
 
@@ -405,10 +405,10 @@ func TestMigration_AC4_3_LoginFailure(t *testing.T) {
 	mock.loginFails = true
 	mock.mu.Unlock()
 
-	client := NewClient(mock.server.URL, "testpass", testLogger())
+	client := NewClient(mock.server.URL, "test@example.com", "testpass", testLogger())
 
 	// Login should fail
-	err := client.Login(context.Background())
+	err := client.Login(context.Background(), "SN000TEST")
 	if err == nil {
 		t.Errorf("expected login to fail, but it succeeded")
 	}

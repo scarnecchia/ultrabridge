@@ -117,6 +117,20 @@ func main() {
 
 	store := taskdb.NewStore(taskDB)
 
+	// Resolve equipment number for SPC sync (needs DB + userID)
+	var equipmentNo string
+	if cfg.SNSyncEnabled && database != nil && userID != 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		eqNo, err := db.ResolveEquipmentNo(ctx, database, userID)
+		cancel()
+		if err != nil {
+			logger.Warn("could not resolve equipment number", "error", err)
+		} else {
+			equipmentNo = eqNo
+			logger.Info("resolved equipment number", "equipment_no", equipmentNo)
+		}
+	}
+
 	// Run migration if task DB is empty and SPC sync is enabled
 	if cfg.SNSyncEnabled {
 		isEmpty, err := store.IsEmpty(context.Background())
@@ -126,8 +140,8 @@ func main() {
 		}
 		if isEmpty {
 			logger.Info("empty task DB detected, attempting migration from SPC")
-			migClient := supernote.NewClient(cfg.SNAPIURL, cfg.SNPassword, logger)
-			if err := migClient.Login(context.Background()); err != nil {
+			migClient := supernote.NewClient(cfg.SNAPIURL, cfg.SNAccount, cfg.SNPassword, logger)
+			if err := migClient.Login(context.Background(), equipmentNo); err != nil {
 				logger.Warn("SPC login failed for migration, starting with empty store", "error", err)
 			} else {
 				sm := tasksync.NewSyncMap(taskDB)
@@ -195,7 +209,7 @@ func main() {
 			store, taskDB, logger,
 			time.Duration(cfg.SNSyncInterval)*time.Second,
 		)
-		snAdapter := supernote.NewAdapter(cfg.SNAPIURL, cfg.SNPassword, notifier, logger)
+		snAdapter := supernote.NewAdapter(cfg.SNAPIURL, cfg.SNAccount, cfg.SNPassword, equipmentNo, notifier, logger)
 		syncEngine.RegisterAdapter(snAdapter)
 		if err := syncEngine.Start(context.Background()); err != nil {
 			logger.Warn("sync engine start failed", "error", err)
