@@ -11,6 +11,8 @@ UltraBridge is a sidecar service for [Supernote Private Cloud](https://support.s
 1. **CalDAV task sync** — synchronise Supernote tasks with any CalDAV client (DAVx5, GNOME Evolution, 2Do, etc.)
 2. **Notes pipeline** — automatically discover `.note` files, extract handwritten text, index it for full-text search, and optionally run vision-API OCR
 
+This software was developed using Claude Code, trained on open source software, and will therefore always be open-source software.
+
 ## Prerequisites
 
 - **Supernote Private Cloud** running with Docker Compose (at `/mnt/supernote/`)
