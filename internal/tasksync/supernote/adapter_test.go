@@ -67,7 +67,7 @@ func newMockSPCServer() *mockSPCServer {
 		if r.Method == "POST" || r.Method == "GET" {
 			body := make([]byte, 0)
 			if r.Body != nil {
-				body, _ = readAllClosed(r.Body)
+				body = readAllClosed(r.Body)
 			}
 			m.recordedPushes = append(m.recordedPushes, struct {
 				method string
@@ -76,7 +76,12 @@ func newMockSPCServer() *mockSPCServer {
 			}{r.Method, r.RequestURI, body})
 		}
 
-		switch r.RequestURI {
+		path := r.RequestURI
+		if idx := strings.Index(path, "?"); idx >= 0 {
+			path = path[:idx]
+		}
+
+		switch path {
 		case "/api/official/user/query/random/code":
 			resp := map[string]interface{}{
 				"success":    true,
@@ -111,7 +116,7 @@ func newMockSPCServer() *mockSPCServer {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
 
-		case strings.HasPrefix(r.RequestURI, "/api/file/schedule/task/list"):
+		case "/api/file/schedule/task/list":
 			// Check token for 401 test
 			if m.nextLoginShouldFail && r.Header.Get("x-access-token") == m.token {
 				m.nextLoginShouldFail = false // Only fail once
@@ -194,7 +199,11 @@ func readAllClosed(r interface {
 	Close() error
 }) []byte {
 	buf := make([]byte, 4096)
-	n, _ := r.Read(buf)
+	n, err := r.Read(buf)
+	if err != nil {
+		r.Close()
+		return nil
+	}
 	r.Close()
 	return buf[:n]
 }
