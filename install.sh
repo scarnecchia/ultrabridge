@@ -50,6 +50,16 @@ prompt_password() {
     done
 }
 
+# --- fresh install option ---
+
+FRESH_INSTALL=false
+NUKE_INSTALL=false
+if [[ "${1:-}" == "--fresh" || "${1:-}" == "-f" ]]; then
+    FRESH_INSTALL=true
+elif [[ "${1:-}" == "--nuke" ]]; then
+    NUKE_INSTALL=true
+fi
+
 # --- pre-flight checks ---
 
 info "UltraBridge Installer"
@@ -95,6 +105,26 @@ else
 fi
 
 echo
+
+# --- fresh install ---
+
+DATA_DIR="$SUPERNOTE_DIR/ultrabridge-data"
+if [[ "$NUKE_INSTALL" == true ]]; then
+    warn "NUKE: deleting ALL UltraBridge data"
+    COMPOSE="sudo docker compose -f $SUPERNOTE_DIR/docker-compose.yml -f $SUPERNOTE_DIR/docker-compose.override.yml"
+    $COMPOSE stop ultrabridge 2>/dev/null || true
+    rm -rf "$DATA_DIR"
+    mkdir -p "$DATA_DIR"
+    ok "All data deleted"
+elif [[ "$FRESH_INSTALL" == true ]]; then
+    if [[ -f "$DATA_DIR/ultrabridge.db" ]]; then
+        warn "Fresh install: clearing database"
+        COMPOSE="sudo docker compose -f $SUPERNOTE_DIR/docker-compose.yml -f $SUPERNOTE_DIR/docker-compose.override.yml"
+        $COMPOSE stop ultrabridge 2>/dev/null || true
+        rm -f "$DATA_DIR/ultrabridge.db" "$DATA_DIR/ultrabridge.db-wal" "$DATA_DIR/ultrabridge.db-shm"
+        ok "Database cleared"
+    fi
+fi
 
 # --- configuration ---
 
