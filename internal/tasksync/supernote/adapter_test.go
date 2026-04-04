@@ -38,13 +38,13 @@ func (m *mockNotifier) wasNotified() bool {
 
 // mockSPCServer mocks the SPC REST API. Hand-rolled, no mocking libraries.
 type mockSPCServer struct {
-	server     *httptest.Server
-	mu         sync.Mutex
-	token      string
-	loginFails bool
-	createdTasks map[string]SPCTask
-	tasks      map[string]SPCTask // All tasks, keyed by ID
-	recordedPushes []struct {
+	server              *httptest.Server
+	mu                  sync.Mutex
+	token               string
+	loginFails          bool
+	createdTasks        map[string]SPCTask
+	tasks               map[string]SPCTask // All tasks, keyed by ID
+	recordedPushes      []struct {
 		method string
 		path   string
 		body   []byte
@@ -62,19 +62,6 @@ func newMockSPCServer() *mockSPCServer {
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-
-		// Log the request for debugging
-		if r.Method == "POST" || r.Method == "GET" {
-			body := make([]byte, 0)
-			if r.Body != nil {
-				body = readAllClosed(r.Body)
-			}
-			m.recordedPushes = append(m.recordedPushes, struct {
-				method string
-				path   string
-				body   []byte
-			}{r.Method, r.RequestURI, body})
-		}
 
 		path := r.RequestURI
 		if idx := strings.Index(path, "?"); idx >= 0 {
@@ -125,10 +112,17 @@ func newMockSPCServer() *mockSPCServer {
 				return
 			}
 
-			// Return tasks in this group
+			// Return tasks only for the first group to avoid duplication
+			// In a real SPC, each task belongs to exactly one group
+			groupID := r.URL.Query().Get("groupId")
+			var tasksForGroup []SPCTask
+			if groupID == "group-1" {
+				tasksForGroup = m.tasksAsSlice()
+			}
+			// group-2 has no tasks
 			resp := map[string]interface{}{
 				"success": true,
-				"data":    m.tasksAsSlice(),
+				"data":    tasksForGroup,
 			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
@@ -194,19 +188,6 @@ func (m *mockSPCServer) close() {
 	m.server.Close()
 }
 
-func readAllClosed(r interface {
-	Read([]byte) (int, error)
-	Close() error
-}) []byte {
-	buf := make([]byte, 4096)
-	n, err := r.Read(buf)
-	if err != nil {
-		r.Close()
-		return nil
-	}
-	r.Close()
-	return buf[:n]
-}
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, nil))
