@@ -246,7 +246,19 @@ func TestStore_MaxLastModified_TracksChanges(t *testing.T) {
 
 	time.Sleep(2 * time.Millisecond)
 
-	// Delete the task
+	// Create a second task to be the surviving task after first is deleted.
+	task2 := &taskstore.Task{
+		Title:     sql.NullString{String: "Test task 2", Valid: true},
+		IsDeleted: "N",
+	}
+
+	if err := store.Create(context.Background(), task2); err != nil {
+		t.Fatalf("Create task2: %v", err)
+	}
+
+	time.Sleep(2 * time.Millisecond)
+
+	// Delete the first task
 	if err := store.Delete(context.Background(), task.TaskID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -256,11 +268,10 @@ func TestStore_MaxLastModified_TracksChanges(t *testing.T) {
 		t.Fatalf("MaxLastModified after delete: %v", err)
 	}
 
-	// After delete, MaxLastModified should still return task1's last_modified
-	// (the most recent non-deleted task), which equals ctagAfterUpdate since
-	// task1 was updated after task2 was created.
-	if maxAfterDelete != maxAfterUpdate {
-		t.Errorf("MaxLastModified after delete should equal the last update of surviving task: got %d, want %d", maxAfterDelete, maxAfterUpdate)
+	// After deleting task1, MaxLastModified returns task2's last_modified
+	// (the only remaining non-deleted task), which is newer than maxAfterUpdate.
+	if maxAfterDelete <= maxAfterUpdate {
+		t.Errorf("MaxLastModified after delete should reflect surviving task2: got %d, want > %d", maxAfterDelete, maxAfterUpdate)
 	}
 }
 
@@ -360,10 +371,10 @@ func TestStore_CTag_IncrementsOnChanges(t *testing.T) {
 		t.Fatalf("MaxLastModified after delete: %v", err)
 	}
 
-	// After delete, MaxLastModified should reflect the most recent modification
-	// (the delete of task2 has a newer timestamp than the update of task1)
-	if ctagAfterDelete <= ctagAfterUpdate {
-		t.Errorf("CTag should increase after delete: %d <= %d", ctagAfterDelete, ctagAfterUpdate)
+	// After deleting task2, MaxLastModified reflects only non-deleted tasks.
+	// task1 (updated) is the sole survivor, so CTag equals ctagAfterUpdate.
+	if ctagAfterDelete != ctagAfterUpdate {
+		t.Errorf("CTag after delete should equal surviving task's CTag: got %d, want %d", ctagAfterDelete, ctagAfterUpdate)
 	}
 }
 
