@@ -936,6 +936,8 @@ Device A refreshes:
 
 The server is a **dumb store** — it does not validate completion logic or enforce state transitions.
 
+**Task endpoints are user-scoped, not device-scoped.** The task API does not require `equipmentNo` or a device-specific session. A web UI login token (`login/new` with `equipment: "1"`) has full access to task CRUD — the same endpoints the device uses. This means any authenticated session (device or browser) can read/write tasks for the user. Despite this, the SPC web UI has no task management frontend; task management is entirely handled by the Supernote device's To-Do app. SPC is purely a sync relay for tasks.
+
 ---
 
 ## 6. Digest (Summary) Sync API
