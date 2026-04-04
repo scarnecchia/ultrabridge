@@ -17,27 +17,24 @@ type SyncNotifier interface {
 
 // Adapter implements tasksync.DeviceAdapter for Supernote devices via SPC REST API.
 type Adapter struct {
-	client      *Client
-	notifier    SyncNotifier
-	equipmentNo string
-	logger      *slog.Logger
+	client   *Client
+	notifier SyncNotifier
+	logger   *slog.Logger
 }
 
 // NewAdapter creates a Supernote sync adapter.
-// equipmentNo is the device serial number (from e_user_equipment table).
-func NewAdapter(apiURL, account, password, equipmentNo string, notifier SyncNotifier, logger *slog.Logger) *Adapter {
+func NewAdapter(apiURL, account, password string, notifier SyncNotifier, logger *slog.Logger) *Adapter {
 	return &Adapter{
-		client:      NewClient(apiURL, account, password, logger),
-		notifier:    notifier,
-		equipmentNo: equipmentNo,
-		logger:      logger,
+		client:   NewClient(apiURL, account, password, logger),
+		notifier: notifier,
+		logger:   logger,
 	}
 }
 
 func (a *Adapter) ID() string { return "supernote" }
 
 func (a *Adapter) Start(ctx context.Context) error {
-	return a.client.Login(ctx, a.equipmentNo)
+	return a.client.Login(ctx)
 }
 
 func (a *Adapter) Stop() error { return nil }

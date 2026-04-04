@@ -24,9 +24,8 @@ type Client struct {
 	logger   *slog.Logger
 	client   http.Client
 
-	mu          sync.Mutex
-	token       string
-	equipmentNo string
+	mu    sync.Mutex
+	token string
 }
 
 // NewClient creates a new SPC REST API client.
@@ -40,9 +39,8 @@ func NewClient(apiURL, account, password string, logger *slog.Logger) *Client {
 	}
 }
 
-// Login performs the challenge-response JWT authentication flow.
-// equipmentNo is the Supernote device serial number (from e_user_equipment table).
-func (c *Client) Login(ctx context.Context, equipmentNo string) error {
+// Login performs the challenge-response JWT authentication flow using the web UI endpoint.
+func (c *Client) Login(ctx context.Context) error {
 	// Step 1: Get random code (requires account)
 	codeBody := map[string]any{
 		"countryCode": nil,
@@ -67,21 +65,22 @@ func (c *Client) Login(ctx context.Context, equipmentNo string) error {
 	hash := sha256.Sum256([]byte(md5hex + codeResp.RandomCode))
 	hashedPW := fmt.Sprintf("%x", hash)
 
-	// Step 3: Login as equipment
+	// Step 3: Login via web UI endpoint (doesn't displace device session)
 	loginBody := map[string]any{
+		"countryCode": nil,
 		"account":     c.account,
-		"equipment":   3,
-		"equipmentNo": equipmentNo,
-		"loginMethod": "2",
 		"password":    hashedPW,
+		"browser":     "UltraBridge",
+		"equipment":   "1",
+		"loginMethod": "1",
 		"timestamp":   codeResp.Timestamp,
-		"version":     "202407",
+		"language":    "en",
 	}
 	var loginResp struct {
 		Success bool   `json:"success"`
 		Token   string `json:"token"`
 	}
-	if err := c.postJSON(ctx, "/api/official/user/account/login/equipment", loginBody, &loginResp, false); err != nil {
+	if err := c.postJSON(ctx, "/api/official/user/account/login/new", loginBody, &loginResp, false); err != nil {
 		return fmt.Errorf("login: %w", err)
 	}
 	if !loginResp.Success || loginResp.Token == "" {
@@ -90,7 +89,6 @@ func (c *Client) Login(ctx context.Context, equipmentNo string) error {
 
 	c.mu.Lock()
 	c.token = loginResp.Token
-	c.equipmentNo = equipmentNo
 	c.mu.Unlock()
 
 	c.logger.Info("SPC login successful")
@@ -164,7 +162,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, r
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized && auth && !retried {
-		if err := c.Login(ctx, c.equipmentNo); err != nil {
+		if err := c.Login(ctx); err != nil {
 			return fmt.Errorf("re-auth failed: %w", err)
 		}
 		return c.doRequest(ctx, method, path, body, result, auth, true)

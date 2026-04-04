@@ -205,6 +205,9 @@ func (e *SyncEngine) reconcile(ctx context.Context, adapter DeviceAdapter) error
 		return fmt.Errorf("list sync map: %w", err)
 	}
 	for _, entry := range entries {
+		if entry.RemoteID == "" {
+			continue // Never pushed — skip hard-delete detection
+		}
 		if !remoteIDs[entry.RemoteID] {
 			// Remote task gone — soft-delete locally
 			if err := e.store.Delete(ctx, entry.TaskID); err != nil {
