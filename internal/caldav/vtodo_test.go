@@ -2,6 +2,7 @@ package caldav
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -402,4 +403,413 @@ func createTestCalendar(props map[string]string) *ical.Calendar {
 
 	cal.Children = append(cal.Children, todo)
 	return cal
+}
+
+// TestBlobRoundTrip tests that iCal blobs with Tier 3 properties survive round-trip.
+// Verifies AC1.4: CalDAV client sets Tier 3 properties (RRULE, VALARM, CATEGORIES),
+// they round-trip perfectly on next GET.
+func TestBlobRoundTrip(t *testing.T) {
+	tests := []struct {
+		name        string
+		props       map[string]string
+		dueTimeMode string
+		setupBlob   func(cal *ical.Calendar) // Optional: modify calendar before VTODOToTask
+		verify      func(t *testing.T, original *ical.Calendar, roundTrip *ical.Calendar)
+	}{
+		{
+			name: "RRULE survives round-trip",
+			props: map[string]string{
+				"UID":     "test-rrule-123",
+				"SUMMARY": "Weekly Meeting",
+				"STATUS":  "NEEDS-ACTION",
+				"RRULE":   "FREQ=WEEKLY;BYDAY=MO",
+			},
+			dueTimeMode: "preserve",
+			verify: func(t *testing.T, original *ical.Calendar, roundTrip *ical.Calendar) {
+				origTodo, _ := FindVTODO(original)
+				rtTodo, _ := FindVTODO(roundTrip)
+
+				origRRULE := origTodo.Props.Get("RRULE")
+				rtRRULE := rtTodo.Props.Get("RRULE")
+
+				if origRRULE == nil || rtRRULE == nil {
+					t.Error("RRULE should exist in both calendars")
+					return
+				}
+				if origRRULE.Value != rtRRULE.Value {
+					t.Errorf("RRULE mismatch: got %s, want %s", rtRRULE.Value, origRRULE.Value)
+				}
+			},
+		},
+		{
+			name: "CATEGORIES survives round-trip",
+			props: map[string]string{
+				"UID":        "test-cat-456",
+				"SUMMARY":    "Work Task",
+				"STATUS":     "NEEDS-ACTION",
+				"CATEGORIES": "Work,UltraBridge",
+			},
+			dueTimeMode: "preserve",
+			verify: func(t *testing.T, original *ical.Calendar, roundTrip *ical.Calendar) {
+				origTodo, _ := FindVTODO(original)
+				rtTodo, _ := FindVTODO(roundTrip)
+
+				origCat := origTodo.Props.Get("CATEGORIES")
+				rtCat := rtTodo.Props.Get("CATEGORIES")
+
+				if origCat == nil || rtCat == nil {
+					t.Error("CATEGORIES should exist in both calendars")
+					return
+				}
+				if origCat.Value != rtCat.Value {
+					t.Errorf("CATEGORIES mismatch: got %s, want %s", rtCat.Value, origCat.Value)
+				}
+			},
+		},
+		{
+			name: "X-properties survive round-trip",
+			props: map[string]string{
+				"UID":          "test-xprop-789",
+				"SUMMARY":      "Task with Custom Props",
+				"STATUS":       "NEEDS-ACTION",
+				"X-CUSTOM-ONE": "CustomValue1",
+				"X-CUSTOM-TWO": "CustomValue2",
+			},
+			dueTimeMode: "preserve",
+			verify: func(t *testing.T, original *ical.Calendar, roundTrip *ical.Calendar) {
+				origTodo, _ := FindVTODO(original)
+				rtTodo, _ := FindVTODO(roundTrip)
+
+				origXOne := origTodo.Props.Get("X-CUSTOM-ONE")
+				rtXOne := rtTodo.Props.Get("X-CUSTOM-ONE")
+
+				if origXOne == nil || rtXOne == nil {
+					t.Error("X-CUSTOM-ONE should exist in both calendars")
+					return
+				}
+				if origXOne.Value != rtXOne.Value {
+					t.Errorf("X-CUSTOM-ONE mismatch: got %s, want %s", rtXOne.Value, origXOne.Value)
+				}
+			},
+		},
+		{
+			name: "Basic properties preserved with RRULE",
+			props: map[string]string{
+				"UID":        "test-basic-111",
+				"SUMMARY":    "Task with RRULE",
+				"STATUS":     "COMPLETED",
+				"DESCRIPTION": "This task repeats",
+				"PRIORITY":   "3",
+				"RRULE":      "FREQ=DAILY;COUNT=5",
+			},
+			dueTimeMode: "preserve",
+			verify: func(t *testing.T, original *ical.Calendar, roundTrip *ical.Calendar) {
+				origTodo, _ := FindVTODO(original)
+				rtTodo, _ := FindVTODO(roundTrip)
+
+				// Check Tier 1/2 fields are preserved
+				if origTodo.Props.Get("SUMMARY").Value != rtTodo.Props.Get("SUMMARY").Value {
+					t.Error("SUMMARY should be preserved")
+				}
+				if origTodo.Props.Get("STATUS").Value != rtTodo.Props.Get("STATUS").Value {
+					t.Error("STATUS should be preserved")
+				}
+				if origTodo.Props.Get("DESCRIPTION").Value != rtTodo.Props.Get("DESCRIPTION").Value {
+					t.Error("DESCRIPTION should be preserved")
+				}
+				if origTodo.Props.Get("PRIORITY").Value != rtTodo.Props.Get("PRIORITY").Value {
+					t.Error("PRIORITY should be preserved")
+				}
+				// Check Tier 3 field is preserved
+				if origTodo.Props.Get("RRULE").Value != rtTodo.Props.Get("RRULE").Value {
+					t.Error("RRULE should be preserved")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create original calendar
+			originalCal := createTestCalendar(tt.props)
+
+			// VTODOToTask to extract and serialize
+			task, err := VTODOToTask(originalCal, tt.dueTimeMode)
+			if err != nil {
+				t.Fatalf("VTODOToTask failed: %v", err)
+			}
+
+			// Verify blob was serialized
+			if !task.ICalBlob.Valid || task.ICalBlob.String == "" {
+				t.Fatal("ICalBlob should be serialized after VTODOToTask")
+			}
+
+			// TaskToVTODO to deserialize and overlay
+			roundTripCal := TaskToVTODO(task, tt.dueTimeMode)
+			if roundTripCal == nil {
+				t.Fatal("TaskToVTODO returned nil")
+			}
+
+			// Run verification
+			tt.verify(t, originalCal, roundTripCal)
+		})
+	}
+}
+
+// TestBlobOverlayCorrectness verifies that DB-authoritative fields override blob values.
+// When a Task has ICalBlob containing SUMMARY="Old Title" but t.Title="New Title",
+// TaskToVTODO should return SUMMARY="New Title".
+func TestBlobOverlayCorrectness(t *testing.T) {
+	t.Run("DB title overrides blob summary", func(t *testing.T) {
+		// Create a calendar with old summary
+		originalProps := map[string]string{
+			"UID":     "test-overlay-id",
+			"SUMMARY": "Old Title",
+			"STATUS":  "NEEDS-ACTION",
+		}
+		originalCal := createTestCalendar(originalProps)
+
+		// Convert to task (captures blob)
+		task, err := VTODOToTask(originalCal, "preserve")
+		if err != nil {
+			t.Fatalf("VTODOToTask failed: %v", err)
+		}
+
+		// Update the title in the task (but not the blob)
+		task.Title = sql.NullString{String: "New Title", Valid: true}
+
+		// Convert back to calendar
+		resultCal := TaskToVTODO(task, "preserve")
+
+		// Verify the new title is used
+		todo, _ := FindVTODO(resultCal)
+		if todo.Props.Get("SUMMARY").Value != "New Title" {
+			t.Errorf("SUMMARY should be overridden: got %s, want New Title", todo.Props.Get("SUMMARY").Value)
+		}
+	})
+
+	t.Run("DB status overrides blob status", func(t *testing.T) {
+		originalProps := map[string]string{
+			"UID":    "test-status-overlay",
+			"STATUS": "NEEDS-ACTION",
+		}
+		originalCal := createTestCalendar(originalProps)
+
+		task, err := VTODOToTask(originalCal, "preserve")
+		if err != nil {
+			t.Fatalf("VTODOToTask failed: %v", err)
+		}
+
+		// Update status to completed
+		task.Status = sql.NullString{String: "completed", Valid: true}
+		task.LastModified = sql.NullInt64{Int64: taskstore.TimeToMs(time.Now().UTC()), Valid: true}
+
+		resultCal := TaskToVTODO(task, "preserve")
+		todo, _ := FindVTODO(resultCal)
+
+		if todo.Props.Get("STATUS").Value != "COMPLETED" {
+			t.Errorf("STATUS should be overridden: got %s, want COMPLETED", todo.Props.Get("STATUS").Value)
+		}
+	})
+
+	t.Run("DB due clears blob due when set to zero", func(t *testing.T) {
+		originalProps := map[string]string{
+			"UID":     "test-due-clear",
+			"SUMMARY": "Task with Due",
+			"DUE":     "20250615T120000Z",
+		}
+		originalCal := createTestCalendar(originalProps)
+
+		task, err := VTODOToTask(originalCal, "preserve")
+		if err != nil {
+			t.Fatalf("VTODOToTask failed: %v", err)
+		}
+
+		// Verify blob has DUE
+		if task.ICalBlob.String == "" {
+			t.Fatal("ICalBlob should not be empty")
+		}
+
+		// Clear DueTime in task
+		task.DueTime = 0
+
+		resultCal := TaskToVTODO(task, "preserve")
+		todo, _ := FindVTODO(resultCal)
+
+		if todo.Props.Get("DUE") != nil {
+			t.Error("DUE should be removed when DueTime is 0")
+		}
+	})
+}
+
+// TestBlobCorruptFallback verifies that corrupt blobs fall back to building from fields.
+// AC requirement: TaskToVTODO should not panic when ICalBlob is corrupt.
+func TestBlobCorruptFallback(t *testing.T) {
+	t.Run("corrupt blob falls back to fields", func(t *testing.T) {
+		task := &taskstore.Task{
+			TaskID:        "test-corrupt",
+			Title:         sql.NullString{String: "Fallback Task", Valid: true},
+			Status:        sql.NullString{String: "needsAction", Valid: true},
+			ICalBlob:      sql.NullString{String: "not valid ical content", Valid: true},
+			LastModified:  sql.NullInt64{Int64: taskstore.TimeToMs(time.Now().UTC()), Valid: true},
+		}
+
+		// Should not panic, should fall back to fields
+		cal := TaskToVTODO(task, "preserve")
+
+		if cal == nil {
+			t.Fatal("TaskToVTODO returned nil")
+		}
+
+		todo, err := FindVTODO(cal)
+		if err != nil {
+			t.Fatal("Should have found VTODO from fallback")
+		}
+
+		// Verify title from fields is used
+		if todo.Props.Get("SUMMARY").Value != "Fallback Task" {
+			t.Errorf("Should fall back to fields: got %s, want Fallback Task", todo.Props.Get("SUMMARY").Value)
+		}
+	})
+}
+
+// TestSupernoteTaskNoBlob verifies backward compatibility: tasks without blobs
+// (imported from Supernote) render correctly as VTODO.
+// AC1.5 Success: Task created on Supernote (no ical_blob) renders as valid VTODO
+// with correct Tier 1/2 fields.
+func TestSupernoteTaskNoBlob(t *testing.T) {
+	t.Run("supernote task without blob builds from fields", func(t *testing.T) {
+		// Simulate a Supernote-originated task (no blob)
+		supernoteTask := &taskstore.Task{
+			TaskID:        "supernote-id-123",
+			Title:         sql.NullString{String: "Supernote Task", Valid: true},
+			Detail:        sql.NullString{String: "Task details from Supernote", Valid: true},
+			Status:        sql.NullString{String: "needsAction", Valid: true},
+			Importance:    sql.NullString{String: "2", Valid: true},
+			DueTime:       taskstore.TimeToMs(time.Date(2025, 6, 30, 0, 0, 0, 0, time.UTC)),
+			LastModified:  sql.NullInt64{Int64: taskstore.TimeToMs(time.Date(2025, 3, 17, 10, 0, 0, 0, time.UTC)), Valid: true},
+			IsReminderOn:  "Y",
+			IsDeleted:     "N",
+			ICalBlob:      sql.NullString{}, // NULL blob, no iCal representation
+		}
+
+		// Convert to VTODO
+		cal := TaskToVTODO(supernoteTask, "preserve")
+
+		if cal == nil {
+			t.Fatal("TaskToVTODO returned nil")
+		}
+
+		todo, err := FindVTODO(cal)
+		if err != nil {
+			t.Fatal("Should have found VTODO")
+		}
+
+		// Verify Tier 1 fields
+		if todo.Props.Get("UID").Value != "supernote-id-123" {
+			t.Error("UID should match TaskID")
+		}
+		if todo.Props.Get("SUMMARY").Value != "Supernote Task" {
+			t.Error("SUMMARY should match Title")
+		}
+		if todo.Props.Get("STATUS").Value != "NEEDS-ACTION" {
+			t.Error("STATUS should be correct")
+		}
+
+		// Verify Tier 2 fields
+		if todo.Props.Get("DESCRIPTION").Value != "Task details from Supernote" {
+			t.Error("DESCRIPTION should match Detail")
+		}
+		if todo.Props.Get("PRIORITY").Value != "2" {
+			t.Error("PRIORITY should match Importance")
+		}
+
+		// Verify DUE is set
+		if todo.Props.Get("DUE") == nil {
+			t.Error("DUE should be set")
+		}
+	})
+}
+
+// TestVTODOToTaskBlobSerialization verifies that VTODOToTask serializes the full calendar.
+// When a CalDAV client PUTs a VTODO with Tier 3 properties, the full text is stored.
+func TestVTODOToTaskBlobSerialization(t *testing.T) {
+	t.Run("VTODOToTask serializes full calendar as blob", func(t *testing.T) {
+		props := map[string]string{
+			"UID":        "test-serial-123",
+			"SUMMARY":    "Task with Tier 3",
+			"STATUS":     "NEEDS-ACTION",
+			"RRULE":      "FREQ=WEEKLY",
+			"CATEGORIES": "Work",
+			"X-CUSTOM":   "Value",
+		}
+		cal := createTestCalendar(props)
+
+		task, err := VTODOToTask(cal, "preserve")
+		if err != nil {
+			t.Fatalf("VTODOToTask failed: %v", err)
+		}
+
+		// Verify blob is populated
+		if !task.ICalBlob.Valid {
+			t.Error("ICalBlob should be Valid")
+		}
+		if task.ICalBlob.String == "" {
+			t.Error("ICalBlob should not be empty")
+		}
+
+		// Verify blob contains expected data
+		if !strings.Contains(task.ICalBlob.String, "RRULE:FREQ=WEEKLY") {
+			t.Error("Blob should contain RRULE")
+		}
+		if !strings.Contains(task.ICalBlob.String, "CATEGORIES:Work") {
+			t.Error("Blob should contain CATEGORIES")
+		}
+		if !strings.Contains(task.ICalBlob.String, "X-CUSTOM:Value") {
+			t.Error("Blob should contain X-CUSTOM")
+		}
+	})
+}
+
+// TestTaskWithoutBlob ensures that tasks with invalid/NULL ICalBlob use the fields path.
+func TestTaskWithoutBlob(t *testing.T) {
+	t.Run("null blob uses fields path", func(t *testing.T) {
+		task := &taskstore.Task{
+			TaskID:       "no-blob-task",
+			Title:        sql.NullString{String: "Simple Task", Valid: true},
+			Status:       sql.NullString{String: "needsAction", Valid: true},
+			LastModified: sql.NullInt64{Int64: taskstore.TimeToMs(time.Now().UTC()), Valid: true},
+			ICalBlob:     sql.NullString{}, // NULL blob
+		}
+
+		cal := TaskToVTODO(task, "preserve")
+		if cal == nil {
+			t.Fatal("TaskToVTODO returned nil")
+		}
+
+		todo, _ := FindVTODO(cal)
+		if todo.Props.Get("SUMMARY").Value != "Simple Task" {
+			t.Error("Should use fields when blob is NULL")
+		}
+	})
+
+	t.Run("empty blob uses fields path", func(t *testing.T) {
+		task := &taskstore.Task{
+			TaskID:       "empty-blob-task",
+			Title:        sql.NullString{String: "Another Task", Valid: true},
+			Status:       sql.NullString{String: "needsAction", Valid: true},
+			LastModified: sql.NullInt64{Int64: taskstore.TimeToMs(time.Now().UTC()), Valid: true},
+			ICalBlob:     sql.NullString{String: "", Valid: true}, // Empty blob
+		}
+
+		cal := TaskToVTODO(task, "preserve")
+		if cal == nil {
+			t.Fatal("TaskToVTODO returned nil")
+		}
+
+		todo, _ := FindVTODO(cal)
+		if todo.Props.Get("SUMMARY").Value != "Another Task" {
+			t.Error("Should use fields when blob is empty")
+		}
+	})
 }
