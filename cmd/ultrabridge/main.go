@@ -82,7 +82,7 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Warn("database connection failed, notes catalog sync disabled", "error", err)
-		// database is nil — catalog updater won't be set, which is handled at line 153
+		// database is nil — catalog updater won't be set, which is nil-guarded below
 	}
 	if database != nil {
 		defer database.Close()
