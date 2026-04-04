@@ -39,18 +39,23 @@ func RemoteToSPCTask(rt tasksync.RemoteTask, remoteID string) SPCTask {
 		ct = now // Supernote quirk: completedTime holds creation time
 	}
 	return SPCTask{
-		ID:            remoteID,
-		Title:         rt.Title,
-		Detail:        rt.Detail,
-		Status:        rt.Status,
-		Importance:    rt.Importance,
-		DueTime:       rt.DueTime,
-		CompletedTime: ct,
-		LastModified:  now,
-		Recurrence:    rt.Recurrence,
-		IsReminderOn:  rt.IsReminderOn,
-		Links:         rt.Links,
-		IsDeleted:     "N",
+		ID:             remoteID,
+		Title:          rt.Title,
+		Detail:         rt.Detail,
+		Status:         rt.Status,
+		Importance:     rt.Importance,
+		DueTime:        rt.DueTime,
+		CompletedTime:  ct,
+		LastModified:   now,
+		Recurrence:     rt.Recurrence,
+		IsReminderOn:   rt.IsReminderOn,
+		Links:          rt.Links,
+		IsDeleted:      "N",
+		Sort:           0,
+		SortCompleted:  0,
+		SortTime:       now,
+		PlanerSort:     0,
+		PlanerSortTime: now,
 	}
 }
 

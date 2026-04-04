@@ -192,6 +192,14 @@ type SPCTask struct {
 	LastModified  int64  `json:"lastModified"`  // Supernote quirk: holds completion time when completed
 	Recurrence    string `json:"recurrence,omitempty"`
 	IsReminderOn  string `json:"isReminderOn"`
-	Links         string `json:"links,omitempty"`
-	IsDeleted     string `json:"isDeleted"`
+	Links              string `json:"links,omitempty"`
+	IsDeleted          string `json:"isDeleted"`
+	Sort               int    `json:"sort"`
+	SortCompleted      int    `json:"sortCompleted"`
+	SortTime           int64  `json:"sortTime,omitempty"`
+	PlanerSort         int    `json:"planerSort"`
+	PlanerSortTime     int64  `json:"planerSortTime,omitempty"`
+	AllSort            int    `json:"allSort"`
+	AllSortCompleted   int    `json:"allSortCompleted"`
+	AllSortTime        int64  `json:"allSortTime,omitempty"`
 }
