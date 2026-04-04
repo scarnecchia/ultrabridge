@@ -261,9 +261,8 @@ if [[ ! "$UB_PASSWORD_HASH" =~ ^\$2 ]]; then
 fi
 ok "Password hashed"
 
-# Docker Compose env_file interprets $ as variable substitution.
-# Escape $ as $$ so the bcrypt hash survives.
-UB_PASSWORD_HASH_ESCAPED="${UB_PASSWORD_HASH//\$/\$\$}"
+# The bcrypt hash contains $ characters. The heredoc below expands variables,
+# so we write UB_PASSWORD_HASH as a placeholder and replace it after.
 
 # --- write .ultrabridge.env ---
 
@@ -275,7 +274,7 @@ cat > "$SUPERNOTE_DIR/.ultrabridge.env" <<EOF
 
 # Auth
 UB_USERNAME=$UB_USERNAME
-UB_PASSWORD_HASH=$UB_PASSWORD_HASH_ESCAPED
+UB_PASSWORD_HASH=__PLACEHOLDER__
 
 # CalDAV
 UB_CALDAV_COLLECTION_NAME=$UB_COLLECTION_NAME
@@ -307,6 +306,12 @@ UB_TASK_DB_PATH=/data/ultrabridge-tasks.db
 # Supernote Sync
 UB_SN_SYNC_ENABLED=${UB_SN_SYNC_ENABLED}
 EOF
+
+# Replace placeholder with actual bcrypt hash (contains $ which heredoc would expand).
+# Use awk to avoid shell/sed $ interpretation issues.
+awk -v hash="$UB_PASSWORD_HASH" '{gsub("UB_PASSWORD_HASH=__PLACEHOLDER__", "UB_PASSWORD_HASH=" hash); print}' \
+    "$SUPERNOTE_DIR/.ultrabridge.env" > "$SUPERNOTE_DIR/.ultrabridge.env.tmp" \
+    && mv "$SUPERNOTE_DIR/.ultrabridge.env.tmp" "$SUPERNOTE_DIR/.ultrabridge.env"
 
 chmod 600 "$SUPERNOTE_DIR/.ultrabridge.env"
 ok "Environment file written (permissions: 600)"

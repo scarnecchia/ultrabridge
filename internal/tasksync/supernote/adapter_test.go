@@ -91,19 +91,7 @@ func newMockSPCServer() *mockSPCServer {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
 
-		case "/api/file/schedule/task/group/list":
-			// Return mock group IDs
-			resp := map[string]interface{}{
-				"success": true,
-				"data": []map[string]string{
-					{"id": "group-1"},
-					{"id": "group-2"},
-				},
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
-
-		case "/api/file/schedule/task/list":
+		case "/api/file/schedule/task/all":
 			// Check token for 401 test
 			if m.nextLoginShouldFail && r.Header.Get("x-access-token") == m.token {
 				m.nextLoginShouldFail = false // Only fail once
@@ -112,22 +100,14 @@ func newMockSPCServer() *mockSPCServer {
 				return
 			}
 
-			// Return tasks only for the first group to avoid duplication
-			// In a real SPC, each task belongs to exactly one group
-			groupID := r.URL.Query().Get("groupId")
-			var tasksForGroup []SPCTask
-			if groupID == "group-1" {
-				tasksForGroup = m.tasksAsSlice()
-			}
-			// group-2 has no tasks
 			resp := map[string]interface{}{
-				"success": true,
-				"data":    tasksForGroup,
+				"success":      true,
+				"scheduleTask": m.tasksAsSlice(),
 			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
 
-		case "/api/file/schedule/task/create":
+		case "/api/file/schedule/task":
 			if r.Header.Get("x-access-token") != m.token {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
@@ -140,35 +120,38 @@ func newMockSPCServer() *mockSPCServer {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
 
-		case "/api/file/schedule/task/update":
+		case "/api/file/schedule/task/list":
+			if r.Method != "PUT" {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
 			if r.Header.Get("x-access-token") != m.token {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			var tasks []SPCTask
-			json.NewDecoder(r.Body).Decode(&tasks)
-			for _, task := range tasks {
+			var body struct {
+				UpdateScheduleTaskList []SPCTask `json:"updateScheduleTaskList"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			for _, task := range body.UpdateScheduleTaskList {
 				m.tasks[task.ID] = task
 			}
 			resp := map[string]interface{}{"success": true}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
 
-		case "/api/file/schedule/task/delete":
-			if r.Header.Get("x-access-token") != m.token {
-				w.WriteHeader(http.StatusUnauthorized)
+		default:
+			// Handle DELETE /api/file/schedule/task/{id}
+			if r.Method == "DELETE" && strings.HasPrefix(path, "/api/file/schedule/task/") {
+				if r.Header.Get("x-access-token") != m.token {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				taskID := strings.TrimPrefix(path, "/api/file/schedule/task/")
+				delete(m.tasks, taskID)
+				w.WriteHeader(http.StatusOK)
 				return
 			}
-			var req struct {
-				ID string `json:"id"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			delete(m.tasks, req.ID)
-			resp := map[string]interface{}{"success": true}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
-
-		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))

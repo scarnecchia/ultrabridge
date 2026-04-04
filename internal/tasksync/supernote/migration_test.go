@@ -133,33 +133,18 @@ func newMockMigrationSPCServer(initialTasks []SPCTask) *mockMigrationSPCServer {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
 
-		case "/api/file/schedule/task/group/list":
+		case "/api/file/schedule/task/all":
 			if r.Header.Get("x-access-token") != m.token {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			resp := map[string]interface{}{
-				"success": true,
-				"data": []map[string]string{
-					{"id": "migration-test-group"},
-				},
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
-
-		case "/api/file/schedule/task/list":
-			if r.Header.Get("x-access-token") != m.token {
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-			// Return all tasks for this group
 			var tasksList []SPCTask
 			for _, t := range m.tasks {
 				tasksList = append(tasksList, t)
 			}
 			resp := map[string]interface{}{
-				"success": true,
-				"data":    tasksList,
+				"success":      true,
+				"scheduleTask": tasksList,
 			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)

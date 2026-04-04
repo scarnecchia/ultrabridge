@@ -74,57 +74,43 @@ func (c *Client) Login(ctx context.Context) error {
 	return nil
 }
 
-// FetchTasks returns all tasks from all groups in SPC.
+// FetchTasks returns all tasks from SPC.
 func (c *Client) FetchTasks(ctx context.Context) ([]SPCTask, error) {
-	// Fetch groups first
-	var groupsResp struct {
-		Success bool `json:"success"`
-		Data    []struct {
-			ID string `json:"id"`
-		} `json:"data"`
+	var resp struct {
+		Success      bool      `json:"success"`
+		ScheduleTask []SPCTask `json:"scheduleTask"`
 	}
-	if err := c.getJSON(ctx, "/api/file/schedule/task/group/list", &groupsResp); err != nil {
-		return nil, fmt.Errorf("fetch groups: %w", err)
+	if err := c.postJSON(ctx, "/api/file/schedule/task/all", nil, &resp, true); err != nil {
+		return nil, fmt.Errorf("fetch tasks: %w", err)
 	}
-
-	// Fetch tasks from each group
-	var allTasks []SPCTask
-	for _, group := range groupsResp.Data {
-		var tasksResp struct {
-			Success bool      `json:"success"`
-			Data    []SPCTask `json:"data"`
-		}
-		url := fmt.Sprintf("/api/file/schedule/task/list?groupId=%s", group.ID)
-		if err := c.getJSON(ctx, url, &tasksResp); err != nil {
-			c.logger.Warn("fetch tasks for group failed", "group_id", group.ID, "error", err)
-			continue
-		}
-		allTasks = append(allTasks, tasksResp.Data...)
-	}
-
-	return allTasks, nil
+	return resp.ScheduleTask, nil
 }
 
 // CreateTask creates a single task on SPC.
 func (c *Client) CreateTask(ctx context.Context, task SPCTask) error {
 	var resp struct{ Success bool `json:"success"` }
-	return c.postJSON(ctx, "/api/file/schedule/task/create", task, &resp, true)
+	return c.postJSON(ctx, "/api/file/schedule/task", task, &resp, true)
 }
 
 // UpdateTasks performs a bulk update of tasks on SPC.
 func (c *Client) UpdateTasks(ctx context.Context, tasks []SPCTask) error {
+	body := map[string]any{"updateScheduleTaskList": tasks}
 	var resp struct{ Success bool `json:"success"` }
-	return c.postJSON(ctx, "/api/file/schedule/task/update", tasks, &resp, true)
+	return c.doRequest(ctx, "PUT", "/api/file/schedule/task/list", body, &resp, true, false)
 }
 
-// DeleteTask deletes a task on SPC.
+// DeleteTask deletes a task on SPC by ID.
 func (c *Client) DeleteTask(ctx context.Context, taskID string) error {
-	body := map[string]string{"id": taskID}
-	var resp struct{ Success bool `json:"success"` }
-	return c.postJSON(ctx, "/api/file/schedule/task/delete", body, &resp, true)
+	path := "/api/file/schedule/task/" + taskID
+	return c.doRequest(ctx, "DELETE", path, nil, nil, true, false)
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, body any, result any, auth bool) error {
+	return c.doRequest(ctx, "POST", path, body, result, auth, false)
+}
+
+// doRequest is the unified HTTP method for all SPC API calls.
+func (c *Client) doRequest(ctx context.Context, method, path string, body any, result any, auth, retried bool) error {
 	var bodyReader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -134,11 +120,13 @@ func (c *Client) postJSON(ctx context.Context, path string, body any, result any
 		bodyReader = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.apiURL+path, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, c.apiURL+path, bodyReader)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if auth {
 		c.mu.Lock()
 		token := c.token
@@ -152,58 +140,22 @@ func (c *Client) postJSON(ctx context.Context, path string, body any, result any
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized && auth {
-		// Re-authenticate and retry once
+	if resp.StatusCode == http.StatusUnauthorized && auth && !retried {
 		if err := c.Login(ctx); err != nil {
 			return fmt.Errorf("re-auth failed: %w", err)
 		}
-		return c.postJSON(ctx, path, body, result, false) // false to prevent infinite loop
+		return c.doRequest(ctx, method, path, body, result, auth, true)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("SPC %s returned %d: %s", path, resp.StatusCode, errBody)
+		return fmt.Errorf("SPC %s %s returned %d: %s", method, path, resp.StatusCode, errBody)
 	}
 
 	if result != nil {
 		return json.NewDecoder(resp.Body).Decode(result)
 	}
 	return nil
-}
-
-func (c *Client) getJSON(ctx context.Context, path string, result any) error {
-	return c.doGetJSON(ctx, path, result, false)
-}
-
-func (c *Client) doGetJSON(ctx context.Context, path string, result any, retried bool) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.apiURL+path, nil)
-	if err != nil {
-		return err
-	}
-	c.mu.Lock()
-	token := c.token
-	c.mu.Unlock()
-	req.Header.Set("x-access-token", token)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized && !retried {
-		if err := c.Login(ctx); err != nil {
-			return fmt.Errorf("re-auth failed: %w", err)
-		}
-		return c.doGetJSON(ctx, path, result, true)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("SPC %s returned %d: %s", path, resp.StatusCode, errBody)
-	}
-
-	return json.NewDecoder(resp.Body).Decode(result)
 }
 
 // SPCTask is the wire format for tasks in the SPC REST API.
