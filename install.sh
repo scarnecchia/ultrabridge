@@ -308,9 +308,10 @@ UB_TASK_DB_PATH=/data/ultrabridge-tasks.db
 UB_SN_SYNC_ENABLED=${UB_SN_SYNC_ENABLED}
 EOF
 
-# Replace placeholder with actual bcrypt hash (contains $ which heredoc would expand).
-# Use awk to avoid shell/sed $ interpretation issues.
-awk -v hash="$UB_PASSWORD_HASH" '{gsub("UB_PASSWORD_HASH=__PLACEHOLDER__", "UB_PASSWORD_HASH=" hash); print}' \
+# Replace placeholder with bcrypt hash. Docker Compose env_file interprets
+# $ as variable substitution, so escape $ as $$ in the written value.
+UB_PASSWORD_HASH_ESCAPED="${UB_PASSWORD_HASH//\$/\$\$}"
+awk -v hash="$UB_PASSWORD_HASH_ESCAPED" '{gsub("UB_PASSWORD_HASH=__PLACEHOLDER__", "UB_PASSWORD_HASH=" hash); print}' \
     "$SUPERNOTE_DIR/.ultrabridge.env" > "$SUPERNOTE_DIR/.ultrabridge.env.tmp" \
     && mv "$SUPERNOTE_DIR/.ultrabridge.env.tmp" "$SUPERNOTE_DIR/.ultrabridge.env"
 
