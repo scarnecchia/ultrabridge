@@ -262,13 +262,7 @@ Zeroing RECOGNFILE removes the data the device uses to re-derive RECOGNTEXT, pre
 
 1. **CalDAV — tier 3 fields dropped:** Only title, description, priority, due date, and status are synchronised. Recurrence, reminders, and other advanced fields are not mapped.
 
-2. **Single-user by default:** UltraBridge auto-discovers the user from `u_user`. If multiple users exist, it refuses to start — set `UB_USER_ID` to resolve this.
-
-3. **No TLS termination:** The service listens on plain HTTP. Use a reverse proxy (nginx, Caddy) for HTTPS in production.
-
-4. **Engine.IO listener is a stub:** The pipeline detects files via fsnotify and periodic reconciliation. Parsing Supernote Engine.IO push events for instant detection is not yet implemented (`extractNotePaths` in `internal/pipeline/engineio.go`).
-
-5. **TITLE block extraction is a stub:** `extractNoteTitle` returns an empty string. Heading text is captured indirectly when RECOGNTEXT is indexed. Full heading extraction is out of scope for the current release.
+2. **TITLE block extraction is a stub:** `extractNoteTitle` returns an empty string. Heading text is captured indirectly when RECOGNTEXT is indexed. Full heading extraction is out of scope for the current release.
 
 ## Troubleshooting
 

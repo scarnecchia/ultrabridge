@@ -1,0 +1,7 @@
+- [NoteBridge on hold](project_notebridge_on_hold.md) — paused indefinitely, sync semantics break Standard note injection
+- [Multi-vendor vision](project_multi_vendor_vision.md) — UltraBridge as device-agnostic hub, not Supernote sidecar; vendor sync as optional adapters
+- [Vendor task landscape](project_vendor_task_landscape.md) — Supernote only vendor with task sync; Boox CalDAV broken/VEVENT-only; expect creative adapters
+- [SQLite as document store](project_sqlite_document_store.md) — exploring SQLite's flexibility for multi-vendor note data, inspired by Boox's Couchbase Lite
+- [Prefer SPC endpoints](feedback_prefer_spc_endpoints.md) — favor SPC REST API over direct MariaDB access for consistency
+- [Device data access](project_device_data_access.md) — Supernote is the only vendor with a private cloud; others require filesystem hacks
+- [Design for future, don't build](feedback_design_for_future_dont_build.md) — validate architecture accommodates future patterns, but only build what's needed now

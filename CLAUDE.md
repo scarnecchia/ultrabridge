@@ -1,6 +1,8 @@
-# UltraBridge
+# CLAUDE.md
 
-Last verified: 2026-03-22
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+Last verified: 2026-04-04
 
 Go sidecar service for Supernote Private Cloud. Two subsystems:
 1. **CalDAV task sync** -- reads/writes the Supernote MariaDB, pushes STARTSYNC via Engine.IO
@@ -32,11 +34,38 @@ Instead: `git -C /path`, `go -C /path build`, or absolute paths.
 
 ## Build & Test
 
+Use `-C` flag to target the repo root without `cd`:
+
 ```bash
-go build -C /home/sysop/src/ultrabridge ./cmd/ultrabridge/
-go test -C /home/sysop/src/ultrabridge ./...
-go vet -C /home/sysop/src/ultrabridge ./...
+go build -C /home/jtd/ultrabridge ./cmd/ultrabridge/
+go test -C /home/jtd/ultrabridge ./...
+go vet -C /home/jtd/ultrabridge ./...
 ```
+
+Run a single package's tests:
+```bash
+go test -C /home/jtd/ultrabridge ./internal/taskstore/
+```
+
+Integration tests (require running MariaDB with Supernote schema):
+```bash
+TEST_DBENV_PATH=/mnt/supernote/.dbenv go test -C /home/jtd/ultrabridge -tags integration ./tests/ -v
+```
+
+Docker build:
+```bash
+docker build -t ultrabridge:dev /home/jtd/ultrabridge
+```
+
+## Key Dependencies
+
+- `github.com/jdkruzr/go-sn` -- Supernote .note file parser/writer (rendering, RECOGNTEXT injection, JIIX)
+- `github.com/emersion/go-webdav` -- CalDAV protocol handler
+- `modernc.org/sqlite` -- pure-Go SQLite (no CGO)
+
+## Subcommands
+
+- `ultrabridge hash-password "pw"` -- generate bcrypt hash for UB_PASSWORD_HASH
 
 ## Conventions
 
