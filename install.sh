@@ -234,7 +234,7 @@ UB_SN_PASSWORD=""
 read -rp "Enable Supernote task sync? (y/N): " enable_sync
 if [[ "${enable_sync,,}" == "y" ]]; then
     UB_SN_SYNC_ENABLED="true"
-    prompt UB_SN_API_URL "SPC API URL" "http://supernote-service:9000"
+    prompt UB_SN_API_URL "SPC API URL" "http://supernote-service:8080"
     prompt UB_SN_SYNC_INTERVAL "Sync interval (seconds)" "300"
     prompt_password UB_SN_PASSWORD "Supernote Private Cloud password"
 fi

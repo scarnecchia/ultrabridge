@@ -94,7 +94,7 @@ func Load() (*Config, error) {
 	cfg.BackupPath     = os.Getenv("UB_BACKUP_PATH")
 	cfg.SNSyncEnabled  = envBoolOrDefault("UB_SN_SYNC_ENABLED", false)
 	cfg.SNSyncInterval = envIntOrDefault("UB_SN_SYNC_INTERVAL", 300) // 5 minutes
-	cfg.SNAPIURL       = envOrDefault("UB_SN_API_URL", "http://localhost:9000")
+	cfg.SNAPIURL       = envOrDefault("UB_SN_API_URL", "http://supernote-service:8080")
 	cfg.SNPassword     = os.Getenv("UB_SN_PASSWORD")
 	cfg.OCREnabled     = envBoolOrDefault("UB_OCR_ENABLED", false)
 	cfg.OCRAPIURL      = os.Getenv("UB_OCR_API_URL")
