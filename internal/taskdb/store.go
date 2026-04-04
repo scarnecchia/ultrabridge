@@ -138,13 +138,15 @@ func (s *Store) Delete(ctx context.Context, taskID string) error {
 	return nil
 }
 
+// IsEmpty returns true if the task store has no tasks (including deleted ones).
+// Used to detect first-run state for migration.
 func (s *Store) IsEmpty(ctx context.Context) (bool, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks").Scan(&count)
+	var exists int
+	err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM tasks LIMIT 1)").Scan(&exists)
 	if err != nil {
-		return false, fmt.Errorf("count tasks: %w", err)
+		return false, fmt.Errorf("check tasks empty: %w", err)
 	}
-	return count == 0, nil
+	return exists == 0, nil
 }
 
 func (s *Store) MaxLastModified(ctx context.Context) (int64, error) {

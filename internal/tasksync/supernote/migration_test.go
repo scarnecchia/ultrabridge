@@ -5,10 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +14,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/sysop/ultrabridge/internal/taskdb"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 	"github.com/sysop/ultrabridge/internal/tasksync"
 )
@@ -167,10 +166,6 @@ func newMockMigrationSPCServer(initialTasks []SPCTask) *mockMigrationSPCServer {
 
 func (m *mockMigrationSPCServer) close() {
 	m.server.Close()
-}
-
-func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, nil))
 }
 
 // TestMigration_AC4_1_ImportsTasks verifies that MigrateFromSPC imports active tasks
@@ -348,6 +343,7 @@ func TestMigration_AC4_1_ImportsTasks(t *testing.T) {
 }
 
 // TestMigration_AC4_2_IsEmpty verifies IsEmpty behavior before and after migration.
+// Uses the real taskdb.Store to test the actual IsEmpty method and Create path.
 func TestMigration_AC4_2_IsEmpty(t *testing.T) {
 	db := testMigrationDB(t)
 	defer db.Close()
@@ -362,21 +358,17 @@ func TestMigration_AC4_2_IsEmpty(t *testing.T) {
 	})
 	defer mock.close()
 
-	// Create clients
 	client := NewClient(mock.server.URL, "testpass", testLogger())
 	if err := client.Login(context.Background()); err != nil {
 		t.Fatalf("client login failed: %v", err)
 	}
 
-	// Create store wrapper for testing IsEmpty
-	store := &mockTaskStore{
-		tasks: make(map[string]*taskstore.Task),
-	}
-
+	// Use real taskdb.Store so IsEmpty and Create exercise production code
+	store := taskdb.NewStore(db)
 	syncMap := tasksync.NewSyncMap(db)
 
 	// Test 1: Fresh DB should be empty
-	isEmpty, err := testIsEmpty(db)
+	isEmpty, err := store.IsEmpty(context.Background())
 	if err != nil {
 		t.Fatalf("IsEmpty on fresh DB failed: %v", err)
 	}
@@ -384,30 +376,14 @@ func TestMigration_AC4_2_IsEmpty(t *testing.T) {
 		t.Errorf("expected fresh DB to be empty, got false")
 	}
 
-	// Run migration
+	// Run migration using real store
 	_, err = MigrateFromSPC(context.Background(), client, store, syncMap, testLogger())
 	if err != nil {
 		t.Fatalf("MigrateFromSPC failed: %v", err)
 	}
 
-	// Manually insert the migrated task into the real DB so IsEmpty sees it
-	for _, task := range store.tasks {
-		now := time.Now().UnixMilli()
-		_, err := db.ExecContext(context.Background(), `
-			INSERT INTO tasks (task_id, title, detail, status, importance, due_time,
-				completed_time, last_modified, recurrence, is_reminder_on, links,
-				is_deleted, ical_blob, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			task.TaskID, task.Title, task.Detail, task.Status, task.Importance,
-			task.DueTime, task.CompletedTime, task.LastModified, task.Recurrence,
-			task.IsReminderOn, task.Links, task.IsDeleted, task.ICalBlob, now, now)
-		if err != nil {
-			t.Fatalf("insert task failed: %v", err)
-		}
-	}
-
 	// Test 2: After import, DB should not be empty
-	isEmpty, err = testIsEmpty(db)
+	isEmpty, err = store.IsEmpty(context.Background())
 	if err != nil {
 		t.Fatalf("IsEmpty after migration failed: %v", err)
 	}
@@ -486,12 +462,3 @@ func (m *mockTaskStore) Create(ctx context.Context, t *taskstore.Task) error {
 	return nil
 }
 
-// testIsEmpty simulates the behavior of Store.IsEmpty for testing.
-func testIsEmpty(db *sql.DB) (bool, error) {
-	var count int
-	err := db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM tasks").Scan(&count)
-	if err != nil {
-		return false, fmt.Errorf("count tasks: %w", err)
-	}
-	return count == 0, nil
-}
