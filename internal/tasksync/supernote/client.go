@@ -5,6 +5,7 @@ package supernote
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -59,8 +60,11 @@ func (c *Client) Login(ctx context.Context, equipmentNo string) error {
 		return fmt.Errorf("get random code: SPC returned success=false")
 	}
 
-	// Step 2: Hash password with challenge
-	hash := sha256.Sum256([]byte(c.password + codeResp.RandomCode))
+	// Step 2: Hash password with challenge.
+	// SPC stores MD5(password). The challenge-response is SHA256(MD5(password) + randomCode).
+	md5pw := md5.Sum([]byte(c.password))
+	md5hex := fmt.Sprintf("%x", md5pw)
+	hash := sha256.Sum256([]byte(md5hex + codeResp.RandomCode))
 	hashedPW := fmt.Sprintf("%x", hash)
 
 	// Step 3: Login as equipment
