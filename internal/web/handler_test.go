@@ -982,3 +982,146 @@ func TestHandleFilesScan_NilScanner(t *testing.T) {
 		t.Errorf("status = %d, want 303", w.Code)
 	}
 }
+
+// mockSyncProvider implements SyncStatusProvider for testing
+type mockSyncProvider struct {
+	status    SyncStatus
+	triggered int
+}
+
+func (m *mockSyncProvider) Status() SyncStatus { return m.status }
+func (m *mockSyncProvider) TriggerSync()       { m.triggered++ }
+
+// TestHandleSyncStatus_AC31 verifies AC3.1: GET /sync/status returns sync status with timestamps and state
+func TestHandleSyncStatus_AC31(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	syncProvider := &mockSyncProvider{
+		status: SyncStatus{
+			LastSyncAt:    1704067200000, // 2024-01-01 00:00:00 UTC
+			NextSyncAt:    1704153600000, // 2024-01-02 00:00:00 UTC
+			InProgress:    false,
+			LastError:     "",
+			AdapterID:     "caldav-adapter",
+			AdapterActive: true,
+		},
+	}
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, syncProvider, logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/sync/status", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "application/json") {
+		t.Error("expected JSON content type")
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "1704067200000") {
+		t.Errorf("expected LastSyncAt in JSON: %s", body)
+	}
+	if !strings.Contains(body, "1704153600000") {
+		t.Errorf("expected NextSyncAt in JSON: %s", body)
+	}
+	if !strings.Contains(body, "caldav-adapter") {
+		t.Errorf("expected AdapterID in JSON: %s", body)
+	}
+	if !strings.Contains(body, "true") {
+		t.Errorf("expected AdapterActive:true in JSON: %s", body)
+	}
+}
+
+// TestHandleSyncTrigger_AC32 verifies AC3.2: POST /sync/trigger triggers sync and returns status
+func TestHandleSyncTrigger_AC32(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	syncProvider := &mockSyncProvider{
+		status: SyncStatus{
+			LastSyncAt:    1704067200000,
+			NextSyncAt:    1704153600000,
+			InProgress:    false,
+			AdapterActive: true,
+		},
+		triggered: 0,
+	}
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, syncProvider, logger, broadcaster)
+
+	req := httptest.NewRequest("POST", "/sync/trigger", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	if syncProvider.triggered != 1 {
+		t.Errorf("TriggerSync called %d times, want 1", syncProvider.triggered)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "application/json") {
+		t.Error("expected JSON content type in response")
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "1704067200000") {
+		t.Errorf("expected updated status in JSON: %s", body)
+	}
+}
+
+// TestHandleSyncStatus_AC33 verifies AC3.3: GET /sync/status shows InProgress when sync is running
+func TestHandleSyncStatus_AC33(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	syncProvider := &mockSyncProvider{
+		status: SyncStatus{
+			LastSyncAt:    1704067200000,
+			NextSyncAt:    0,
+			InProgress:    true, // Sync in progress
+			AdapterActive: true,
+		},
+	}
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, syncProvider, logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/sync/status", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "\"inProgress\":true") {
+		t.Errorf("expected inProgress:true in JSON: %s", body)
+	}
+}
+
+// TestHandleSyncStatus_NilSafe verifies sync endpoints don't crash when syncProvider is nil
+func TestHandleSyncStatus_NilSafe(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, logger, broadcaster)
+
+	// GET /sync/status with nil syncProvider should return zero-value SyncStatus
+	req := httptest.NewRequest("GET", "/sync/status", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /sync/status status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "\"adapterActive\":false") {
+		t.Errorf("expected zero-value SyncStatus in JSON: %s", body)
+	}
+
+	// POST /sync/trigger with nil syncProvider should return 404
+	req = httptest.NewRequest("POST", "/sync/trigger", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("POST /sync/trigger status = %d, want 404", w.Code)
+	}
+}
