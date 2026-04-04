@@ -304,7 +304,7 @@ func (e *SyncEngine) processRemoteTask(ctx context.Context, adapterID string, rt
 		localModified = local.LastModified.Int64
 	}
 
-	if localModified > entry.LastPulled {
+	if localModified > maxInt64(entry.LastPushed, entry.LastPulled) {
 		// Both sides changed — UB wins, will be pushed back in step 6
 		e.logger.Info("conflict: UB wins", "task_id", entry.TaskID, "adapter", adapterID)
 		return nil

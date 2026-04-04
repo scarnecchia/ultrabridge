@@ -22,14 +22,14 @@ func openTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// waitForSync waits for a sync cycle to complete after being triggered at beforeTs.
-// It polls the engine status until LastSyncAt > beforeTs and InProgress is false, or timeout.
-func waitForSync(t *testing.T, engine *SyncEngine, beforeTs int64) {
+// waitForSync waits for a sync cycle to complete after the given lastSyncAt.
+// Pass engine.Status().LastSyncAt before triggering to wait for a NEW cycle.
+func waitForSync(t *testing.T, engine *SyncEngine, lastSyncAt int64) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		s := engine.Status()
-		if s.LastSyncAt >= beforeTs && !s.InProgress {
+		if s.LastSyncAt > lastSyncAt && !s.InProgress {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -155,7 +155,7 @@ func TestSyncEngine_AC51_RegisterAndSync(t *testing.T) {
 	defer engine.Stop()
 
 	// Trigger sync
-	beforeTs := time.Now().UnixMilli()
+	beforeTs := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs)
 
@@ -207,7 +207,7 @@ func TestSyncEngine_AC51_CreateLocalAndPush(t *testing.T) {
 	}
 
 	// Trigger sync
-	beforeTs := time.Now().UnixMilli()
+	beforeTs := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs)
 
@@ -277,7 +277,7 @@ func TestSyncEngine_AC52_MultipleAdapters(t *testing.T) {
 	defer engine.Stop()
 
 	// Verify second adapter can sync without code changes
-	beforeTs := time.Now().UnixMilli()
+	beforeTs := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs)
 
@@ -319,7 +319,7 @@ func TestSyncEngine_UBWinsConflict(t *testing.T) {
 	}
 	defer engine.Stop()
 
-	beforeTs := time.Now().UnixMilli()
+	beforeTs := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs)
 
@@ -349,7 +349,7 @@ func TestSyncEngine_UBWinsConflict(t *testing.T) {
 	adapter.pushes = nil
 
 	// Step 4: Second sync - local should win
-	beforeTs2 := time.Now().UnixMilli()
+	beforeTs2 := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs2)
 
@@ -399,7 +399,7 @@ func TestSyncEngine_RemoteCreate(t *testing.T) {
 	}
 	defer engine.Stop()
 
-	beforeTs := time.Now().UnixMilli()
+	beforeTs := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs)
 
@@ -445,7 +445,7 @@ func TestSyncEngine_RemoteUpdate(t *testing.T) {
 	}
 	defer engine.Stop()
 
-	beforeTs := time.Now().UnixMilli()
+	beforeTs := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs)
 
@@ -462,7 +462,7 @@ func TestSyncEngine_RemoteUpdate(t *testing.T) {
 	}})
 
 	// Second sync
-	beforeTs2 := time.Now().UnixMilli()
+	beforeTs2 := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs2)
 
@@ -507,7 +507,7 @@ func TestSyncEngine_LocalDelete(t *testing.T) {
 	}
 	defer engine.Stop()
 
-	beforeTs := time.Now().UnixMilli()
+	beforeTs := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs)
 
@@ -519,7 +519,7 @@ func TestSyncEngine_LocalDelete(t *testing.T) {
 	adapter.pushes = nil
 
 	// Sync again
-	beforeTs2 := time.Now().UnixMilli()
+	beforeTs2 := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs2)
 
@@ -567,7 +567,7 @@ func TestSyncEngine_RemoteHardDelete(t *testing.T) {
 	}
 	defer engine.Stop()
 
-	beforeTs := time.Now().UnixMilli()
+	beforeTs := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs)
 
@@ -584,7 +584,7 @@ func TestSyncEngine_RemoteHardDelete(t *testing.T) {
 	adapter.pushes = nil
 	adapter.setInitialTasks([]RemoteTask{}) // No tasks
 
-	beforeTs2 := time.Now().UnixMilli()
+	beforeTs2 := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs2)
 
@@ -630,7 +630,7 @@ func TestSyncEngine_StatusReporting(t *testing.T) {
 		t.Logf("Warning: InProgress true before sync trigger")
 	}
 
-	beforeTs := time.Now().UnixMilli()
+	beforeTs := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs)
 
@@ -675,7 +675,7 @@ func TestSyncEngine_ManualTrigger(t *testing.T) {
 	defer engine.Stop()
 
 	// Manually trigger
-	beforeTs := time.Now().UnixMilli()
+	beforeTs := engine.Status().LastSyncAt
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs)
 
