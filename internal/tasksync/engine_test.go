@@ -330,9 +330,6 @@ func TestSyncEngine_UBWinsConflict(t *testing.T) {
 	if len(adapter.pushes[0]) == 0 {
 		t.Fatalf("expected changes in Push")
 	}
-	// Remote ID is assigned by mock's Push method: "remote-" + taskID[:8]
-	remoteID := "remote-" + taskID[:8]
-
 	// Step 3: Modify both local and remote
 	localTask.Title = taskstore.SqlStr("Task - Local Edit")
 	localTask.LastModified = sql.NullInt64{Int64: time.Now().UnixMilli(), Valid: true}
