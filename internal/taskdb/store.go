@@ -138,6 +138,15 @@ func (s *Store) Delete(ctx context.Context, taskID string) error {
 	return nil
 }
 
+func (s *Store) IsEmpty(ctx context.Context) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks").Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("count tasks: %w", err)
+	}
+	return count == 0, nil
+}
+
 func (s *Store) MaxLastModified(ctx context.Context) (int64, error) {
 	var max sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
