@@ -18,6 +18,26 @@ for arg in "$@"; do
     case "$arg" in
         --fresh|-f) FRESH=true ;;
         --nuke) NUKE=true ;;
+        -h|--help)
+            cat <<EOF
+Usage: rebuild.sh [OPTIONS] [SUPERNOTE_DIR]
+
+Rebuild and restart UltraBridge without reconfiguring.
+Requires install.sh to have been run first.
+
+Options:
+  --fresh, -f   Clear the SQLite database before rebuilding
+                (prompts for confirmation)
+  --nuke        Delete ALL UltraBridge data before rebuilding
+                (prompts for confirmation)
+  -h, --help    Show this help message
+
+Arguments:
+  SUPERNOTE_DIR  Path to Supernote Private Cloud directory
+                 (default: /mnt/supernote)
+EOF
+            exit 0
+            ;;
         *) SUPERNOTE_DIR="$arg" ;;
     esac
 done

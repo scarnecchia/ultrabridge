@@ -9,6 +9,35 @@ DEFAULT_SUPERNOTE_DIR="/mnt/supernote"
 DEFAULT_PORT="8443"
 DEFAULT_USERNAME="admin"
 
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    cat <<EOF
+Usage: install.sh [OPTIONS]
+
+Interactive installer for UltraBridge. Prompts for configuration,
+builds the Docker image, and starts the service.
+
+Safe to re-run: overwrites generated config files each time.
+
+Options:
+  --fresh, -f   Clear the SQLite database before installing
+                (preserves other data in ultrabridge-data/)
+  --nuke        Delete ALL UltraBridge data before installing
+                (removes entire ultrabridge-data/ directory)
+  -h, --help    Show this help message
+
+Prerequisites:
+  - Docker and Docker Compose v2
+  - Supernote Private Cloud installed and configured
+  - MariaDB container running (from the Supernote stack)
+
+Generated files (in your Supernote directory):
+  .ultrabridge.env              Environment/config for the container
+  docker-compose.override.yml   Compose service definition
+  ultrabridge-data/             Persistent data directory
+EOF
+    exit 0
+fi
+
 # --- helpers ---
 
 info()  { printf '\033[1;34m==> %s\033[0m\n' "$*"; }
