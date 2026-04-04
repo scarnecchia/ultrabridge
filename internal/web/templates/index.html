@@ -525,7 +525,7 @@
               const errorEl = document.getElementById('sync-error');
               const btn = document.getElementById('sync-now-btn');
 
-              if (!data.AdapterActive) {
+              if (!data.adapterActive) {
                 statusEl.textContent = 'Disabled';
                 statusEl.className = 'badge';
                 btn.disabled = true;
@@ -535,7 +535,7 @@
                 return;
               }
 
-              if (data.InProgress) {
+              if (data.inProgress) {
                 statusEl.textContent = 'Syncing...';
                 statusEl.className = 'badge badge-progress';
                 btn.disabled = true;
@@ -545,13 +545,13 @@
                 btn.disabled = false;
               }
 
-              lastEl.textContent = data.LastSyncAt > 0
-                ? 'Last: ' + new Date(data.LastSyncAt).toLocaleTimeString()
+              lastEl.textContent = data.lastSyncAt > 0
+                ? 'Last: ' + new Date(data.lastSyncAt).toLocaleTimeString()
                 : 'Last: never';
-              nextEl.textContent = data.NextSyncAt > 0
-                ? 'Next: ' + new Date(data.NextSyncAt).toLocaleTimeString()
+              nextEl.textContent = data.nextSyncAt > 0
+                ? 'Next: ' + new Date(data.nextSyncAt).toLocaleTimeString()
                 : '';
-              errorEl.textContent = data.LastError ? 'Error: ' + data.LastError : '';
+              errorEl.textContent = data.lastError ? 'Error: ' + data.lastError : '';
             })
             .catch(() => {
               document.getElementById('sync-status').textContent = 'Offline';
