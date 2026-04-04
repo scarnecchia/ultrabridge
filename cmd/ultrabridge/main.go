@@ -22,9 +22,28 @@ import (
 	"github.com/sysop/ultrabridge/internal/processor"
 	"github.com/sysop/ultrabridge/internal/search"
 	"github.com/sysop/ultrabridge/internal/sync"
-	"github.com/sysop/ultrabridge/internal/taskstore"
+	"github.com/sysop/ultrabridge/internal/taskdb"
+	"github.com/sysop/ultrabridge/internal/tasksync"
+	"github.com/sysop/ultrabridge/internal/tasksync/supernote"
 	"github.com/sysop/ultrabridge/internal/web"
 )
+
+// syncProviderAdapter wraps tasksync.SyncEngine to satisfy web.SyncStatusProvider.
+type syncProviderAdapter struct{ engine *tasksync.SyncEngine }
+
+func (a *syncProviderAdapter) Status() web.SyncStatus {
+	s := a.engine.Status()
+	return web.SyncStatus{
+		LastSyncAt:    s.LastSyncAt,
+		NextSyncAt:    s.NextSyncAt,
+		InProgress:    s.InProgress,
+		LastError:     s.LastError,
+		AdapterID:     s.AdapterID,
+		AdapterActive: s.AdapterActive,
+	}
+}
+
+func (a *syncProviderAdapter) TriggerSync() { a.engine.TriggerSync() }
 
 func main() {
 	if len(os.Args) >= 3 && os.Args[1] == "hash-password" {
@@ -53,28 +72,76 @@ func main() {
 		SyslogAddr:    cfg.LogSyslogAddr,
 	})
 
+	// Connect to Supernote MariaDB.
+	// Required when SN sync is enabled or notes pipeline uses catalog sync.
+	// Non-fatal when sync is disabled — task store is SQLite-only.
 	database, err := db.Connect(cfg.DSN())
 	if err != nil {
-		logger.Error("database connection failed", "error", err)
-		os.Exit(1)
+		if cfg.SNSyncEnabled {
+			logger.Error("database connection failed (required for sync)", "error", err)
+			os.Exit(1)
+		}
+		logger.Warn("database connection failed, notes catalog sync disabled", "error", err)
+		// database is nil — catalog updater won't be set, which is nil-guarded below
 	}
-	defer database.Close()
+	if database != nil {
+		defer database.Close()
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	var userID int64
+	if database != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 
-	userID, err := db.ResolveUserID(ctx, database, cfg.UserID)
+		userID, err = db.ResolveUserID(ctx, database, cfg.UserID)
+		if err != nil {
+			if cfg.SNSyncEnabled {
+				logger.Error("user resolution failed (required for sync)", "error", err)
+				os.Exit(1)
+			}
+			logger.Warn("user resolution failed", "error", err)
+		} else if cfg.UserID != 0 {
+			logger.Info("using configured user_id", "user_id", userID)
+		} else {
+			logger.Info("discovered user_id", "user_id", userID)
+		}
+	}
+
+	// Open the task SQLite DB
+	taskDB, err := taskdb.Open(context.Background(), cfg.TaskDBPath)
 	if err != nil {
-		logger.Error("user resolution failed", "error", err)
+		logger.Error("taskdb open failed", "err", err, "path", cfg.TaskDBPath)
 		os.Exit(1)
 	}
-	if cfg.UserID != 0 {
-		logger.Info("using configured user_id", "user_id", userID)
-	} else {
-		logger.Info("discovered user_id", "user_id", userID)
-	}
+	defer taskDB.Close()
 
-	store := taskstore.New(database, userID)
+	store := taskdb.NewStore(taskDB)
+
+	// Run migration if task DB is empty and SPC sync is enabled
+	if cfg.SNSyncEnabled {
+		isEmpty, err := store.IsEmpty(context.Background())
+		if err != nil {
+			logger.Error("taskdb empty check failed", "err", err)
+			os.Exit(1)
+		}
+		if isEmpty {
+			logger.Info("empty task DB detected, attempting migration from SPC")
+			migClient := supernote.NewClient(cfg.SNAPIURL, cfg.SNPassword, logger)
+			if err := migClient.Login(context.Background()); err != nil {
+				logger.Warn("SPC login failed for migration, starting with empty store", "error", err)
+			} else {
+				sm := tasksync.NewSyncMap(taskDB)
+				count, err := supernote.MigrateFromSPC(context.Background(), migClient, store, sm, logger)
+				if err != nil {
+					logger.Warn("migration from SPC failed", "error", err)
+				} else {
+					logger.Info("migrated tasks from SPC", "count", count)
+				}
+			}
+		} else {
+			logger.Info("task DB populated, skipping migration")
+		}
+	}
 
 	notifier := sync.NewNotifier(cfg.SocketIOURL, logger)
 	notifier.Connect(context.Background())
@@ -121,6 +188,22 @@ func main() {
 	pl.Start(context.Background())
 	defer pl.Close()
 
+	// Start sync engine if enabled
+	var syncEngine *tasksync.SyncEngine
+	if cfg.SNSyncEnabled {
+		syncEngine = tasksync.NewSyncEngine(
+			store, taskDB, logger,
+			time.Duration(cfg.SNSyncInterval)*time.Second,
+		)
+		snAdapter := supernote.NewAdapter(cfg.SNAPIURL, cfg.SNPassword, notifier, logger)
+		syncEngine.RegisterAdapter(snAdapter)
+		if err := syncEngine.Start(context.Background()); err != nil {
+			logger.Warn("sync engine start failed", "error", err)
+		} else {
+			defer syncEngine.Stop()
+		}
+	}
+
 	backend := ubcaldav.NewBackend(store, "/caldav", cfg.CalDAVCollectionName, cfg.DueTimeMode, notifier)
 	caldavHandler := &gocaldav.Handler{
 		Backend: backend,
@@ -150,7 +233,12 @@ func main() {
 
 	// Wire web UI if enabled
 	if cfg.WebEnabled {
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, logger, broadcaster)
+		// If sync is enabled, wrap syncEngine for web UI; otherwise nil
+		var syncProvider web.SyncStatusProvider
+		if cfg.SNSyncEnabled && syncEngine != nil {
+			syncProvider = &syncProviderAdapter{engine: syncEngine}
+		}
+		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, logger, broadcaster)
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 

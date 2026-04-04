@@ -1,7 +1,11 @@
 package caldav
 
 import (
+	"bytes"
+	"database/sql"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	ical "github.com/emersion/go-ical"
@@ -9,7 +13,18 @@ import (
 )
 
 // TaskToVTODO converts a task store Task to an ical.Calendar containing a VTODO.
+// If the task has an ICalBlob, it deserializes the blob and overlays DB-authoritative
+// fields on top. Otherwise, it builds the calendar from structured fields.
 func TaskToVTODO(t *taskstore.Task, dueTimeMode string) *ical.Calendar {
+	if t.ICalBlob.Valid && t.ICalBlob.String != "" {
+		return taskToVTODOFromBlob(t, dueTimeMode)
+	}
+	return taskToVTODOFromFields(t, dueTimeMode)
+}
+
+// taskToVTODOFromFields builds a VTODO calendar from structured fields only.
+// This is the original implementation, used for tasks without iCal blobs.
+func taskToVTODOFromFields(t *taskstore.Task, dueTimeMode string) *ical.Calendar {
 	cal := ical.NewCalendar()
 	cal.Props.SetText("PRODID", "-//UltraBridge//CalDAV//EN")
 	cal.Props.SetText("VERSION", "2.0")
@@ -67,9 +82,70 @@ func TaskToVTODO(t *taskstore.Task, dueTimeMode string) *ical.Calendar {
 	return cal
 }
 
+// taskToVTODOFromBlob deserializes the stored iCal blob and overlays
+// DB-authoritative fields on top, preserving all Tier 3 properties.
+func taskToVTODOFromBlob(t *taskstore.Task, dueTimeMode string) *ical.Calendar {
+	dec := ical.NewDecoder(strings.NewReader(t.ICalBlob.String))
+	cal, err := dec.Decode()
+	if err != nil {
+		// Fallback: if blob is corrupt, build from fields
+		return taskToVTODOFromFields(t, dueTimeMode)
+	}
+
+	todo, err := FindVTODO(cal)
+	if err != nil {
+		return taskToVTODOFromFields(t, dueTimeMode)
+	}
+
+	// Overlay DB-authoritative fields (these may have been updated
+	// via sync or direct DB operations since the blob was stored)
+	todo.Props.SetText("UID", t.TaskID)
+
+	if t.Title.Valid && t.Title.String != "" {
+		todo.Props.SetText("SUMMARY", t.Title.String)
+	}
+
+	status := taskstore.CalDAVStatus(taskstore.NullStr(t.Status))
+	todo.Props.SetText("STATUS", status)
+
+	if t.DueTime != 0 {
+		dueTime := taskstore.MsToTime(t.DueTime)
+		if dueTimeMode == "date_only" {
+			todo.Props.SetDate("DUE", dueTime)
+		} else {
+			todo.Props.SetDateTime("DUE", dueTime)
+		}
+	} else {
+		// Remove DUE if cleared
+		delete(todo.Props, "DUE")
+	}
+
+	if t.LastModified.Valid {
+		lm := taskstore.MsToTime(t.LastModified.Int64)
+		todo.Props.SetDateTime("DTSTAMP", lm)
+		todo.Props.SetDateTime("LAST-MODIFIED", lm)
+	}
+
+	if ct, ok := taskstore.CompletionTime(t); ok {
+		todo.Props.SetDateTime("COMPLETED", ct)
+	} else {
+		delete(todo.Props, "COMPLETED")
+	}
+
+	// Overlay Tier 2 fields (may have been updated in DB after blob storage)
+	if t.Detail.Valid && t.Detail.String != "" {
+		todo.Props.SetText("DESCRIPTION", t.Detail.String)
+	}
+	if t.Importance.Valid && t.Importance.String != "" {
+		todo.Props.SetText("PRIORITY", t.Importance.String)
+	}
+
+	return cal
+}
+
 // VTODOToTask extracts task fields from an ical.Calendar containing a VTODO.
 // Returns the extracted task and the UID. Does not set user_id or task_id generation
-// — caller handles those.
+// — caller handles those. Also serializes the full calendar as ICalBlob for round-trip fidelity.
 func VTODOToTask(cal *ical.Calendar, dueTimeMode string) (*taskstore.Task, error) {
 	var todo *ical.Component
 	for _, child := range cal.Children {
@@ -109,6 +185,14 @@ func VTODOToTask(cal *ical.Calendar, dueTimeMode string) (*taskstore.Task, error
 	}
 	if prio := todo.Props.Get("PRIORITY"); prio != nil {
 		t.Importance = taskstore.SqlStr(prio.Value)
+	}
+
+	// Store full VCALENDAR as blob for round-trip fidelity
+	var buf bytes.Buffer
+	if err := ical.NewEncoder(&buf).Encode(cal); err == nil {
+		t.ICalBlob = sql.NullString{String: buf.String(), Valid: true}
+	} else {
+		slog.Warn("failed to encode ical blob", "err", err)
 	}
 
 	return t, nil

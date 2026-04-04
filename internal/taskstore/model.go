@@ -26,4 +26,5 @@ type Task struct {
 	CompletedTime sql.NullInt64
 	Links         sql.NullString
 	IsDeleted     string
+	ICalBlob      sql.NullString
 }

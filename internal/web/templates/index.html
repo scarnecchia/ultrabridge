@@ -254,6 +254,16 @@
                         Show completed
                     </label>
                 </div>
+
+                <!-- Sync Status Panel -->
+                <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px; padding:10px; background:#f8f9fa; border-radius:6px;">
+                  <span style="font-weight:600;">Sync:</span>
+                  <span id="sync-status" class="badge badge-pending">Loading...</span>
+                  <span id="sync-last" style="color:#666; font-size:0.9em;"></span>
+                  <span id="sync-next" style="color:#666; font-size:0.9em;"></span>
+                  <span id="sync-error" style="color:#c00; font-size:0.9em;"></span>
+                  <button id="sync-now-btn" class="btn-small" onclick="triggerSync()" style="margin-left:auto;">Sync Now</button>
+                </div>
                 {{if .tasks}}
                 <form id="bulk-form" method="POST" action="/tasks/bulk">
                 <div id="bulk-actions" style="display: none; margin-bottom: 15px; padding: 10px; background: #f0f4ff; border-radius: 4px;">
@@ -505,6 +515,60 @@
             .catch(function() {});
         }
 
+        function updateSyncStatus() {
+          fetch('/sync/status')
+            .then(r => r.json())
+            .then(data => {
+              const statusEl = document.getElementById('sync-status');
+              const lastEl = document.getElementById('sync-last');
+              const nextEl = document.getElementById('sync-next');
+              const errorEl = document.getElementById('sync-error');
+              const btn = document.getElementById('sync-now-btn');
+
+              if (!data.AdapterActive) {
+                statusEl.textContent = 'Disabled';
+                statusEl.className = 'badge';
+                btn.disabled = true;
+                lastEl.textContent = '';
+                nextEl.textContent = '';
+                errorEl.textContent = '';
+                return;
+              }
+
+              if (data.InProgress) {
+                statusEl.textContent = 'Syncing...';
+                statusEl.className = 'badge badge-progress';
+                btn.disabled = true;
+              } else {
+                statusEl.textContent = 'Active';
+                statusEl.className = 'badge badge-done';
+                btn.disabled = false;
+              }
+
+              lastEl.textContent = data.LastSyncAt > 0
+                ? 'Last: ' + new Date(data.LastSyncAt).toLocaleTimeString()
+                : 'Last: never';
+              nextEl.textContent = data.NextSyncAt > 0
+                ? 'Next: ' + new Date(data.NextSyncAt).toLocaleTimeString()
+                : '';
+              errorEl.textContent = data.LastError ? 'Error: ' + data.LastError : '';
+            })
+            .catch(() => {
+              document.getElementById('sync-status').textContent = 'Offline';
+              document.getElementById('sync-status').className = 'badge';
+            });
+        }
+
+        function triggerSync() {
+          const btn = document.getElementById('sync-now-btn');
+          btn.disabled = true;
+          document.getElementById('sync-status').textContent = 'Syncing...';
+          document.getElementById('sync-status').className = 'badge badge-progress';
+          fetch('/sync/trigger', {method: 'POST'})
+            .then(() => setTimeout(updateSyncStatus, 1000))
+            .catch(() => { btn.disabled = false; });
+        }
+
         // On page load, activate the tab the server designated (for /files and /search routes).
         (function() {
             const active = "{{.activeTab}}";
@@ -519,6 +583,10 @@
                 }
             }
         })();
+
+        // Poll sync status every 5 seconds (matches Files tab pattern)
+        setInterval(updateSyncStatus, 5000);
+        updateSyncStatus();
 
         function switchTab(tabName) {
             // Hide all tabs

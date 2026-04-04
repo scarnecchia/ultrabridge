@@ -36,17 +36,35 @@ type FileScanner interface {
 	ScanNow(ctx context.Context)
 }
 
+// SyncStatus represents sync engine state for the web UI.
+type SyncStatus struct {
+	LastSyncAt    int64  `json:"lastSyncAt"`
+	NextSyncAt    int64  `json:"nextSyncAt"`
+	InProgress    bool   `json:"inProgress"`
+	LastError     string `json:"lastError"`
+	AdapterID     string `json:"adapterId"`
+	AdapterActive bool   `json:"adapterActive"`
+}
+
+// SyncStatusProvider provides sync status and manual trigger.
+// Implemented by a wrapper around tasksync.SyncEngine. Nil-safe in Handler.
+type SyncStatusProvider interface {
+	Status() SyncStatus
+	TriggerSync()
+}
+
 type Handler struct {
-	store       ubcaldav.TaskStore
-	notifier    ubcaldav.SyncNotifier
-	noteStore   notestore.NoteStore
-	searchIndex search.SearchIndex
-	proc        processor.Processor
-	scanner     FileScanner
-	tmpl        *template.Template
-	mux         *http.ServeMux
-	logger      *slog.Logger
-	broadcaster *logging.LogBroadcaster
+	store        ubcaldav.TaskStore
+	notifier     ubcaldav.SyncNotifier
+	noteStore    notestore.NoteStore
+	searchIndex  search.SearchIndex
+	proc         processor.Processor
+	scanner      FileScanner
+	syncProvider SyncStatusProvider
+	tmpl         *template.Template
+	mux          *http.ServeMux
+	logger       *slog.Logger
+	broadcaster  *logging.LogBroadcaster
 }
 
 // formatDueTime converts a millisecond Unix timestamp to a formatted date string.
@@ -68,17 +86,18 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
-		store:       store,
-		notifier:    notifier,
-		noteStore:   noteStore,
-		searchIndex: searchIndex,
-		proc:        proc,
-		scanner:     scanner,
-		logger:      logger,
-		mux:         http.NewServeMux(),
-		broadcaster: broadcaster,
+		store:        store,
+		notifier:     notifier,
+		noteStore:    noteStore,
+		searchIndex:  searchIndex,
+		proc:         proc,
+		scanner:      scanner,
+		syncProvider: syncProvider,
+		logger:       logger,
+		mux:          http.NewServeMux(),
+		broadcaster:  broadcaster,
 	}
 
 	// Parse the embedded templates with custom function map
@@ -111,6 +130,8 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /processor/start", h.handleProcessorStart)
 	h.mux.HandleFunc("POST /processor/stop", h.handleProcessorStop)
 	h.mux.HandleFunc("POST /files/scan", h.handleFilesScan)
+	h.mux.HandleFunc("GET /sync/status", h.handleSyncStatus)
+	h.mux.HandleFunc("POST /sync/trigger", h.handleSyncTrigger)
 	h.registerLogStreamHandler(broadcaster)
 
 	return h
@@ -613,4 +634,23 @@ func (h *Handler) handleFilesScan(w http.ResponseWriter, r *http.Request) {
 		h.scanner.ScanNow(r.Context())
 	}
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func (h *Handler) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.syncProvider == nil {
+		json.NewEncoder(w).Encode(SyncStatus{})
+		return
+	}
+	json.NewEncoder(w).Encode(h.syncProvider.Status())
+}
+
+func (h *Handler) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
+	if h.syncProvider == nil {
+		http.Error(w, "sync not configured", http.StatusNotFound)
+		return
+	}
+	h.syncProvider.TriggerSync()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(h.syncProvider.Status())
 }

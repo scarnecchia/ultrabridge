@@ -221,6 +221,25 @@ else
 fi
 
 echo
+info "── Supernote Task Sync ──"
+echo "Sync tasks between UltraBridge and your Supernote device."
+echo "This requires the Supernote Private Cloud to be running."
+echo ""
+
+UB_SN_SYNC_ENABLED="false"
+UB_SN_SYNC_INTERVAL="300"
+UB_SN_API_URL=""
+UB_SN_PASSWORD=""
+
+read -rp "Enable Supernote task sync? (y/N): " enable_sync
+if [[ "${enable_sync,,}" == "y" ]]; then
+    UB_SN_SYNC_ENABLED="true"
+    prompt UB_SN_API_URL "SPC API URL" "http://supernote-service:9000"
+    prompt UB_SN_SYNC_INTERVAL "Sync interval (seconds)" "300"
+    prompt_password UB_SN_PASSWORD "Supernote Private Cloud password"
+fi
+
+echo
 
 # --- build image first (needed for password hashing) ---
 
@@ -281,10 +300,25 @@ echo "UB_OCR_API_URL=$UB_OCR_API_URL"
 echo "UB_OCR_API_KEY=$UB_OCR_API_KEY"
 echo "UB_OCR_MODEL=$UB_OCR_MODEL"
 fi)
+
+# Task Store
+UB_TASK_DB_PATH=/data/ultrabridge-tasks.db
+
+# Supernote Sync
+UB_SN_SYNC_ENABLED=${UB_SN_SYNC_ENABLED}
 EOF
 
 chmod 600 "$SUPERNOTE_DIR/.ultrabridge.env"
 ok "Environment file written (permissions: 600)"
+
+# Conditionally append sync-specific vars when enabled
+if [[ "$UB_SN_SYNC_ENABLED" == "true" ]]; then
+cat >> "$SUPERNOTE_DIR/.ultrabridge.env" <<EOF_SYNC
+UB_SN_SYNC_INTERVAL=${UB_SN_SYNC_INTERVAL}
+UB_SN_API_URL=${UB_SN_API_URL}
+UB_SN_PASSWORD=${UB_SN_PASSWORD}
+EOF_SYNC
+fi
 
 # --- write docker-compose.override.yml ---
 

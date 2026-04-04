@@ -44,7 +44,14 @@ type Config struct {
 	UserID int64 // Explicit user ID override (0 = auto-discover)
 
 	// Paths
-	DBEnvPath string
+	DBEnvPath  string
+	TaskDBPath string
+
+	// Supernote sync
+	SNSyncEnabled  bool
+	SNSyncInterval int    // seconds
+	SNAPIURL       string
+	SNPassword     string
 
 	// Notes pipeline
 	NotesPath      string
@@ -83,7 +90,12 @@ func Load() (*Config, error) {
 
 	cfg.NotesPath      = os.Getenv("UB_NOTES_PATH")
 	cfg.DBPath         = envOrDefault("UB_DB_PATH", "/data/ultrabridge.db")
+	cfg.TaskDBPath     = envOrDefault("UB_TASK_DB_PATH", "/data/ultrabridge-tasks.db")
 	cfg.BackupPath     = os.Getenv("UB_BACKUP_PATH")
+	cfg.SNSyncEnabled  = envBoolOrDefault("UB_SN_SYNC_ENABLED", false)
+	cfg.SNSyncInterval = envIntOrDefault("UB_SN_SYNC_INTERVAL", 300) // 5 minutes
+	cfg.SNAPIURL       = envOrDefault("UB_SN_API_URL", "http://localhost:9000")
+	cfg.SNPassword     = os.Getenv("UB_SN_PASSWORD")
 	cfg.OCREnabled     = envBoolOrDefault("UB_OCR_ENABLED", false)
 	cfg.OCRAPIURL      = os.Getenv("UB_OCR_API_URL")
 	cfg.OCRAPIKey      = os.Getenv("UB_OCR_API_KEY")

@@ -1,6 +1,6 @@
 # Task Store
 
-Last verified: 2026-03-17
+Last verified: 2026-04-04
 
 ## Purpose
 CRUD access to Supernote's `t_schedule_task` table with field mapping between
@@ -27,6 +27,7 @@ Go types, CalDAV VTODO properties, and the Supernote DB schema.
 - `is_deleted` is "Y" or "N", never NULL
 - `is_reminder_on` defaults to "N"
 - `status` is "needsAction" or "completed" (Supernote values, not CalDAV casing)
+- `ical_blob` (ICalBlob field) is optional and NULL for tasks from Supernote; populated by CalDAV write path for round-trip VTODO fidelity
 
 ## Gotchas
 - `ErrNotFound` sentinel: use `taskstore.IsNotFound(err)` to check, not type assertion
