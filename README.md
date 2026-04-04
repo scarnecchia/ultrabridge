@@ -131,6 +131,25 @@ All pipeline variables are optional. Omitting `UB_NOTES_PATH` disables the pipel
 | `UB_OCR_CONCURRENCY` | `1` | Parallel OCR workers |
 | `UB_OCR_MAX_FILE_MB` | `0` | Skip files larger than N MB (0 = no limit) |
 
+### Task Store
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UB_TASK_DB_PATH` | `/data/ultrabridge-tasks.db` | Path to SQLite database for task storage |
+
+### Supernote Sync
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UB_SN_SYNC_ENABLED` | `false` | Enable task sync with Supernote device via SPC |
+| `UB_SN_SYNC_INTERVAL` | `300` | Sync interval in seconds |
+| `UB_SN_API_URL` | `http://localhost:9000` | SPC REST API URL |
+| `UB_SN_PASSWORD` | _(none)_ | SPC password for challenge-response auth |
+
+When sync is disabled, UltraBridge runs in standalone mode with tasks stored locally in SQLite. CalDAV and the web UI work normally. MariaDB connection failure is non-fatal in this mode.
+
+When sync is enabled, tasks are bidirectionally synced between UltraBridge and the Supernote device. UltraBridge is authoritative on conflicts.
+
 ### Infrastructure (rarely need to change)
 
 | Variable | Default | Description |
