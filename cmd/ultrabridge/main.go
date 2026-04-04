@@ -22,6 +22,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/processor"
 	"github.com/sysop/ultrabridge/internal/search"
 	"github.com/sysop/ultrabridge/internal/sync"
+	"github.com/sysop/ultrabridge/internal/taskdb"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 	"github.com/sysop/ultrabridge/internal/web"
 )
@@ -74,7 +75,15 @@ func main() {
 		logger.Info("discovered user_id", "user_id", userID)
 	}
 
-	store := taskstore.New(database, userID)
+	// Open the task SQLite DB
+	taskDB, err := taskdb.Open(context.Background(), cfg.TaskDBPath)
+	if err != nil {
+		logger.Error("taskdb open failed", "err", err, "path", cfg.TaskDBPath)
+		os.Exit(1)
+	}
+	defer taskDB.Close()
+
+	store := taskdb.NewStore(taskDB)
 
 	notifier := sync.NewNotifier(cfg.SocketIOURL, logger)
 	notifier.Connect(context.Background())
