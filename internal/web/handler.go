@@ -142,22 +142,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
 
+// baseTemplateData returns shared data needed by all routes that render index.html.
+// This ensures the task list is always available regardless of which tab is active.
+func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
+	data := map[string]interface{}{}
+	tasks, err := h.store.List(ctx)
+	if err != nil {
+		h.logger.Error("failed to list tasks for template", "error", err)
+	} else {
+		data["tasks"] = tasks
+	}
+	return data
+}
+
 // handleIndex renders the task list page
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	tasks, err := h.store.List(ctx)
-	if err != nil {
-		h.logger.Error("failed to list tasks", "error", err)
-		http.Error(w, "failed to load tasks", http.StatusInternalServerError)
-		return
-	}
-
-	data := map[string]interface{}{
-		"tasks":     tasks,
-		"activeTab": "tasks",
-	}
+	data := h.baseTemplateData(ctx)
+	data["activeTab"] = "tasks"
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -361,12 +365,16 @@ func safeRelPath(relPath string) (string, bool) {
 }
 
 func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	data := h.baseTemplateData(ctx)
+	data["activeTab"] = "files"
+
 	if h.noteStore == nil {
+		data["filesError"] = "UB_NOTES_PATH is not configured"
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
-			"filesError": "UB_NOTES_PATH is not configured",
-			"activeTab":  "files",
-		}); err != nil {
+		if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
 			h.logger.Error("failed to render template", "error", err)
 		}
 		return
@@ -379,9 +387,6 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
 	files, err := h.noteStore.List(ctx, relPath)
 	if err != nil {
 		h.logger.Error("handleFiles list", "err", err)
@@ -389,35 +394,37 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	data["files"] = files
+	data["relPath"] = relPath
+	data["breadcrumbs"] = buildBreadcrumbs(relPath)
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
-		"files":       files,
-		"relPath":     relPath,
-		"breadcrumbs": buildBreadcrumbs(relPath),
-		"activeTab":   "files",
-	}); err != nil {
+	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
 		h.logger.Error("failed to render template", "error", err)
 	}
 }
 
 func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	data := h.baseTemplateData(ctx)
+	data["activeTab"] = "search"
+
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	var results []search.SearchResult
+	data["searchQuery"] = query
+
 	if h.searchIndex != nil && query != "" {
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		var err error
-		results, err = h.searchIndex.Search(ctx, search.SearchQuery{Text: query})
+		results, err := h.searchIndex.Search(ctx, search.SearchQuery{Text: query})
 		if err != nil {
 			h.logger.Error("handleSearch", "err", err)
+		} else {
+			data["searchResults"] = results
 		}
 	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.ExecuteTemplate(w, "index.html", map[string]interface{}{
-		"searchQuery":   query,
-		"searchResults": results,
-		"activeTab":     "search",
-	}); err != nil {
+	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
 		h.logger.Error("failed to render template", "error", err)
 	}
 }
