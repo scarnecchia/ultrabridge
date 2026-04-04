@@ -440,7 +440,11 @@ func TestMigration_AC4_3_LoginFailure(t *testing.T) {
 	}
 
 	// Verify DB is still empty (no partial import)
-	isEmpty, _ := testIsEmpty(db)
+	realStore := taskdb.NewStore(db)
+	isEmpty, isEmptyErr := realStore.IsEmpty(context.Background())
+	if isEmptyErr != nil {
+		t.Fatalf("IsEmpty check failed: %v", isEmptyErr)
+	}
 	if !isEmpty {
 		t.Errorf("expected DB to be empty after migration failure")
 	}
