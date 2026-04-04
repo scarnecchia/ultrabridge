@@ -181,7 +181,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, r
 
 // SPCTask is the wire format for tasks in the SPC REST API.
 type SPCTask struct {
-	ID            string `json:"id"`
+	ID            string `json:"taskId"`
 	TaskListID    string `json:"taskListId,omitempty"`
 	Title         string `json:"title"`
 	Detail        string `json:"detail,omitempty"`

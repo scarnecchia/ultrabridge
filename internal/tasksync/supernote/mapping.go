@@ -30,9 +30,13 @@ func SPCTaskToRemote(spc SPCTask) tasksync.RemoteTask {
 // RemoteToSPCTask converts an adapter-neutral RemoteTask to SPC wire format for pushing.
 // If remoteID is empty (new task), generates an MD5 ID matching Supernote device convention.
 func RemoteToSPCTask(rt tasksync.RemoteTask, remoteID string) SPCTask {
+	now := time.Now().UnixMilli()
 	if remoteID == "" {
-		now := time.Now().UnixMilli()
 		remoteID = fmt.Sprintf("%x", md5.Sum([]byte(rt.Title+fmt.Sprint(now))))
+	}
+	ct := rt.CompletedTime
+	if ct == 0 {
+		ct = now // Supernote quirk: completedTime holds creation time
 	}
 	return SPCTask{
 		ID:            remoteID,
@@ -41,7 +45,8 @@ func RemoteToSPCTask(rt tasksync.RemoteTask, remoteID string) SPCTask {
 		Status:        rt.Status,
 		Importance:    rt.Importance,
 		DueTime:       rt.DueTime,
-		CompletedTime: rt.CompletedTime,
+		CompletedTime: ct,
+		LastModified:  now,
 		Recurrence:    rt.Recurrence,
 		IsReminderOn:  rt.IsReminderOn,
 		Links:         rt.Links,
