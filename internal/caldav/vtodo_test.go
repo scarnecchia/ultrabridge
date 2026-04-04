@@ -395,7 +395,13 @@ func TestRoundTripVTODOTask(t *testing.T) {
 // Helper function to create a test calendar with VTODO properties
 func createTestCalendar(props map[string]string) *ical.Calendar {
 	cal := ical.NewCalendar()
+	cal.Props.SetText("PRODID", "-//UltraBridge//CalDAV//EN")
+	cal.Props.SetText("VERSION", "2.0")
+
 	todo := ical.NewComponent("VTODO")
+
+	// DTSTAMP is required by RFC 5545
+	todo.Props.SetDateTime("DTSTAMP", time.Now().UTC())
 
 	for key, value := range props {
 		todo.Props.SetText(key, value)
@@ -482,6 +488,8 @@ func TestBlobRoundTrip(t *testing.T) {
 
 				origXOne := origTodo.Props.Get("X-CUSTOM-ONE")
 				rtXOne := rtTodo.Props.Get("X-CUSTOM-ONE")
+				origXTwo := origTodo.Props.Get("X-CUSTOM-TWO")
+				rtXTwo := rtTodo.Props.Get("X-CUSTOM-TWO")
 
 				if origXOne == nil || rtXOne == nil {
 					t.Error("X-CUSTOM-ONE should exist in both calendars")
@@ -489,6 +497,14 @@ func TestBlobRoundTrip(t *testing.T) {
 				}
 				if origXOne.Value != rtXOne.Value {
 					t.Errorf("X-CUSTOM-ONE mismatch: got %s, want %s", rtXOne.Value, origXOne.Value)
+				}
+
+				if origXTwo == nil || rtXTwo == nil {
+					t.Error("X-CUSTOM-TWO should exist in both calendars")
+					return
+				}
+				if origXTwo.Value != rtXTwo.Value {
+					t.Errorf("X-CUSTOM-TWO mismatch: got %s, want %s", rtXTwo.Value, origXTwo.Value)
 				}
 			},
 		},
@@ -526,12 +542,79 @@ func TestBlobRoundTrip(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "VALARM component survives round-trip",
+			props: map[string]string{
+				"UID":     "test-valarm-222",
+				"SUMMARY": "Task with Alarm",
+				"STATUS":  "NEEDS-ACTION",
+			},
+			dueTimeMode: "preserve",
+			setupBlob: func(cal *ical.Calendar) {
+				// Add VALARM child component to VTODO
+				todo, _ := FindVTODO(cal)
+				valarm := ical.NewComponent("VALARM")
+				valarm.Props.SetText("TRIGGER", "-PT15M")
+				valarm.Props.SetText("ACTION", "DISPLAY")
+				valarm.Props.SetText("DESCRIPTION", "Reminder for task")
+				todo.Children = append(todo.Children, valarm)
+			},
+			verify: func(t *testing.T, original *ical.Calendar, roundTrip *ical.Calendar) {
+				origTodo, _ := FindVTODO(original)
+				rtTodo, _ := FindVTODO(roundTrip)
+
+				// Verify VTODO properties are preserved
+				if origTodo.Props.Get("SUMMARY").Value != rtTodo.Props.Get("SUMMARY").Value {
+					t.Error("SUMMARY should be preserved with VALARM")
+				}
+
+				// Verify VALARM child component exists in round-trip
+				var origAlarm, rtAlarm *ical.Component
+				for _, child := range origTodo.Children {
+					if child.Name == "VALARM" {
+						origAlarm = child
+						break
+					}
+				}
+				for _, child := range rtTodo.Children {
+					if child.Name == "VALARM" {
+						rtAlarm = child
+						break
+					}
+				}
+
+				if origAlarm == nil {
+					t.Error("Original should have VALARM component")
+				}
+				if rtAlarm == nil {
+					t.Error("Round-trip should have VALARM component")
+				}
+
+				// Verify VALARM properties survive
+				if origAlarm != nil && rtAlarm != nil {
+					if origAlarm.Props.Get("TRIGGER").Value != rtAlarm.Props.Get("TRIGGER").Value {
+						t.Error("VALARM TRIGGER should be preserved")
+					}
+					if origAlarm.Props.Get("ACTION").Value != rtAlarm.Props.Get("ACTION").Value {
+						t.Error("VALARM ACTION should be preserved")
+					}
+					if origAlarm.Props.Get("DESCRIPTION").Value != rtAlarm.Props.Get("DESCRIPTION").Value {
+						t.Error("VALARM DESCRIPTION should be preserved")
+					}
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create original calendar
 			originalCal := createTestCalendar(tt.props)
+
+			// Apply optional setupBlob modifications
+			if tt.setupBlob != nil {
+				tt.setupBlob(originalCal)
+			}
 
 			// VTODOToTask to extract and serialize
 			task, err := VTODOToTask(originalCal, tt.dueTimeMode)

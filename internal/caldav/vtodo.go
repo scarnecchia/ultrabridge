@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -131,6 +132,14 @@ func taskToVTODOFromBlob(t *taskstore.Task, dueTimeMode string) *ical.Calendar {
 		delete(todo.Props, "COMPLETED")
 	}
 
+	// Overlay Tier 2 fields (may have been updated in DB after blob storage)
+	if t.Detail.Valid && t.Detail.String != "" {
+		todo.Props.SetText("DESCRIPTION", t.Detail.String)
+	}
+	if t.Importance.Valid && t.Importance.String != "" {
+		todo.Props.SetText("PRIORITY", t.Importance.String)
+	}
+
 	return cal
 }
 
@@ -182,6 +191,8 @@ func VTODOToTask(cal *ical.Calendar, dueTimeMode string) (*taskstore.Task, error
 	var buf bytes.Buffer
 	if err := ical.NewEncoder(&buf).Encode(cal); err == nil {
 		t.ICalBlob = sql.NullString{String: buf.String(), Valid: true}
+	} else {
+		slog.Warn("failed to encode ical blob", "err", err)
 	}
 
 	return t, nil
