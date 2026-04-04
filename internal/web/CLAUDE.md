@@ -1,14 +1,14 @@
 # internal/web
 
-Last verified: 2026-03-20
+Last verified: 2026-04-04
 
 HTTP handler and HTML templates for the UltraBridge web UI.
 
 ## Handler contract
 
-`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, logger, broadcaster) *Handler`
+`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, syncProvider, logger, broadcaster) *Handler`
 
-- All six domain dependencies (`noteStore`, `searchIndex`, `proc`, `scanner`, `notifier`) are **nil-safe** — passing nil disables the corresponding feature gracefully (no crash, renders an informative state).
+- All domain dependencies (`noteStore`, `searchIndex`, `proc`, `scanner`, `notifier`, `syncProvider`) are **nil-safe** — passing nil disables the corresponding feature gracefully (no crash, renders an informative state).
 - `Handler` implements `http.Handler` via an internal `*http.ServeMux`.
 
 ## Routes
@@ -31,6 +31,8 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 | POST | `/processor/start` | `handleProcessorStart` | |
 | POST | `/processor/stop` | `handleProcessorStop` | |
 | GET | `/search` | `handleSearch` | FTS5 keyword search |
+| GET | `/sync/status` | `handleSyncStatus` | JSON: SyncStatus (adapter state, timestamps) |
+| POST | `/sync/trigger` | `handleSyncTrigger` | Trigger immediate sync cycle |
 
 ## Path traversal guard
 

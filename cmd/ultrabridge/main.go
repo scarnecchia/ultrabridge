@@ -28,6 +28,23 @@ import (
 	"github.com/sysop/ultrabridge/internal/web"
 )
 
+// syncProviderAdapter wraps tasksync.SyncEngine to satisfy web.SyncStatusProvider.
+type syncProviderAdapter struct{ engine *tasksync.SyncEngine }
+
+func (a *syncProviderAdapter) Status() web.SyncStatus {
+	s := a.engine.Status()
+	return web.SyncStatus{
+		LastSyncAt:    s.LastSyncAt,
+		NextSyncAt:    s.NextSyncAt,
+		InProgress:    s.InProgress,
+		LastError:     s.LastError,
+		AdapterID:     s.AdapterID,
+		AdapterActive: s.AdapterActive,
+	}
+}
+
+func (a *syncProviderAdapter) TriggerSync() { a.engine.TriggerSync() }
+
 func main() {
 	if len(os.Args) >= 3 && os.Args[1] == "hash-password" {
 		hash, err := bcrypt.GenerateFromPassword([]byte(os.Args[2]), 10)
@@ -202,7 +219,12 @@ func main() {
 
 	// Wire web UI if enabled
 	if cfg.WebEnabled {
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, logger, broadcaster)
+		// If sync is enabled, wrap syncEngine for web UI; otherwise nil
+		var syncProvider web.SyncStatusProvider
+		if cfg.SNSyncEnabled && syncEngine != nil {
+			syncProvider = &syncProviderAdapter{engine: syncEngine}
+		}
+		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, logger, broadcaster)
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 
