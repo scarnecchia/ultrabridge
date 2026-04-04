@@ -1,0 +1,433 @@
+package tasksync
+
+// pattern: Imperative Shell
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/sysop/ultrabridge/internal/taskstore"
+)
+
+// TaskStore is the subset of caldav.TaskStore needed by the sync engine.
+type TaskStore interface {
+	List(ctx context.Context) ([]taskstore.Task, error)
+	Get(ctx context.Context, taskID string) (*taskstore.Task, error)
+	Create(ctx context.Context, t *taskstore.Task) error
+	Update(ctx context.Context, t *taskstore.Task) error
+	Delete(ctx context.Context, taskID string) error
+}
+
+// SyncEngine manages adapter registration and reconciliation cycles.
+type SyncEngine struct {
+	store    TaskStore
+	syncMap  *SyncMap
+	logger   *slog.Logger
+	interval time.Duration
+
+	mu        sync.Mutex
+	adapter   DeviceAdapter
+	cancel    context.CancelFunc
+	done      chan struct{}
+	trigger   chan struct{}
+	status    SyncStatus
+}
+
+// NewSyncEngine creates a sync engine.
+func NewSyncEngine(store TaskStore, db *sql.DB, logger *slog.Logger, interval time.Duration) *SyncEngine {
+	return &SyncEngine{
+		store:    store,
+		syncMap:  NewSyncMap(db),
+		logger:   logger,
+		interval: interval,
+		trigger:  make(chan struct{}, 1),
+	}
+}
+
+// RegisterAdapter sets the active adapter. Must be called before Start.
+func (e *SyncEngine) RegisterAdapter(adapter DeviceAdapter) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.adapter = adapter
+	e.status.AdapterID = adapter.ID()
+	e.status.AdapterActive = true
+}
+
+// UnregisterAdapter removes the active adapter.
+func (e *SyncEngine) UnregisterAdapter() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.adapter != nil {
+		e.adapter.Stop()
+		e.adapter = nil
+	}
+	e.status.AdapterActive = false
+}
+
+// Start begins the background sync loop. Follows processor pattern.
+func (e *SyncEngine) Start(ctx context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.cancel != nil {
+		return fmt.Errorf("sync engine already running")
+	}
+	if e.adapter == nil {
+		return fmt.Errorf("no adapter registered")
+	}
+	if err := e.adapter.Start(ctx); err != nil {
+		return fmt.Errorf("adapter start: %w", err)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	e.cancel = cancel
+	e.done = make(chan struct{})
+	go e.run(ctx)
+	return nil
+}
+
+// Stop halts the sync loop and waits for completion.
+func (e *SyncEngine) Stop() error {
+	e.mu.Lock()
+	cancel := e.cancel
+	done := e.done
+	e.cancel = nil
+	e.mu.Unlock()
+	if cancel == nil {
+		return nil
+	}
+	cancel()
+	<-done
+	if e.adapter != nil {
+		e.adapter.Stop()
+	}
+	return nil
+}
+
+// TriggerSync requests an immediate sync cycle.
+func (e *SyncEngine) TriggerSync() {
+	select {
+	case e.trigger <- struct{}{}:
+	default:
+		// Already triggered, don't block
+	}
+}
+
+// Status returns the current sync status.
+func (e *SyncEngine) Status() SyncStatus {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.status
+}
+
+func (e *SyncEngine) run(ctx context.Context) {
+	defer close(e.done)
+	ticker := time.NewTicker(e.interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			e.runCycle(ctx)
+		case <-e.trigger:
+			e.runCycle(ctx)
+			ticker.Reset(e.interval)
+		}
+	}
+}
+
+func (e *SyncEngine) runCycle(ctx context.Context) {
+	e.mu.Lock()
+	adapter := e.adapter
+	e.status.InProgress = true
+	e.mu.Unlock()
+
+	if adapter == nil {
+		return
+	}
+
+	err := e.reconcile(ctx, adapter)
+
+	e.mu.Lock()
+	e.status.InProgress = false
+	now := time.Now().UnixMilli()
+	e.status.LastSyncAt = now
+	e.status.NextSyncAt = now + e.interval.Milliseconds()
+	if err != nil {
+		e.status.LastError = err.Error()
+		e.logger.Warn("sync cycle failed", "adapter", adapter.ID(), "error", err)
+	} else {
+		e.status.LastError = ""
+		e.logger.Info("sync cycle completed", "adapter", adapter.ID())
+	}
+	e.mu.Unlock()
+}
+
+func (e *SyncEngine) reconcile(ctx context.Context, adapter DeviceAdapter) error {
+	adapterID := adapter.ID()
+
+	// 1. Get sync token
+	token, err := e.syncMap.GetSyncToken(ctx, adapterID)
+	if err != nil {
+		return fmt.Errorf("get sync token: %w", err)
+	}
+
+	// 2. Pull remote tasks
+	remoteTasks, newToken, err := adapter.Pull(ctx, token)
+	if err != nil {
+		return fmt.Errorf("pull: %w", err)
+	}
+
+	// 3. Process remote changes (imports, updates, deletes)
+	for _, rt := range remoteTasks {
+		if err := e.processRemoteTask(ctx, adapterID, rt); err != nil {
+			e.logger.Warn("process remote task failed", "remote_id", rt.RemoteID, "error", err)
+		}
+	}
+
+	// 4. Detect remote hard-deletes: sync_map entries whose remote_id is
+	//    not in the Pull results represent tasks deleted on the remote side.
+	remoteIDs := make(map[string]bool, len(remoteTasks))
+	for _, rt := range remoteTasks {
+		remoteIDs[rt.RemoteID] = true
+	}
+	entries, err := e.syncMap.ListByAdapter(ctx, adapterID)
+	if err != nil {
+		return fmt.Errorf("list sync map: %w", err)
+	}
+	for _, entry := range entries {
+		if !remoteIDs[entry.RemoteID] {
+			// Remote task gone — soft-delete locally
+			if err := e.store.Delete(ctx, entry.TaskID); err != nil {
+				e.logger.Warn("soft-delete for remote hard-delete failed", "task_id", entry.TaskID, "error", err)
+			}
+			e.syncMap.DeleteByTaskID(ctx, entry.TaskID, adapterID)
+			e.logger.Info("remote hard-delete detected, soft-deleted locally", "task_id", entry.TaskID, "remote_id", entry.RemoteID)
+		}
+	}
+
+	// 5. Find local changes to push
+	changes, err := e.findLocalChanges(ctx, adapterID)
+	if err != nil {
+		return fmt.Errorf("find local changes: %w", err)
+	}
+
+	// 6. Push local changes
+	if len(changes) > 0 {
+		results, err := adapter.Push(ctx, changes)
+		if err != nil {
+			return fmt.Errorf("push: %w", err)
+		}
+		// Update sync map after successful push using server-assigned remote IDs
+		now := time.Now().UnixMilli()
+		resultByTaskID := make(map[string]PushResult, len(results))
+		for _, r := range results {
+			resultByTaskID[r.TaskID] = r
+		}
+		for _, c := range changes {
+			if c.Type == ChangeDelete {
+				e.syncMap.DeleteByTaskID(ctx, c.TaskID, adapterID)
+			} else {
+				remoteID := c.RemoteID
+				if r, ok := resultByTaskID[c.TaskID]; ok && r.RemoteID != "" {
+					remoteID = r.RemoteID
+				}
+				e.syncMap.Upsert(ctx, &SyncMapEntry{
+					TaskID:    c.TaskID,
+					AdapterID: adapterID,
+					RemoteID:  remoteID,
+					LastPushed: now,
+				})
+			}
+		}
+	}
+
+	// 7. Update sync token
+	now := time.Now().UnixMilli()
+	if err := e.syncMap.SetSyncToken(ctx, adapterID, newToken, now); err != nil {
+		return fmt.Errorf("set sync token: %w", err)
+	}
+
+	return nil
+}
+
+func (e *SyncEngine) processRemoteTask(ctx context.Context, adapterID string, rt RemoteTask) error {
+	entry, err := e.syncMap.GetByRemoteID(ctx, adapterID, rt.RemoteID)
+	if err != nil {
+		return err
+	}
+
+	if entry == nil {
+		// New remote task — import to local store
+		t := remoteToLocal(rt)
+		if err := e.store.Create(ctx, t); err != nil {
+			return fmt.Errorf("create imported task: %w", err)
+		}
+		now := time.Now().UnixMilli()
+		return e.syncMap.Upsert(ctx, &SyncMapEntry{
+			TaskID:     t.TaskID,
+			AdapterID:  adapterID,
+			RemoteID:   rt.RemoteID,
+			RemoteETag: rt.ETag,
+			LastPulled: now,
+		})
+	}
+
+	// Existing task — check if remote changed
+	if entry.RemoteETag == rt.ETag {
+		return nil // No remote change
+	}
+
+	// Remote changed — check if local also changed (conflict)
+	local, err := e.store.Get(ctx, entry.TaskID)
+	if err != nil {
+		if taskstore.IsNotFound(err) {
+			// Local was deleted — soft-delete wins (UB-wins)
+			return nil
+		}
+		return err
+	}
+
+	localModified := int64(0)
+	if local.LastModified.Valid {
+		localModified = local.LastModified.Int64
+	}
+
+	if localModified > entry.LastPulled {
+		// Both sides changed — UB wins, will be pushed back in step 6
+		e.logger.Info("conflict: UB wins", "task_id", entry.TaskID, "adapter", adapterID)
+		return nil
+	}
+
+	// Only remote changed — apply remote update
+	applyRemoteToLocal(local, rt)
+	if err := e.store.Update(ctx, local); err != nil {
+		return fmt.Errorf("update from remote: %w", err)
+	}
+	now := time.Now().UnixMilli()
+	return e.syncMap.Upsert(ctx, &SyncMapEntry{
+		TaskID:     entry.TaskID,
+		AdapterID:  adapterID,
+		RemoteID:   rt.RemoteID,
+		RemoteETag: rt.ETag,
+		LastPulled: now,
+	})
+}
+
+func (e *SyncEngine) findLocalChanges(ctx context.Context, adapterID string) ([]Change, error) {
+	tasks, err := e.store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	entries, err := e.syncMap.ListByAdapter(ctx, adapterID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build lookup: taskID -> sync map entry
+	entryByTaskID := make(map[string]*SyncMapEntry, len(entries))
+	for i := range entries {
+		entryByTaskID[entries[i].TaskID] = &entries[i]
+	}
+
+	var changes []Change
+	for i := range tasks {
+		t := &tasks[i]
+		entry := entryByTaskID[t.TaskID]
+
+		if entry == nil {
+			// Local task not yet synced — create on remote
+			changes = append(changes, Change{
+				Type:   ChangeCreate,
+				TaskID: t.TaskID,
+				Remote: localToRemote(t),
+			})
+			continue
+		}
+
+		// Check if local changed since last push
+		localModified := int64(0)
+		if t.LastModified.Valid {
+			localModified = t.LastModified.Int64
+		}
+		if localModified > entry.LastPushed {
+			changes = append(changes, Change{
+				Type:     ChangeUpdate,
+				TaskID:   t.TaskID,
+				RemoteID: entry.RemoteID,
+				Remote:   localToRemote(t),
+			})
+		}
+
+		delete(entryByTaskID, t.TaskID)
+	}
+
+	// Remaining entries are tasks deleted locally (not in List because soft-deleted)
+	for _, entry := range entryByTaskID {
+		changes = append(changes, Change{
+			Type:     ChangeDelete,
+			TaskID:   entry.TaskID,
+			RemoteID: entry.RemoteID,
+		})
+	}
+
+	return changes, nil
+}
+
+// remoteToLocal converts a RemoteTask to a new local Task.
+func remoteToLocal(rt RemoteTask) *taskstore.Task {
+	now := time.Now().UnixMilli()
+	ct := rt.CompletedTime
+	if ct == 0 {
+		ct = now
+	}
+	return &taskstore.Task{
+		TaskID:        taskstore.GenerateTaskID(rt.Title, now),
+		Title:         taskstore.SqlStr(rt.Title),
+		Detail:        taskstore.SqlStr(rt.Detail),
+		Status:        taskstore.SqlStr(rt.Status),
+		Importance:    taskstore.SqlStr(rt.Importance),
+		DueTime:       rt.DueTime,
+		CompletedTime: sql.NullInt64{Int64: ct, Valid: true},
+		LastModified:  sql.NullInt64{Int64: now, Valid: true},
+		Recurrence:    taskstore.SqlStr(rt.Recurrence),
+		IsReminderOn:  rt.IsReminderOn,
+		Links:         taskstore.SqlStr(rt.Links),
+		IsDeleted:     "N",
+	}
+}
+
+// applyRemoteToLocal updates a local task with remote field values.
+func applyRemoteToLocal(local *taskstore.Task, rt RemoteTask) {
+	local.Title = taskstore.SqlStr(rt.Title)
+	local.Detail = taskstore.SqlStr(rt.Detail)
+	local.Status = taskstore.SqlStr(rt.Status)
+	local.Importance = taskstore.SqlStr(rt.Importance)
+	local.DueTime = rt.DueTime
+	if rt.CompletedTime != 0 {
+		local.CompletedTime = sql.NullInt64{Int64: rt.CompletedTime, Valid: true}
+	}
+	local.Recurrence = taskstore.SqlStr(rt.Recurrence)
+	local.IsReminderOn = rt.IsReminderOn
+	local.Links = taskstore.SqlStr(rt.Links)
+}
+
+// localToRemote converts a local Task to a RemoteTask for pushing.
+func localToRemote(t *taskstore.Task) RemoteTask {
+	return RemoteTask{
+		Title:         taskstore.NullStr(t.Title),
+		Detail:        taskstore.NullStr(t.Detail),
+		Status:        taskstore.NullStr(t.Status),
+		Importance:    taskstore.NullStr(t.Importance),
+		DueTime:       t.DueTime,
+		CompletedTime: t.CompletedTime.Int64,
+		Recurrence:    taskstore.NullStr(t.Recurrence),
+		IsReminderOn:  t.IsReminderOn,
+		Links:         taskstore.NullStr(t.Links),
+	}
+}
