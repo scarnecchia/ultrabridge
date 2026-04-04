@@ -60,3 +60,4 @@ All POST handlers to processor methods (`Enqueue`, `Skip`, `Unskip`, `Start`, `S
 - `mockSearchIndex` — no-op SearchIndex
 - `mockProcessor` — in-memory job map; tracks running state
 - `mockScanner` — counts ScanNow calls
+- `mockSyncProvider` — configurable SyncStatus; tracks TriggerSync call count
