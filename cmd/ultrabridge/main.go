@@ -72,25 +72,39 @@ func main() {
 		SyslogAddr:    cfg.LogSyslogAddr,
 	})
 
+	// Connect to Supernote MariaDB.
+	// Required when SN sync is enabled or notes pipeline uses catalog sync.
+	// Non-fatal when sync is disabled — task store is SQLite-only.
 	database, err := db.Connect(cfg.DSN())
 	if err != nil {
-		logger.Error("database connection failed", "error", err)
-		os.Exit(1)
+		if cfg.SNSyncEnabled {
+			logger.Error("database connection failed (required for sync)", "error", err)
+			os.Exit(1)
+		}
+		logger.Warn("database connection failed, notes catalog sync disabled", "error", err)
+		// database is nil — catalog updater won't be set, which is handled at line 153
 	}
-	defer database.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	userID, err := db.ResolveUserID(ctx, database, cfg.UserID)
-	if err != nil {
-		logger.Error("user resolution failed", "error", err)
-		os.Exit(1)
+	if database != nil {
+		defer database.Close()
 	}
-	if cfg.UserID != 0 {
-		logger.Info("using configured user_id", "user_id", userID)
-	} else {
-		logger.Info("discovered user_id", "user_id", userID)
+
+	var userID int64
+	if database != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		userID, err = db.ResolveUserID(ctx, database, cfg.UserID)
+		if err != nil {
+			if cfg.SNSyncEnabled {
+				logger.Error("user resolution failed (required for sync)", "error", err)
+				os.Exit(1)
+			}
+			logger.Warn("user resolution failed", "error", err)
+		} else if cfg.UserID != 0 {
+			logger.Info("using configured user_id", "user_id", userID)
+		} else {
+			logger.Info("discovered user_id", "user_id", userID)
+		}
 	}
 
 	// Open the task SQLite DB
