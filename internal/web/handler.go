@@ -203,9 +203,14 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 // Settings keys for per-pipeline OCR prompts.
 const (
-	SettingKeySNOCRPrompt   = "sn_ocr_prompt"
-	SettingKeyBooxOCRPrompt = "boox_ocr_prompt"
+	SettingKeySNOCRPrompt     = "sn_ocr_prompt"
+	SettingKeyBooxOCRPrompt   = "boox_ocr_prompt"
+	SettingKeyBooxTodoEnabled = "boox_todo_enabled"
+	SettingKeyBooxTodoPrompt  = "boox_todo_prompt"
 )
+
+// DefaultBooxTodoPrompt is the default prompt for red ink to-do extraction.
+const DefaultBooxTodoPrompt = `Find any passages on this page written in RED ink. For each red passage, return a JSON object on its own line like: {"type":"todo","text":"the red text content"}. If there are no red passages, return nothing.`
 
 // handleSettings renders the settings page
 func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -230,6 +235,15 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 			booxPrompt = processor.DefaultOCRPrompt
 		}
 		data["BooxOCRPrompt"] = booxPrompt
+
+		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxTodoEnabled)
+		data["BooxTodoEnabled"] = todoEnabled == "true"
+
+		todoPrompt, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxTodoPrompt)
+		if todoPrompt == "" {
+			todoPrompt = DefaultBooxTodoPrompt
+		}
+		data["BooxTodoPrompt"] = todoPrompt
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -252,16 +266,26 @@ func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	ocrPrompt := r.FormValue("ocr_prompt")
 
 	if h.noteDB != nil {
-		var key string
 		switch section {
 		case "supernote":
-			key = SettingKeySNOCRPrompt
+			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeySNOCRPrompt, ocrPrompt); err != nil {
+				h.logger.Error("save setting", "key", SettingKeySNOCRPrompt, "error", err)
+			}
 		case "boox":
-			key = SettingKeyBooxOCRPrompt
-		}
-		if key != "" {
-			if err := notedb.SetSetting(ctx, h.noteDB, key, ocrPrompt); err != nil {
-				h.logger.Error("save setting", "key", key, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxOCRPrompt, ocrPrompt); err != nil {
+				h.logger.Error("save setting", "key", SettingKeyBooxOCRPrompt, "error", err)
+			}
+			// Save to-do extraction settings.
+			todoEnabled := "false"
+			if r.FormValue("todo_enabled") == "true" {
+				todoEnabled = "true"
+			}
+			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxTodoEnabled, todoEnabled); err != nil {
+				h.logger.Error("save setting", "key", SettingKeyBooxTodoEnabled, "error", err)
+			}
+			todoPrompt := r.FormValue("todo_prompt")
+			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxTodoPrompt, todoPrompt); err != nil {
+				h.logger.Error("save setting", "key", SettingKeyBooxTodoPrompt, "error", err)
 			}
 		}
 	}
