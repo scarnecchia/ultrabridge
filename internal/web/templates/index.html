@@ -540,13 +540,8 @@
 
                 <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
 
-                <div style="text-align:left; margin-bottom:0.3rem;">
-                  <label style="font-weight:bold; cursor:pointer;">
-                    <input type="checkbox" name="todo_enabled" value="true" {{if .BooxTodoEnabled}}checked{{end}} style="vertical-align:middle; margin-right:0.4rem;">
-                    <span style="vertical-align:middle;">Red Ink To-Do Extraction</span>
-                  </label>
-                </div>
-                <p class="device-info" style="margin-bottom:0.5rem;">When enabled, a second OCR pass looks for red handwriting and creates CalDAV tasks from it.</p>
+                <p style="font-weight:bold; margin:0 0 0.3rem 0;"><input type="checkbox" name="todo_enabled" value="true" {{if .BooxTodoEnabled}}checked{{end}}> Red Ink To-Do Extraction</p>
+                <p class="device-info" style="margin:0 0 0.5rem 0;">When enabled, a second OCR pass looks for red handwriting and creates CalDAV tasks from it.</p>
                 <label for="boox-todo-prompt" style="font-weight:bold; display:block; margin-bottom:0.3rem;">To-do Extraction Prompt</label>
                 <textarea id="boox-todo-prompt" name="todo_prompt" rows="4"
                   style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-family:inherit; font-size:13px;"
