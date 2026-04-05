@@ -243,10 +243,10 @@
         <h1>UltraBridge Tasks</h1>
 
         <div class="tabs">
-            <button class="tab-button {{if eq .activeTab "tasks"}}active{{end}}" onclick="switchTab('tasks')">Tasks</button>
-            <button class="tab-button {{if eq .activeTab "logs"}}active{{end}}" onclick="switchTab('logs')">Logs</button>
+            <a class="tab-button {{if eq .activeTab "tasks"}}active{{end}}" href="/" style="text-decoration:none;">Tasks</a>
             <a class="tab-button {{if eq .activeTab "files"}}active{{end}}" href="/files" style="text-decoration:none;">Files</a>
             <a class="tab-button {{if eq .activeTab "search"}}active{{end}}" href="/search" style="text-decoration:none;">Search</a>
+            <a class="tab-button {{if eq .activeTab "logs"}}active{{end}}" href="/logs" style="text-decoration:none;">Logs</a>
         </div>
 
         <!-- Tasks Tab -->
@@ -464,7 +464,7 @@
                       <span class="badge badge-sn" title="Supernote">SN</span>
                     {{end}}
                   </td>
-                  <td><a href="#" onclick="switchTab('files'); showHistory('{{.Path}}'); return false;">{{.Path}}</a></td>
+                  <td><a href="/files?detail={{.Path}}">{{.Path}}</a></td>
                   <td>{{.Page}}</td>
                   <td>{{.Snippet}}</td>
                 </tr>
@@ -619,6 +619,15 @@
                 if (active === 'files') {
                     updateProcessorStatus();
                     statusInterval = setInterval(updateProcessorStatus, 5000);
+                    // Auto-open detail modal if ?detail= parameter is present
+                    const params = new URLSearchParams(window.location.search);
+                    const detailPath = params.get('detail');
+                    if (detailPath) {
+                        showHistory(detailPath);
+                    }
+                }
+                if (active === 'logs') {
+                    connectLogs();
                 }
             }
         })();
@@ -626,35 +635,6 @@
         // Poll sync status every 5 seconds (matches Files tab pattern)
         setInterval(updateSyncStatus, 5000);
         updateSyncStatus();
-
-        function switchTab(tabName) {
-            // Hide all tabs
-            const tabs = document.querySelectorAll('.tab-content');
-            tabs.forEach(tab => tab.classList.remove('active'));
-
-            // Deactivate all buttons
-            const buttons = document.querySelectorAll('.tab-button');
-            buttons.forEach(btn => btn.classList.remove('active'));
-
-            // Show selected tab
-            document.getElementById(tabName).classList.add('active');
-
-            // Activate corresponding button
-            event.target.classList.add('active');
-
-            // Clear status polling interval
-            clearInterval(statusInterval);
-
-            // If switching to logs, start WebSocket connection
-            if (tabName === 'logs') {
-                connectLogs();
-            }
-            // If switching to files, start status polling
-            if (tabName === 'files') {
-                updateProcessorStatus();
-                statusInterval = setInterval(updateProcessorStatus, 5000);
-            }
-        }
 
         let logWebSocket = null;
 

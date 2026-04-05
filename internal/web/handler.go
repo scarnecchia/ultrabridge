@@ -139,6 +139,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /tasks", h.handleCreateTask)
 	h.mux.HandleFunc("POST /tasks/{id}/complete", h.handleCompleteTask)
 	h.mux.HandleFunc("POST /tasks/bulk", h.handleBulkAction)
+	h.mux.HandleFunc("GET /logs", h.handleLogs)
 	h.mux.HandleFunc("GET /files", h.handleFiles)
 	h.mux.HandleFunc("GET /search", h.handleSearch)
 	h.mux.HandleFunc("POST /files/queue", h.handleFilesQueue)
@@ -192,6 +193,20 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
 		h.logger.Error("failed to render template", "error", err)
 		http.Error(w, "failed to render page", http.StatusInternalServerError)
+	}
+}
+
+// handleLogs renders the logs page
+func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	data := h.baseTemplateData(ctx)
+	data["activeTab"] = "logs"
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
+		h.logger.Error("failed to render template", "error", err)
 	}
 }
 
