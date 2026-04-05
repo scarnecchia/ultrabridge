@@ -540,7 +540,11 @@
 
                 <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
 
-                <p style="font-weight:bold; margin:0 0 0.3rem 0;"><input type="checkbox" name="todo_enabled" value="true" {{if .BooxTodoEnabled}}checked{{end}}> Red Ink To-Do Extraction</p>
+                <label for="boox-todo-enabled" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Red Ink To-Do Extraction</label>
+                <select id="boox-todo-enabled" name="todo_enabled" style="padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.3rem;">
+                  <option value="false" {{if not .BooxTodoEnabled}}selected{{end}}>Disabled</option>
+                  <option value="true" {{if .BooxTodoEnabled}}selected{{end}}>Enabled</option>
+                </select>
                 <p class="device-info" style="margin:0 0 0.5rem 0;">When enabled, a second OCR pass looks for red handwriting and creates CalDAV tasks from it.</p>
                 <label for="boox-todo-prompt" style="font-weight:bold; display:block; margin-bottom:0.3rem;">To-do Extraction Prompt</label>
                 <textarea id="boox-todo-prompt" name="todo_prompt" rows="4"
