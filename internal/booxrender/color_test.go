@@ -166,17 +166,46 @@ func TestRenderPage_MarkerTransparency(t *testing.T) {
 		t.Fatalf("RenderPage failed: %v", err)
 	}
 
-	// Marker renders with AlphaMultiplier of 0.4, making it semi-transparent
-	// This visual treatment is verified through rendering without error.
-	// Visual verification that marker appears more transparent than other pens
-	// would require visual inspection or pixel-level color space analysis.
-	_ = img // verification passed by rendering without error
+	// Marker renders with AlphaMultiplier of 0.4, making it semi-transparent.
+	// Black at 40% alpha should produce darker/gray pixels.
+	// When stroked on a white background, semi-transparent black produces gray.
+	// Scan the stroke region (from 50,50 to 250,250) for darker pixels (indicating marker).
+	bounds := img.Bounds()
+	foundMarker := false
+	for y := 40; y < 260 && y < bounds.Max.Y; y++ {
+		for x := 40; x < 260 && x < bounds.Max.X; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			// Normalize to 0-255 range (RGBA() returns 0-65535)
+			r >>= 8
+			g >>= 8
+			b >>= 8
+			// Marker at 40% alpha on white produces gray ~= (255*0.6, 255*0.6, 255*0.6) ~= (153, 153, 153)
+			// We look for gray pixels (r ≈ g ≈ b) that are not white (all < 250)
+			if r < 250 && g < 250 && b < 250 {
+				// Check it's roughly gray (not colored)
+				diff := int(r) - int(g)
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff < 20 { // Allow small variation for anti-aliasing
+					foundMarker = true
+					break
+				}
+			}
+		}
+		if foundMarker {
+			break
+		}
+	}
+	if !foundMarker {
+		t.Error("expected marker stroke (gray pixels) in stroke region")
+	}
 }
 
 // TestRenderPage_AffineTransform verifies affine transforms are applied to strokes.
 // Verifies: boox-notes-pipeline.AC2.5
 func TestRenderPage_AffineTransform(t *testing.T) {
-	// Create a page with a translated shape
+	// Test 1: Pure translation
 	// MatrixValues: [scaleX, skewX, transX, skewY, scaleY, transY, persp0, persp1, persp2]
 	// Identity with translation: [1, 0, 100, 0, 1, 200, 0, 0, 1]
 	page := &booxnote.Page{
@@ -207,6 +236,39 @@ func TestRenderPage_AffineTransform(t *testing.T) {
 	// Expected region: (10+100, 10+200) to (50+100, 50+200) = (110, 210) to (150, 250)
 	if !hasNonWhitePixels(img, 100, 200, 160, 260) {
 		t.Error("expected strokes in translated region")
+	}
+
+	// Test 2: Combined scale (2x) + translate
+	// MatrixValues: [scaleX=2, skewX=0, transX=50, skewY=0, scaleY=2, transY=50, ...]
+	// This scales points by 2x and then translates by (50, 50)
+	page2 := &booxnote.Page{
+		PageID: "scaletest",
+		Width:  500,
+		Height: 500,
+		Shapes: []*booxnote.Shape{
+			{
+				UniqueID:     "scaled",
+				ShapeType:    2, // pencil
+				Color:        int32(-16777216),
+				Thickness:    2,
+				MatrixValues: []float64{2, 0, 50, 0, 2, 50, 0, 0, 1},
+				Points: []booxnote.TinyPoint{
+					{X: 10, Y: 10, Pressure: 2000},
+					{X: 30, Y: 30, Pressure: 2000},
+				},
+			},
+		},
+	}
+
+	img2, err := RenderPage(page2)
+	if err != nil {
+		t.Fatalf("RenderPage failed: %v", err)
+	}
+
+	// With scale 2x, points at (10,10)-(30,30) become (20,20)-(60,60) after scale,
+	// then with translation (+50,+50) they become (70,70)-(110,110)
+	if !hasNonWhitePixels(img2, 60, 60, 120, 120) {
+		t.Error("expected strokes in scaled+translated region")
 	}
 }
 

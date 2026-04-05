@@ -1,10 +1,11 @@
 module github.com/sysop/ultrabridge
 
-go 1.25.0
+go 1.24.7
 
 require (
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-webdav v0.7.0
+	github.com/fogleman/gg v1.2.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gorilla/websocket v1.5.3
@@ -18,7 +19,6 @@ require (
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/fogleman/gg v1.3.0 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
@@ -26,7 +26,7 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/teambition/rrule-go v1.8.2 // indirect
-	golang.org/x/image v0.38.0 // indirect
+	golang.org/x/image v0.17.0 // indirect
 	golang.org/x/sys v0.21.0 // indirect
 	modernc.org/gc/v3 v3.0.0 // indirect
 	modernc.org/libc v1.54.5 // indirect

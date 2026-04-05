@@ -3,6 +3,7 @@ package booxrender
 import (
 	"image"
 	"testing"
+	"time"
 
 	"github.com/sysop/ultrabridge/internal/booxnote"
 )
@@ -140,7 +141,10 @@ func TestRenderPage_ManyShapes(t *testing.T) {
 		Shapes: shapes,
 	}
 
+	start := time.Now()
 	img, err := RenderPage(page)
+	duration := time.Since(start)
+
 	if err != nil {
 		t.Fatalf("RenderPage failed: %v", err)
 	}
@@ -154,11 +158,36 @@ func TestRenderPage_ManyShapes(t *testing.T) {
 	if bounds.Dx() != 1860 || bounds.Dy() != 2480 {
 		t.Errorf("expected 1860x2480, got %dx%d", bounds.Dx(), bounds.Dy())
 	}
+
+	// Verify rendering completes in reasonable time (< 10 seconds)
+	if duration > 10*time.Second {
+		t.Errorf("rendering %d shapes took %v, expected < 10s", numShapes, duration)
+	}
 }
 
 // hasNonWhitePixels checks if there are any non-white pixels in the given region.
+// Optimized to use direct Pix slice access when image is *image.RGBA.
 func hasNonWhitePixels(img image.Image, x0, y0, x1, y1 int) bool {
 	bounds := img.Bounds()
+
+	// Fast path: use direct Pix slice access for RGBA images
+	if rgba, ok := img.(*image.RGBA); ok {
+		for y := y0; y < y1 && y < bounds.Max.Y; y++ {
+			for x := x0; x < x1 && x < bounds.Max.X; x++ {
+				idx := rgba.PixOffset(x, y)
+				r := rgba.Pix[idx]
+				g := rgba.Pix[idx+1]
+				b := rgba.Pix[idx+2]
+				// White is (255, 255, 255), but accept near-white
+				if r < 250 || g < 250 || b < 250 {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	// Slow path: use generic At() interface for other image types
 	for y := y0; y < y1 && y < bounds.Max.Y; y++ {
 		for x := x0; x < x1 && x < bounds.Max.X; x++ {
 			r, g, b, a := img.At(x, y).RGBA()
