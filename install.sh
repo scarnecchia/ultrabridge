@@ -27,7 +27,8 @@ Options:
                     environment variables instead of prompting.
                     Required vars: UB_USERNAME, UB_PASSWORD
                     Optional: UB_PORT, UB_COLLECTION_NAME, UB_NOTES_PATH,
-                    UB_SN_SYNC_ENABLED, UB_SN_ACCOUNT, UB_SN_PASSWORD, etc.
+                    UB_SN_SYNC_ENABLED, UB_SN_ACCOUNT, UB_SN_PASSWORD,
+                    UB_BOOX_ENABLED, UB_BOOX_NOTES_PATH, etc.
   -h, --help      Show this help message
 
 Prerequisites:
@@ -280,8 +281,8 @@ echo "When enabled, UltraBridge runs a WebDAV server at /webdav/ that"
 echo "accepts .note file uploads, renders pages, and indexes text."
 echo ""
 
-UB_BOOX_ENABLED="false"
-UB_BOOX_NOTES_PATH=""
+UB_BOOX_ENABLED="${UB_BOOX_ENABLED:-false}"
+UB_BOOX_NOTES_PATH="${UB_BOOX_NOTES_PATH:-}"
 
 if [[ "$UNATTENDED" == true ]]; then
     enable_boox=$([[ "${UB_BOOX_ENABLED:-false}" == "true" ]] && echo "y" || echo "n")

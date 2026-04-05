@@ -55,9 +55,11 @@ COMPOSE="sudo docker compose -f $SUPERNOTE_DIR/docker-compose.yml -f $SUPERNOTE_
 
 if [[ "$FRESH" == true ]]; then
     DATA_DIR="$SUPERNOTE_DIR/ultrabridge-data"
+    BOOX_PATH=$(grep "^UB_BOOX_NOTES_PATH=" "$SUPERNOTE_DIR/.ultrabridge.env" 2>/dev/null | cut -d= -f2)
     warn "Fresh install requested. This will DELETE:"
     echo "  - Notes database: $DATA_DIR/ultrabridge.db"
     echo "  - Task database:  $DATA_DIR/ultrabridge-tasks.db"
+    [[ -n "$BOOX_PATH" ]] && echo "  - Boox cache:     $BOOX_PATH/.cache"
     echo
     if [[ "$YES" != true ]]; then
         printf '  Type "yes" to confirm: '
@@ -72,8 +74,6 @@ if [[ "$FRESH" == true ]]; then
     rm -f "$DATA_DIR/ultrabridge-tasks.db" "$DATA_DIR/ultrabridge-tasks.db-wal" "$DATA_DIR/ultrabridge-tasks.db-shm"
     ok "Databases cleared"
 
-    # Read Boox path from existing config
-    BOOX_PATH=$(grep "^UB_BOOX_NOTES_PATH=" "$SUPERNOTE_DIR/.ultrabridge.env" 2>/dev/null | cut -d= -f2)
     if [[ -n "$BOOX_PATH" ]]; then
         info "Clearing Boox rendered cache..."
         rm -rf "${BOOX_PATH}/.cache"
@@ -84,10 +84,12 @@ if [[ "$FRESH" == true ]]; then
     fi
 elif [[ "$NUKE" == true ]]; then
     DATA_DIR="$SUPERNOTE_DIR/ultrabridge-data"
+    BOOX_PATH=$(grep "^UB_BOOX_NOTES_PATH=" "$SUPERNOTE_DIR/.ultrabridge.env" 2>/dev/null | cut -d= -f2)
     warn "NUKE requested. This will DELETE EVERYTHING:"
     echo "  - Notes database: $DATA_DIR/ultrabridge.db"
     echo "  - Task database:  $DATA_DIR/ultrabridge-tasks.db"
     echo "  - All data:       $DATA_DIR/"
+    [[ -n "$BOOX_PATH" ]] && echo "  - Boox data:      $BOOX_PATH/.cache + .versions/"
     echo
     if [[ "$YES" != true ]]; then
         printf '  Type "nuke" to confirm: '
