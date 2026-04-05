@@ -17,8 +17,9 @@ type Config struct {
 	DBPassword string
 
 	// Auth
-	Username     string
-	PasswordHash string
+	Username         string
+	PasswordHash     string
+	PasswordHashPath string
 
 	// CalDAV
 	CalDAVCollectionName string
@@ -85,6 +86,7 @@ func Load() (*Config, error) {
 		SocketIOURL:          envOrDefault("UB_SOCKETIO_URL", "ws://supernote-service:8080/socket.io/"),
 		Username:             os.Getenv("UB_USERNAME"),
 		PasswordHash:         os.Getenv("UB_PASSWORD_HASH"),
+		PasswordHashPath:     envOrDefault("UB_PASSWORD_HASH_PATH", "/run/secrets/ub_password_hash"),
 		DBEnvPath:            envOrDefault("UB_SUPERNOTE_DBENV_PATH", "/run/secrets/dbenv"),
 		UserID:               int64(envIntOrDefault("UB_USER_ID", 0)),
 	}
@@ -105,6 +107,15 @@ func Load() (*Config, error) {
 	cfg.OCRConcurrency = envIntOrDefault("UB_OCR_CONCURRENCY", 1)
 	cfg.OCRMaxFileMB   = envIntOrDefault("UB_OCR_MAX_FILE_MB", 0)
 	cfg.OCRFormat      = envOrDefault("UB_OCR_FORMAT", "anthropic")
+
+	// Load password hash from secrets file if not set via env var.
+	// This avoids the $$ escaping issue with Docker Compose env_file.
+	if cfg.PasswordHash == "" {
+		if data, err := os.ReadFile(cfg.PasswordHashPath); err == nil {
+			cfg.PasswordHash = strings.TrimSpace(string(data))
+		}
+		// Not an error if file is missing — PasswordHash may be set via env
+	}
 
 	if err := cfg.loadDBEnv(); err != nil {
 		return nil, fmt.Errorf("loading .dbenv: %w", err)
