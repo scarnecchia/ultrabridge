@@ -208,6 +208,9 @@ func (e *SyncEngine) reconcile(ctx context.Context, adapter DeviceAdapter) error
 		if entry.RemoteID == "" {
 			continue // Never pushed — skip hard-delete detection
 		}
+		if entry.LastPulled == 0 {
+			continue // Never seen in a Pull — task may not have propagated yet
+		}
 		if !remoteIDs[entry.RemoteID] {
 			// Remote task gone — soft-delete locally
 			if err := e.store.Delete(ctx, entry.TaskID); err != nil {
