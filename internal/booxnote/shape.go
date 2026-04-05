@@ -82,7 +82,8 @@ func parseShapes(entries map[string]*zip.File, noteID, pageID string) ([]*Shape,
 			RevisionID: sp.GetRevisionId(),
 		}
 
-		// Parse bounding rect JSON.
+		// Parse bounding rect JSON. Best-effort: shapes from real devices may have
+		// quirky JSON that shouldn't stop parsing entirely. Silently skip on error.
 		if br := sp.GetBoundingRect(); br != "" {
 			var r Rect
 			if err := json.Unmarshal([]byte(br), &r); err == nil {
@@ -90,7 +91,8 @@ func parseShapes(entries map[string]*zip.File, noteID, pageID string) ([]*Shape,
 			}
 		}
 
-		// Parse matrix values JSON.
+		// Parse matrix values JSON. Best-effort: shapes from real devices may have
+		// quirky JSON that shouldn't stop parsing entirely. Silently skip on error.
 		if mv := sp.GetMatrixValues(); mv != "" {
 			var vals []float64
 			if err := json.Unmarshal([]byte(mv), &vals); err == nil {

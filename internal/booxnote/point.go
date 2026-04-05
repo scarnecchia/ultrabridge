@@ -14,13 +14,6 @@ const (
 	pointAttrSize   = 4
 )
 
-// xrefEntry maps a shape UUID to its point data block within a point file.
-type xrefEntry struct {
-	ShapeID string
-	Offset  int32
-	Length  int32
-}
-
 // parsePointFile reads a V1 point file and returns a map of shapeID → []TinyPoint.
 func parsePointFile(data []byte) (map[string][]TinyPoint, error) {
 	if len(data) < pointHeaderSize+4 {
