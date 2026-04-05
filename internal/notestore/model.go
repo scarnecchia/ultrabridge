@@ -34,12 +34,13 @@ func ClassifyFileType(ext string) FileType {
 // JobStatus is the latest processing status from the jobs table,
 // empty string if no job exists.
 type NoteFile struct {
-	Path      string
-	RelPath   string
-	Name      string
-	IsDir     bool
-	FileType  FileType
-	SizeBytes int64
-	MTime     time.Time
-	JobStatus string
+	Path       string
+	RelPath    string
+	Name       string
+	IsDir      bool
+	FileType   FileType
+	SizeBytes  int64
+	MTime      time.Time
+	JobStatus  string
+	DeviceInfo string // e.g. "Palma2_Pro_C / Personal" for Boox, "Supernote" for SN
 }

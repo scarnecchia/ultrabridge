@@ -236,6 +236,10 @@
             margin-left: 6px;
             vertical-align: middle;
         }
+        .device-info {
+            font-size: 11px;
+            color: #6b7280;
+        }
     </style>
 </head>
 <body>
@@ -395,6 +399,7 @@
                     {{else}}
                       <span class="badge badge-sn" title="Supernote">SN</span>
                     {{end}}
+                    {{if .DeviceInfo}}<br><span class="device-info">{{.DeviceInfo}}</span>{{end}}
                   </td>
                   <td>{{.FileType}}</td>
                   <td>{{.SizeBytes}}</td>

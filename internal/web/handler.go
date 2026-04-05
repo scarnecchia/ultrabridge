@@ -434,6 +434,13 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set DeviceInfo for Supernote files.
+	for i := range files {
+		if !files[i].IsDir && files[i].DeviceInfo == "" {
+			files[i].DeviceInfo = "Supernote"
+		}
+	}
+
 	// Merge Boox notes into file list (only at root level).
 	if h.booxStore != nil && relPath == "" {
 		booxNotes, err := h.booxStore.ListNotes(ctx)
@@ -449,15 +456,20 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 			if info, err := os.Stat(bn.Path); err == nil {
 				sizeBytes = info.Size()
 			}
+			deviceInfo := bn.DeviceModel
+			if bn.Folder != "" {
+				deviceInfo += " / " + bn.Folder
+			}
 			files = append(files, notestore.NoteFile{
-				Path:      bn.Path,
-				RelPath:   bn.Title, // display title instead of path
-				Name:      bn.Title,
-				IsDir:     false,
-				FileType:  notestore.FileTypeNote,
-				SizeBytes: sizeBytes,
-				MTime:     mtime,
-				JobStatus: bn.JobStatus,
+				Path:       bn.Path,
+				RelPath:    bn.Title, // display title instead of path
+				Name:       bn.Title,
+				IsDir:      false,
+				FileType:   notestore.FileTypeNote,
+				SizeBytes:  sizeBytes,
+				MTime:      mtime,
+				JobStatus:  bn.JobStatus,
+				DeviceInfo: deviceInfo,
 			})
 		}
 	}
