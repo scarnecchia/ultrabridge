@@ -391,7 +391,7 @@
                 {{range .files}}
                 <tr>
                   <td>
-                    {{if eq (fileTypeStr .FileType) "note"}}📝{{else if eq (fileTypeStr .FileType) "pdf"}}📄{{else if eq (fileTypeStr .FileType) "epub"}}📚{{else}}📎{{end}}
+                    {{if .IsDir}}📁{{else if eq (fileTypeStr .FileType) "note"}}📝{{else if eq (fileTypeStr .FileType) "pdf"}}📄{{else if eq (fileTypeStr .FileType) "epub"}}📚{{else}}📎{{end}}
                     {{if .IsDir}}<a href="/files?path={{.RelPath}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}
                     {{$src := noteSource .Path}}
                     {{if eq $src "Boox"}}
