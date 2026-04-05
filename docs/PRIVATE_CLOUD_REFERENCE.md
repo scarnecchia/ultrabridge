@@ -17,6 +17,8 @@ A technical reference for reimplementing the Supernote Private Cloud sync servic
 
 Images are from Alibaba Cloud registry. All containers run via Docker Compose.
 
+**Port note:** Port 8080 (nginx) is the correct entry point for all API calls from other containers on the Docker network. Port 19071 (Java backend) is internal and not directly accessible for all endpoints. The default Docker Compose does not expose any ports to the host; use docker-compose.override.yml to map e.g. `19072:8080` for host access.
+
 ### Request Routing
 
 ```
@@ -189,7 +191,7 @@ Minimal tables with just a `user_id` column. Likely used for batch operations.
 
 ### `u_user` — User Account
 
-Main user table for device users (not admins).
+Main user table for device users (not admins). The `password` field stores an **unsalted MD5 hash** of the plaintext password (32-char hex string). The `user_name` and `email` fields both contain the account email address.
 
 ### `u_login_record` — Login History
 
@@ -306,8 +308,10 @@ AUTO_INCREMENT values from the schema (exported from Ratta's production system):
 All login flows use a challenge-response password hashing scheme:
 
 1. Client requests a `randomCode` and `timestamp` from the server
-2. Client hashes the password with SHA-256 mixed with the `randomCode` and `timestamp`
+2. Client computes `SHA256(MD5(password) + randomCode)` — the server stores passwords as MD5 hashes in `u_user.password`, and the challenge-response hashes the stored MD5 with the random code
 3. The resulting hash is sent as a 64-character hex string (different each attempt)
+
+**Verified formula:** `SHA256(MD5(plaintext_password) + randomCode)`. The `timestamp` is sent in the login body but is NOT part of the hash computation.
 
 ### Device Login Flow (5-Step)
 
@@ -344,6 +348,7 @@ Key observations:
 - `loginMethod: "2"` = device login (vs `"1"` for web)
 - `bindEquipment` registers the device with its name, storage capacity (in KB), and the **default directory structure** the server should create.
 - The `label` array defines the top-level directories: `DOCUMENT/Document`, `NOTE/Note`, `NOTE/MyStyle`, `EXPORT`, `SCREENSHOT`, `INBOX`
+- **WARNING:** Using `login/equipment` from a third-party client **displaces the real device's session**, forcing it to re-login. For task-only sync, use `login/new` (web UI login) instead — it creates a parallel session without affecting the device.
 - Error code `E0019` = wrong password, `counts` tracks failed attempts (lockout at 6 per `MAX_ERR_COUNTS`)
 
 ### Web UI Login Flow (2-Step)
@@ -788,6 +793,8 @@ Returns all tasks with a `nextSyncToken` for incremental sync.
 ```
 
 The `taskId` is an **MD5 hash** generated client-side (not a snowflake ID).
+
+**Required fields for partner app/device visibility:** The `lastModified` and sort fields (`sort`, `sortCompleted`, `sortTime`, `planerSort`, `planerSortTime`) must be populated. Tasks created without `lastModified` (value 0) or without sort fields (NULL) are stored in the database but **invisible to the partner app and device** — they appear to be filtered out client-side. The JSON field name is `taskId` (not `id`) in all task wire formats (create, update, list).
 
 **Step 4: Bulk update existing tasks** — `PUT /api/file/schedule/task/list`
 ```json
