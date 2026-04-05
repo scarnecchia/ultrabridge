@@ -240,6 +240,17 @@
             font-size: 11px;
             color: #6b7280;
         }
+        .settings-inactive {
+            opacity: 0.5;
+        }
+        .settings-inactive h2 {
+            color: #9ca3af;
+        }
+        .settings-inactive-note {
+            font-size: 12px;
+            color: #9ca3af;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -251,6 +262,7 @@
             <a class="tab-button {{if eq .activeTab "files"}}active{{end}}" href="/files" style="text-decoration:none;">Files</a>
             <a class="tab-button {{if eq .activeTab "search"}}active{{end}}" href="/search" style="text-decoration:none;">Search</a>
             <a class="tab-button {{if eq .activeTab "logs"}}active{{end}}" href="/logs" style="text-decoration:none;">Logs</a>
+            <a class="tab-button {{if eq .activeTab "settings"}}active{{end}}" href="/settings" style="text-decoration:none;">Settings</a>
         </div>
 
         <!-- Tasks Tab -->
@@ -488,6 +500,33 @@
             <p style="padding:1rem; color:#666;">No results for "{{.searchQuery}}".</p>
           {{end}}
         </div>
+
+        <!-- Settings Tab -->
+        <div id="settings" class="tab-content">
+          <div class="card">
+            <h2>General</h2>
+            <p style="color:#666;">Placeholder.</p>
+          </div>
+
+          <div class="card{{if not .SNPipelineActive}} settings-inactive{{end}}">
+            <h2>Supernote</h2>
+            {{if not .SNPipelineActive}}
+              <p class="settings-inactive-note">Supernote notes pipeline is not configured. Set UB_NOTES_PATH to enable.</p>
+            {{else}}
+              <p style="color:#666;">Placeholder.</p>
+            {{end}}
+          </div>
+
+          <div class="card{{if not .BooxActive}} settings-inactive{{end}}">
+            <h2>Boox</h2>
+            {{if not .BooxActive}}
+              <p class="settings-inactive-note">Boox integration is not enabled. Set UB_BOOX_ENABLED=true to enable.</p>
+            {{else}}
+              <p style="color:#666;">Placeholder.</p>
+            {{end}}
+          </div>
+        </div>
+
     </div>
 
     <!-- Note details modal -->
