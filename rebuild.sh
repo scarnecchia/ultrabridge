@@ -71,6 +71,17 @@ if [[ "$FRESH" == true ]]; then
     rm -f "$DATA_DIR/ultrabridge.db" "$DATA_DIR/ultrabridge.db-wal" "$DATA_DIR/ultrabridge.db-shm"
     rm -f "$DATA_DIR/ultrabridge-tasks.db" "$DATA_DIR/ultrabridge-tasks.db-wal" "$DATA_DIR/ultrabridge-tasks.db-shm"
     ok "Databases cleared"
+
+    # Read Boox path from existing config
+    BOOX_PATH=$(grep "^UB_BOOX_NOTES_PATH=" "$SUPERNOTE_DIR/.ultrabridge.env" 2>/dev/null | cut -d= -f2)
+    if [[ -n "$BOOX_PATH" ]]; then
+        info "Clearing Boox rendered cache..."
+        rm -rf "${BOOX_PATH}/.cache"
+        # boox_jobs table will be cleared along with the SQLite database
+        # (the DB file is already deleted above)
+        # .versions/ is preserved intentionally
+        ok "Boox cache cleared"
+    fi
 elif [[ "$NUKE" == true ]]; then
     DATA_DIR="$SUPERNOTE_DIR/ultrabridge-data"
     warn "NUKE requested. This will DELETE EVERYTHING:"
@@ -90,6 +101,15 @@ elif [[ "$NUKE" == true ]]; then
     rm -rf "$DATA_DIR"
     mkdir -p "$DATA_DIR"
     ok "All data deleted"
+
+    # Read Boox path from existing config and clear all Boox data
+    BOOX_PATH=$(grep "^UB_BOOX_NOTES_PATH=" "$SUPERNOTE_DIR/.ultrabridge.env" 2>/dev/null | cut -d= -f2)
+    if [[ -n "$BOOX_PATH" ]]; then
+        info "Clearing all Boox data including versions..."
+        rm -rf "${BOOX_PATH}/.cache"
+        rm -rf "${BOOX_PATH}/.versions"
+        ok "Boox data cleared"
+    fi
 fi
 
 info "Building and restarting UltraBridge..."
