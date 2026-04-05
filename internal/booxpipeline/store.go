@@ -4,17 +4,26 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
 // Store manages Boox notes and jobs in SQLite.
 type Store struct {
-	db *sql.DB
+	db        *sql.DB
+	notesRoot string
 }
 
 // NewStore creates a new Boox pipeline store.
 func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
+}
+
+// NewStoreWithRoot creates a new Boox pipeline store with a notes root for version discovery.
+func NewStoreWithRoot(db *sql.DB, notesRoot string) *Store {
+	return &Store{db: db, notesRoot: notesRoot}
 }
 
 // BooxNote represents a Boox note in the database.
@@ -46,6 +55,27 @@ type BooxJob struct {
 	StartedAt    int64
 	FinishedAt   int64
 	RequeueAfter *int64
+}
+
+// BooxNoteEntry is a summary for web display.
+type BooxNoteEntry struct {
+	Path        string
+	Title       string
+	DeviceModel string
+	NoteType    string
+	Folder      string
+	PageCount   int
+	Version     int
+	NoteID      string // top-level directory name from ZIP, used for cache paths
+	UpdatedAt   int64  // unix millis
+	JobStatus   string // latest job status
+}
+
+// BooxVersion represents an archived version of a Boox note.
+type BooxVersion struct {
+	Path      string
+	Timestamp string // formatted timestamp from filename
+	SizeBytes int64
 }
 
 // UpsertNote inserts or updates a boox_notes row, incrementing version on conflict.
@@ -163,6 +193,22 @@ func (s *Store) GetNote(ctx context.Context, path string) (*BooxNote, error) {
 	return &note, nil
 }
 
+// GetNoteID returns the note_id for a given note path, used for cache path resolution.
+func (s *Store) GetNoteID(ctx context.Context, path string) (string, error) {
+	var noteID string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT note_id FROM boox_notes WHERE path = ?`,
+		path,
+	).Scan(&noteID)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("note not found")
+	}
+	if err != nil {
+		return "", fmt.Errorf("get note id: %w", err)
+	}
+	return noteID, nil
+}
+
 // ReclaimStuckJobs reclaims jobs that have been in_progress for longer than the timeout.
 // Sets status back to pending and increments the attempts counter.
 func (s *Store) ReclaimStuckJobs(ctx context.Context, timeout time.Duration) error {
@@ -176,4 +222,77 @@ func (s *Store) ReclaimStuckJobs(ctx context.Context, timeout time.Duration) err
 		return fmt.Errorf("reclaim stuck jobs: %w", err)
 	}
 	return nil
+}
+
+// ListNotes returns all Boox notes with their latest job status.
+func (s *Store) ListNotes(ctx context.Context) ([]BooxNoteEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT bn.path, bn.title, bn.device_model, bn.note_type, bn.folder,
+		       bn.page_count, bn.version, bn.note_id, bn.updated_at,
+		       COALESCE((SELECT status FROM boox_jobs WHERE note_path = bn.path
+		                ORDER BY id DESC LIMIT 1), '') as job_status
+		FROM boox_notes bn
+		ORDER BY bn.updated_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list notes query: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []BooxNoteEntry
+	for rows.Next() {
+		var e BooxNoteEntry
+		if err := rows.Scan(&e.Path, &e.Title, &e.DeviceModel, &e.NoteType, &e.Folder,
+			&e.PageCount, &e.Version, &e.NoteID, &e.UpdatedAt, &e.JobStatus); err != nil {
+			return nil, fmt.Errorf("scan note row: %w", err)
+		}
+		entries = append(entries, e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list notes iteration: %w", err)
+	}
+	return entries, nil
+}
+
+// GetVersions returns archived versions of a Boox note.
+// Version files live at {notesRoot}/.versions/{relDir}/{nameNoExt}/{timestamp}.note
+func (s *Store) GetVersions(ctx context.Context, path string) ([]BooxVersion, error) {
+	// Derive the version directory from the note path.
+	relPath, err := filepath.Rel(s.notesRoot, path)
+	if err != nil {
+		return nil, fmt.Errorf("compute rel path: %w", err)
+	}
+
+	relDir := filepath.Dir(relPath)
+	baseName := filepath.Base(relPath)
+	nameNoExt := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+	versionDir := filepath.Join(s.notesRoot, ".versions", relDir, nameNoExt)
+
+	entries, err := os.ReadDir(versionDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // no versions yet
+		}
+		return nil, fmt.Errorf("read version dir: %w", err)
+	}
+
+	var versions []BooxVersion
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		// Parse timestamp from filename: e.g., "20260404T120000.note"
+		name := e.Name()
+		ts := strings.TrimSuffix(name, filepath.Ext(name))
+		versions = append(versions, BooxVersion{
+			Path:      filepath.Join(versionDir, name),
+			Timestamp: ts,
+			SizeBytes: info.Size(),
+		})
+	}
+	return versions, nil
 }

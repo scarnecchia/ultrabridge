@@ -20,12 +20,17 @@ type Processor struct {
 // New creates a new Boox processor.
 func New(db *sql.DB, notesPath string, cfg WorkerConfig, logger *slog.Logger) *Processor {
 	return &Processor{
-		store:     NewStore(db),
+		store:     NewStoreWithRoot(db, notesPath),
 		cfg:       cfg,
 		notesPath: notesPath,
 		logger:    logger,
 		done:      make(chan struct{}),
 	}
+}
+
+// Store returns the underlying Boox store for web access.
+func (p *Processor) Store() *Store {
+	return p.store
 }
 
 // Enqueue adds a .note file to the processing queue.

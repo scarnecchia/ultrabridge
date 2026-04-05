@@ -21,6 +21,7 @@ import (
 	gosnote "github.com/jdkruzr/go-sn/note"
 
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
+	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/processor"
@@ -53,18 +54,29 @@ type SyncStatusProvider interface {
 	TriggerSync()
 }
 
+// BooxStore provides Boox note data to the web handler.
+// Types are defined in booxpipeline package to avoid circular imports.
+type BooxStore interface {
+	ListNotes(ctx context.Context) ([]booxpipeline.BooxNoteEntry, error)
+	GetVersions(ctx context.Context, path string) ([]booxpipeline.BooxVersion, error)
+	GetNoteID(ctx context.Context, path string) (string, error) // returns note_id for cache path resolution
+}
+
 type Handler struct {
-	store        ubcaldav.TaskStore
-	notifier     ubcaldav.SyncNotifier
-	noteStore    notestore.NoteStore
-	searchIndex  search.SearchIndex
-	proc         processor.Processor
-	scanner      FileScanner
-	syncProvider SyncStatusProvider
-	tmpl         *template.Template
-	mux          *http.ServeMux
-	logger       *slog.Logger
-	broadcaster  *logging.LogBroadcaster
+	store           ubcaldav.TaskStore
+	notifier        ubcaldav.SyncNotifier
+	noteStore       notestore.NoteStore
+	searchIndex     search.SearchIndex
+	proc            processor.Processor
+	scanner         FileScanner
+	syncProvider    SyncStatusProvider
+	booxStore       BooxStore
+	booxNotesPath   string
+	booxCachePath   string
+	tmpl            *template.Template
+	mux             *http.ServeMux
+	logger          *slog.Logger
+	broadcaster     *logging.LogBroadcaster
 }
 
 // formatDueTime converts a millisecond Unix timestamp to a formatted date string.
@@ -86,18 +98,21 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxNotesPath string, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
-		store:        store,
-		notifier:     notifier,
-		noteStore:    noteStore,
-		searchIndex:  searchIndex,
-		proc:         proc,
-		scanner:      scanner,
-		syncProvider: syncProvider,
-		logger:       logger,
-		mux:          http.NewServeMux(),
-		broadcaster:  broadcaster,
+		store:         store,
+		notifier:      notifier,
+		noteStore:     noteStore,
+		searchIndex:   searchIndex,
+		proc:          proc,
+		scanner:       scanner,
+		syncProvider:  syncProvider,
+		booxStore:     booxStore,
+		booxNotesPath: booxNotesPath,
+		booxCachePath: filepath.Join(booxNotesPath, ".cache"),
+		logger:        logger,
+		mux:           http.NewServeMux(),
+		broadcaster:   broadcaster,
 	}
 
 	// Parse the embedded templates with custom function map
@@ -392,6 +407,24 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("handleFiles list", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+
+	// Merge Boox notes into file list (only at root level).
+	if h.booxStore != nil && relPath == "" {
+		booxNotes, err := h.booxStore.ListNotes(ctx)
+		if err != nil {
+			h.logger.Error("list boox notes", "error", err)
+		}
+		for _, bn := range booxNotes {
+			files = append(files, notestore.NoteFile{
+				Path:      bn.Path,
+				RelPath:   bn.Title, // display title instead of path
+				Name:      bn.Title,
+				IsDir:     false,
+				FileType:  notestore.FileTypeNote,
+				JobStatus: bn.JobStatus,
+			})
+		}
 	}
 
 	data["files"] = files
