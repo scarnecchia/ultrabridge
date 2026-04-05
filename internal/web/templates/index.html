@@ -225,6 +225,17 @@
             margin-left: 6px;
             vertical-align: middle;
         }
+        .badge-sn {
+            display: inline-block;
+            padding: 1px 5px;
+            font-size: 10px;
+            font-weight: bold;
+            color: #fff;
+            background-color: #3b82f6;
+            border-radius: 3px;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
     </style>
 </head>
 <body>
@@ -439,10 +450,18 @@
           </form>
           {{if .searchResults}}
             <table class="task-table">
-              <thead><tr><th>File</th><th>Page</th><th>Match</th></tr></thead>
+              <thead><tr><th>Source</th><th>File</th><th>Page</th><th>Match</th></tr></thead>
               <tbody>
                 {{range .searchResults}}
                 <tr>
+                  <td>
+                    {{$src := noteSource .Path}}
+                    {{if eq $src "Boox"}}
+                      <span class="badge badge-boox">B</span>
+                    {{else}}
+                      <span class="badge badge-sn">SN</span>
+                    {{end}}
+                  </td>
                   <td><a href="/files?path={{.Path}}">{{.Path}}</a></td>
                   <td>{{.Page}}</td>
                   <td>{{.Snippet}}</td>
