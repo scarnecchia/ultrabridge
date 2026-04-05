@@ -13,6 +13,7 @@ import (
 
 	"github.com/sysop/ultrabridge/internal/auth"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
+	ubwebdav "github.com/sysop/ultrabridge/internal/webdav"
 	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
 	"github.com/sysop/ultrabridge/internal/logging"
@@ -230,6 +231,16 @@ func main() {
 			http.Redirect(w, r, "/caldav/", http.StatusMovedPermanently)
 		})).ServeHTTP(w, r)
 	})
+
+	// Wire Boox WebDAV server if enabled
+	if cfg.BooxEnabled && cfg.BooxNotesPath != "" {
+		davHandler := ubwebdav.NewHandler(cfg.BooxNotesPath, func(absPath string) {
+			logger.Info("boox note uploaded", "path", absPath)
+			// Job enqueuing will be wired in Phase 4
+		})
+		mux.Handle("/webdav/", authMW.Wrap(davHandler))
+		logger.Info("boox webdav enabled", "path", cfg.BooxNotesPath)
+	}
 
 	// Wire web UI if enabled
 	if cfg.WebEnabled {
