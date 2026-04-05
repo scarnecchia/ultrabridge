@@ -6,9 +6,11 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 
 ## Handler contract
 
-`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, syncProvider, logger, broadcaster) *Handler`
+`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, syncProvider, booxStore, booxNotesPath, logger, broadcaster) *Handler`
 
 - All domain dependencies (`noteStore`, `searchIndex`, `proc`, `scanner`, `notifier`, `syncProvider`) are **nil-safe** — passing nil disables the corresponding feature gracefully (no crash, renders an informative state).
+- `booxStore` is **nil-safe** — when nil, Boox-specific routes return empty lists and the UI shows only Supernote notes.
+- `booxNotesPath` is a string path (may be empty if Boox is disabled).
 - `Handler` implements `http.Handler` via an internal `*http.ServeMux`.
 
 ## Routes
@@ -27,6 +29,8 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 | POST | `/files/force` | `handleFilesForce` | Unskip + enqueue (overrides size_limit) |
 | GET | `/files/status` | `handleFilesStatus` | JSON: ProcessorStatus |
 | GET | `/files/history` | `handleFilesHistory` | JSON: Job record for a path |
+| GET | `/files/boox/render` | `handleBooxRender` | JPEG page image for Boox note |
+| GET | `/files/boox/versions` | `handleBooxVersions` | JSON: []BooxVersion for archived versions |
 | POST | `/files/scan` | `handleFilesScan` | Trigger immediate filesystem scan |
 | POST | `/processor/start` | `handleProcessorStart` | |
 | POST | `/processor/stop` | `handleProcessorStop` | |
@@ -44,6 +48,13 @@ Custom `template.FuncMap` functions registered in `NewHandler`:
 - `formatDueTime(t time.Time) string`
 - `formatCreated(t time.Time) string`
 - `fileTypeStr(ft notestore.FileType) string` — converts FileType to its string value for template conditionals
+- `noteSource(path string) string` — returns "Boox" if path starts with booxNotesPath, else "Supernote"
+
+## Template data
+
+Shared data in `baseTemplateData`:
+- `tasks` — list of tasks for the task list page
+- `BooxNotesPath` — the Boox notes root directory path (may be empty if disabled); used by JavaScript to detect Boox notes
 
 ## Error handling pattern
 
@@ -61,3 +72,4 @@ All POST handlers to processor methods (`Enqueue`, `Skip`, `Unskip`, `Start`, `S
 - `mockProcessor` — in-memory job map; tracks running state
 - `mockScanner` — counts ScanNow calls
 - `mockSyncProvider` — configurable SyncStatus; tracks TriggerSync call count
+- `mockBooxStore` — implements BooxStore interface; returns configurable notes and versions; nil-safe (can be passed as nil to test non-Boox configuration)

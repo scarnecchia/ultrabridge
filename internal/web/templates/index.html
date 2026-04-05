@@ -474,6 +474,9 @@
     </div>
 
     <script>
+        // Global Boox notes path for client-side source detection
+        var booxNotesPath = "{{.BooxNotesPath}}";
+
         // Hide completed tasks by default on page load
         document.addEventListener('DOMContentLoaded', function() {
             toggleCompleted();
@@ -705,8 +708,8 @@
                 return;
               }
 
-              // Detect source from first page (all pages have same source)
-              var isBoox = pages.length > 0 && pages[0].Source === 'api';
+              // Detect source from path: if path starts with booxNotesPath, it's a Boox note
+              var isBoox = booxNotesPath && path.startsWith(booxNotesPath);
 
               pagesDiv.innerHTML = '<h4 style="margin:0 0 0.5rem;">Pages</h4>';
               pages.forEach(function(pg) {

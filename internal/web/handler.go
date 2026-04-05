@@ -20,8 +20,8 @@ import (
 
 	gosnote "github.com/jdkruzr/go-sn/note"
 
-	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/booxpipeline"
+	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/processor"
@@ -175,6 +175,7 @@ func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
 	} else {
 		data["tasks"] = tasks
 	}
+	data["BooxNotesPath"] = h.booxNotesPath
 	return data
 }
 
@@ -742,14 +743,18 @@ func (h *Handler) handleBooxRender(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleBooxVersions(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if h.booxStore == nil {
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode([]interface{}{})
 		return
 	}
 	versions, err := h.booxStore.GetVersions(r.Context(), path)
 	if err != nil {
 		h.logger.Error("boox versions: get versions failed", "path", path, "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+	if versions == nil {
+		versions = []booxpipeline.BooxVersion{}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(versions)
