@@ -13,9 +13,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/sysop/ultrabridge/internal/auth"
+	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	ubwebdav "github.com/sysop/ultrabridge/internal/webdav"
-	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
 	"github.com/sysop/ultrabridge/internal/logging"

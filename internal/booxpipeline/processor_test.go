@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sysop/ultrabridge/internal/booxnote"
+	pb "github.com/sysop/ultrabridge/internal/booxnote/proto"
+	"github.com/sysop/ultrabridge/internal/booxnote/testutil"
 	"github.com/sysop/ultrabridge/internal/notedb"
 	"github.com/sysop/ultrabridge/internal/processor"
 )
@@ -70,6 +74,8 @@ func mockOCRServer(t *testing.T, responseText string) *httptest.Server {
 
 // openTestProcessor creates a Processor with an in-memory DB and temp directory.
 // It does NOT start the processor - the caller should do that if needed.
+// NOTE: The caller is responsible for calling proc.Stop() and db.Close()
+// to ensure proper cleanup.
 func openTestProcessor(t *testing.T, indexer *mockIndexer, contentDeleter *mockContentDeleter, ocr *processor.OCRClient) (*Processor, *sql.DB) {
 	t.Helper()
 
@@ -77,7 +83,6 @@ func openTestProcessor(t *testing.T, indexer *mockIndexer, contentDeleter *mockC
 	if err != nil {
 		t.Fatalf("notedb.Open: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
 
 	notesPath := t.TempDir()
 	cachePath := filepath.Join(notesPath, ".cache")
@@ -92,20 +97,69 @@ func openTestProcessor(t *testing.T, indexer *mockIndexer, contentDeleter *mockC
 	}
 
 	proc := New(db, notesPath, cfg, logger)
-	t.Cleanup(func() {
-		// Only stop if it was started
-		if proc.cancel != nil {
-			proc.Stop()
-		}
-	})
 	return proc, db
+}
+
+// waitForJobStatus polls the database until a job reaches the desired status, with a timeout.
+// Returns true if the status was reached, false if timeout occurs.
+func waitForJobStatus(t *testing.T, db *sql.DB, notePath string, desiredStatus string, timeout time.Duration) bool {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for {
+		var jobStatus string
+		err := db.QueryRowContext(context.Background(),
+			"SELECT status FROM boox_jobs WHERE note_path = ? ORDER BY id DESC LIMIT 1", notePath).Scan(&jobStatus)
+
+		if err == sql.ErrNoRows {
+			// Job not yet in database, keep polling
+		} else if err != nil {
+			t.Logf("query job status: %v", err)
+		} else if jobStatus == desiredStatus {
+			return true
+		}
+
+		if time.Now().After(deadline) {
+			return false
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // boox-notes-pipeline.AC4.2: TestProcessor_EndToEnd verifies parse → render → OCR → index pipeline
 func TestProcessor_EndToEnd(t *testing.T) {
-	// Create a synthetic .note file
-	noteID := "test-note-123"
-	notePath := filepath.Join(t.TempDir(), noteID+".note")
+	tmpDir := t.TempDir()
+
+	// Create a synthetic .note file with one page
+	noteID := "test-note-e2e"
+	opts := testutil.TestNoteOpts{
+		NoteID: noteID,
+		Title:  "End to End Test",
+		Pages: []*testutil.TestPage{
+			{
+				PageID: "page-1",
+				Width:  1404,
+				Height: 1872,
+				Shapes: []*pb.ShapeInfoProto{
+					{
+						UniqueId:   "shape-1",
+						ShapeType:  0,
+						Color:      -16777216, // 0xFF000000 as signed int32
+						Thickness:  1.0,
+						Zorder:     0,
+					},
+				},
+				Points: map[string][]booxnote.TinyPoint{
+					"shape-1": {
+						{X: 100.0, Y: 100.0, Size: 1, Pressure: 100, Time: 0},
+						{X: 101.0, Y: 101.0, Size: 1, Pressure: 100, Time: 1},
+					},
+				},
+			},
+		},
+	}
+	notePath := testutil.BuildTestNoteFile(t, tmpDir, opts)
 
 	// Create mock indexer and deleter
 	indexer := &mockIndexer{}
@@ -118,61 +172,71 @@ func TestProcessor_EndToEnd(t *testing.T) {
 	// Create OCR client pointing to mock server
 	ocrClient := processor.NewOCRClient(ocrServer.URL, "test-key", "test-model", "anthropic")
 
-	// Open processor (not started yet)
-	proc, _ := openTestProcessor(t, indexer, deleter, ocrClient)
-
-	// Start processor
+	// Open processor and start it
+	proc, db := openTestProcessor(t, indexer, deleter, ocrClient)
+	defer db.Close()
+	defer proc.Stop()
 	if err := proc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Create a minimal .note file
-	noteDir := filepath.Dir(notePath)
-	os.MkdirAll(noteDir, 0755)
-
-	// Write a minimal valid .note ZIP
-	zdata := []byte{
-		0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00,
-		0x00, 0x00, 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00,
-		0x74, 0x65, 0x73, 0x74, 0x2d, 0x6e, 0x6f, 0x74, 0x65, 0x2d,
-		0x31, 0x32, 0x33, 0x2f, 0x6e, 0x6f, 0x74, 0x65, 0x2f, 0x70,
-		0x62, 0x2f, 0x6e, 0x6f, 0x74, 0x65, 0x5f, 0x69, 0x6e, 0x66,
-		0x6f, 0x08, 0x00, 0x54, 0x65, 0x73, 0x74, 0x50, 0x4B, 0x05,
-		0x06, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x3c, 0x00,
-		0x00, 0x00, 0x46, 0x00, 0x00, 0x00, 0x00, 0x00,
-	}
-
-	if err := os.WriteFile(notePath, zdata, 0644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
 	// Enqueue the job
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := proc.Enqueue(ctx, notePath); err != nil {
+	if err := proc.Enqueue(context.Background(), notePath); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
-	// Wait for processing with timeout
-	time.Sleep(1 * time.Second)
-
-	// Verify job was processed
-	var jobStatus string
-	err := proc.store.db.QueryRowContext(ctx,
-		"SELECT status FROM boox_jobs WHERE note_path = ?", notePath).Scan(&jobStatus)
-	if err != nil {
-		t.Logf("query job: %v (this is expected if job processing failed)", err)
+	// Wait for job to complete (OCR may take a few seconds)
+	if !waitForJobStatus(t, db, notePath, "done", 10*time.Second) {
+		t.Fatalf("job did not complete in time")
 	}
 
-	// At this point we've verified the enqueue mechanism works
-	// Full end-to-end requires valid .note file format which is complex
-	// The key test is that Enqueue works and creates job/note rows
+	// Stop the processor to clean up gracefully
+	proc.Stop()
+
+	// Verify cached JPEGs exist
+	cacheDir := filepath.Join(proc.cfg.CachePath, noteID)
+	pageJPEG := filepath.Join(cacheDir, "page_0.jpg")
+	if _, err := os.Stat(pageJPEG); err != nil {
+		t.Errorf("cached JPEG not found: %v", err)
+	}
+
+	// Verify mockIndexer received IndexPage calls
+	if len(indexer.calls) == 0 {
+		t.Errorf("indexer received no IndexPage calls, want at least 1")
+	}
 }
 
 // boox-notes-pipeline.AC4.3: TestProcessor_IndexesContent verifies content is indexed correctly
 func TestProcessor_IndexesContent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	noteID := "test-note-index"
+	opts := testutil.TestNoteOpts{
+		NoteID: noteID,
+		Title:  "Index Test",
+		Pages: []*testutil.TestPage{
+			{
+				PageID: "page-1",
+				Width:  1404,
+				Height: 1872,
+				Shapes: []*pb.ShapeInfoProto{
+					{
+						UniqueId:   "shape-1",
+						ShapeType:  0,
+						Color:      -16777216,
+						Thickness:  1.0,
+					},
+				},
+				Points: map[string][]booxnote.TinyPoint{
+					"shape-1": {
+						{X: 50.0, Y: 50.0, Size: 1, Pressure: 100, Time: 0},
+					},
+				},
+			},
+		},
+	}
+	notePath := testutil.BuildTestNoteFile(t, tmpDir, opts)
+
 	indexer := &mockIndexer{}
 	deleter := &mockContentDeleter{}
 
@@ -181,70 +245,152 @@ func TestProcessor_IndexesContent(t *testing.T) {
 	defer ocrServer.Close()
 	ocrClient := processor.NewOCRClient(ocrServer.URL, "test-key", "test-model", "anthropic")
 
-	proc, _ := openTestProcessor(t, indexer, deleter, ocrClient)
+	proc, db := openTestProcessor(t, indexer, deleter, ocrClient)
+	defer db.Close()
+	defer proc.Stop()
 	if err := proc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Create a test note and enqueue
-	notePath := filepath.Join(t.TempDir(), "test.note")
-	os.WriteFile(notePath, []byte("dummy"), 0644)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := proc.Enqueue(ctx, notePath); err != nil {
+	if err := proc.Enqueue(context.Background(), notePath); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	// Wait for job completion (OCR may take a few seconds)
+	if !waitForJobStatus(t, db, notePath, "done", 10*time.Second) {
+		t.Fatalf("job did not complete in time")
+	}
 
-	// The indexer would have been called during executeJob
-	// For real tests, this requires valid .note files
-	// This test verifies the wiring is correct
+	// Verify indexer received calls with correct parameters
+	if len(indexer.calls) == 0 {
+		t.Errorf("indexer calls = 0, want > 0")
+	}
+	for _, call := range indexer.calls {
+		if call.path != notePath {
+			t.Errorf("indexer call path = %q, want %q", call.path, notePath)
+		}
+		if call.source != "api" {
+			t.Errorf("indexer call source = %q, want api", call.source)
+		}
+		if call.bodyText == "" {
+			t.Errorf("indexer call bodyText is empty, want non-empty")
+		}
+	}
 }
 
 // boox-notes-pipeline.AC4.4: TestProcessor_ReprocessOnReupload verifies re-uploading triggers re-processing
 func TestProcessor_ReprocessOnReupload(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	noteID := "test-note-reprocess"
+	opts := testutil.TestNoteOpts{
+		NoteID: noteID,
+		Title:  "Reprocess Test",
+		Pages: []*testutil.TestPage{
+			{
+				PageID: "page-1",
+				Width:  1404,
+				Height: 1872,
+				Shapes: []*pb.ShapeInfoProto{
+					{
+						UniqueId:   "shape-1",
+						ShapeType:  0,
+						Thickness:  1.0,
+					},
+				},
+				Points: map[string][]booxnote.TinyPoint{
+					"shape-1": {
+						{X: 100.0, Y: 100.0, Size: 1, Pressure: 100, Time: 0},
+					},
+				},
+			},
+		},
+	}
+	notePath := testutil.BuildTestNoteFile(t, tmpDir, opts)
+
 	indexer := &mockIndexer{}
 	deleter := &mockContentDeleter{}
 
-	proc, _ := openTestProcessor(t, indexer, deleter, nil)
+	// Create mock OCR
+	ocrServer := mockOCRServer(t, "OCR text")
+	defer ocrServer.Close()
+	ocrClient := processor.NewOCRClient(ocrServer.URL, "test-key", "test-model", "anthropic")
+
+	proc, db := openTestProcessor(t, indexer, deleter, ocrClient)
+	defer db.Close()
+	defer proc.Stop()
 	if err := proc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	notePath := filepath.Join(t.TempDir(), "test.note")
-	os.WriteFile(notePath, []byte("content"), 0644)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	// First enqueue
-	if err := proc.Enqueue(ctx, notePath); err != nil {
+	if err := proc.Enqueue(context.Background(), notePath); err != nil {
 		t.Fatalf("first Enqueue: %v", err)
 	}
 
-	// Second enqueue (re-upload)
-	if err := proc.Enqueue(ctx, notePath); err != nil {
+	// Wait for first processing (OCR may take a few seconds)
+	if !waitForJobStatus(t, db, notePath, "done", 10*time.Second) {
+		t.Fatalf("first job did not complete in time")
+	}
+
+	// Second enqueue (re-upload) - clears old cache and re-indexes
+	if err := proc.Enqueue(context.Background(), notePath); err != nil {
 		t.Fatalf("second Enqueue: %v", err)
 	}
 
-	// Verify both jobs are in the queue
-	var count int
-	err := proc.store.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM boox_jobs WHERE note_path = ?", notePath).Scan(&count)
-	if err != nil {
-		t.Fatalf("query job count: %v", err)
+	// Wait for second processing (OCR may take a few seconds)
+	if !waitForJobStatus(t, db, notePath, "done", 10*time.Second) {
+		t.Fatalf("second job did not complete in time")
 	}
 
-	if count != 2 {
-		t.Errorf("job count = %d, want 2", count)
+	// Verify cache was cleared and re-created
+	cacheDir := filepath.Join(proc.cfg.CachePath, noteID)
+	pageJPEG := filepath.Join(cacheDir, "page_0.jpg")
+	if _, err := os.Stat(pageJPEG); err != nil {
+		t.Errorf("cached JPEG not found after re-process: %v", err)
+	}
+
+	// Verify ContentDeleter was called to clear old content
+	if len(deleter.deletedPaths) == 0 {
+		t.Errorf("content deleter not called, want >= 1 call")
+	}
+
+	// Verify new indexer calls were made
+	if len(indexer.calls) == 0 {
+		t.Errorf("no new indexer calls after re-upload, want > 0")
 	}
 }
 
 // boox-notes-pipeline.AC4.5: TestProcessor_OCRFailure verifies failed OCR marks job as failed
 func TestProcessor_OCRFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	noteID := "test-note-ocr-fail"
+	opts := testutil.TestNoteOpts{
+		NoteID: noteID,
+		Title:  "OCR Fail Test",
+		Pages: []*testutil.TestPage{
+			{
+				PageID: "page-1",
+				Width:  1404,
+				Height: 1872,
+				Shapes: []*pb.ShapeInfoProto{
+					{
+						UniqueId:   "shape-1",
+						ShapeType:  0,
+						Thickness:  1.0,
+					},
+				},
+				Points: map[string][]booxnote.TinyPoint{
+					"shape-1": {
+						{X: 100.0, Y: 100.0, Size: 1, Pressure: 100, Time: 0},
+					},
+				},
+			},
+		},
+	}
+	notePath := testutil.BuildTestNoteFile(t, tmpDir, opts)
+
 	indexer := &mockIndexer{}
 	deleter := &mockContentDeleter{}
 
@@ -257,100 +403,147 @@ func TestProcessor_OCRFailure(t *testing.T) {
 
 	ocrClient := processor.NewOCRClient(ocrServer.URL, "test-key", "test-model", "anthropic")
 
-	proc, _ := openTestProcessor(t, indexer, deleter, ocrClient)
+	proc, db := openTestProcessor(t, indexer, deleter, ocrClient)
+	defer db.Close()
+	defer proc.Stop()
 	if err := proc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	notePath := filepath.Join(t.TempDir(), "test.note")
-	os.WriteFile(notePath, []byte("dummy"), 0644)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := proc.Enqueue(ctx, notePath); err != nil {
+	if err := proc.Enqueue(context.Background(), notePath); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	// Wait for job to fail (OCR error should cause failure, may take a few seconds)
+	if !waitForJobStatus(t, db, notePath, "failed", 10*time.Second) {
+		t.Fatalf("job did not fail as expected")
+	}
 
-	// With OCR failure, the job would be marked failed
-	// This test verifies the processor continues running despite OCR errors
+	// Verify job has an error message
+	var lastError string
+	err := db.QueryRowContext(context.Background(),
+		"SELECT last_error FROM boox_jobs WHERE note_path = ?", notePath).Scan(&lastError)
+	if err != nil {
+		t.Fatalf("query last_error: %v", err)
+	}
+	if lastError == "" {
+		t.Errorf("last_error is empty, want error message")
+	}
 }
 
 // boox-notes-pipeline.AC4.6: TestProcessor_CorruptNote verifies corrupt files are handled gracefully
 func TestProcessor_CorruptNote(t *testing.T) {
+	tmpDir := t.TempDir()
+
 	indexer := &mockIndexer{}
 	deleter := &mockContentDeleter{}
 
-	proc, _ := openTestProcessor(t, indexer, deleter, nil)
+	proc, db := openTestProcessor(t, indexer, deleter, nil)
+	defer db.Close()
+	defer proc.Stop()
 	if err := proc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
 	// Create a corrupt .note file (not a valid ZIP)
-	notePath := filepath.Join(t.TempDir(), "corrupt.note")
+	notePath := filepath.Join(tmpDir, "corrupt.note")
 	if err := os.WriteFile(notePath, []byte("this is not a valid zip"), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := proc.Enqueue(ctx, notePath); err != nil {
+	if err := proc.Enqueue(context.Background(), notePath); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
-
-	// Verify job is marked as failed
-	var jobStatus, lastError string
-	err := proc.store.db.QueryRowContext(ctx,
-		"SELECT status, last_error FROM boox_jobs WHERE note_path = ?", notePath).Scan(&jobStatus, &lastError)
-	if err == nil {
-		// If a job was processed, it should be marked failed
-		if jobStatus != "failed" && jobStatus != "pending" {
-			t.Errorf("job status = %q, want failed or pending", jobStatus)
-		}
-		if jobStatus == "failed" && lastError == "" {
-			t.Error("expected error message for failed job")
-		}
+	// Wait for job to be marked as failed
+	if !waitForJobStatus(t, db, notePath, "failed", 10*time.Second) {
+		t.Fatalf("job did not fail as expected for corrupt file")
 	}
-	// If query returns no rows, it means the job hasn't been processed yet (timing issue)
-	// That's okay for this test - we're just verifying the processor handles errors gracefully
+
+	// Verify job has an error message
+	var lastError string
+	err := db.QueryRowContext(context.Background(),
+		"SELECT last_error FROM boox_jobs WHERE note_path = ?", notePath).Scan(&lastError)
+	if err != nil {
+		t.Fatalf("query last_error: %v", err)
+	}
+	if lastError == "" {
+		t.Errorf("last_error is empty, want error message for corrupt file")
+	}
 }
 
 // boox-notes-pipeline.AC4.7: TestProcessor_ManyPages verifies processing of notes with many pages
 func TestProcessor_ManyPages(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	noteID := "test-note-many-pages"
+
+	// Create 12 pages
+	pages := make([]*testutil.TestPage, 12)
+	for i := 0; i < 12; i++ {
+		pageID := fmt.Sprintf("page-%d", i)
+		pages[i] = &testutil.TestPage{
+			PageID: pageID,
+			Width:  1404,
+			Height: 1872,
+			Shapes: []*pb.ShapeInfoProto{
+				{
+					UniqueId:   fmt.Sprintf("shape-%d", i),
+					ShapeType:  0,
+					Thickness:  1.0,
+				},
+			},
+			Points: map[string][]booxnote.TinyPoint{
+				fmt.Sprintf("shape-%d", i): {
+					{X: 100.0, Y: 100.0, Size: 1, Pressure: 100, Time: 0},
+				},
+			},
+		}
+	}
+
+	opts := testutil.TestNoteOpts{
+		NoteID: noteID,
+		Title:  "Many Pages Test",
+		Pages:  pages,
+	}
+	notePath := testutil.BuildTestNoteFile(t, tmpDir, opts)
+
 	indexer := &mockIndexer{}
 	deleter := &mockContentDeleter{}
 
-	proc, _ := openTestProcessor(t, indexer, deleter, nil)
+	// Create mock OCR
+	ocrServer := mockOCRServer(t, "OCR text")
+	defer ocrServer.Close()
+	ocrClient := processor.NewOCRClient(ocrServer.URL, "test-key", "test-model", "anthropic")
+
+	proc, db := openTestProcessor(t, indexer, deleter, ocrClient)
+	defer db.Close()
+	defer proc.Stop()
 	if err := proc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Create a dummy note that represents a 12-page note
-	notePath := filepath.Join(t.TempDir(), "many-pages.note")
-	os.WriteFile(notePath, []byte("dummy"), 0644)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := proc.Enqueue(ctx, notePath); err != nil {
+	if err := proc.Enqueue(context.Background(), notePath); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
-	// Verify the job is queued (real processing would require valid .note file)
-	var id int64
-	err := proc.store.db.QueryRowContext(ctx,
-		"SELECT id FROM boox_jobs WHERE note_path = ?", notePath).Scan(&id)
-	if err != nil {
-		t.Fatalf("query job: %v", err)
+	// Wait for job to complete (12 pages may take longer, 15s per page)
+	if !waitForJobStatus(t, db, notePath, "done", 20*time.Second) {
+		t.Fatalf("job with 12 pages did not complete in time")
 	}
 
-	if id == 0 {
-		t.Error("expected job to be enqueued")
+	// Verify all 12 pages were rendered and indexed
+	if len(indexer.calls) < 12 {
+		t.Errorf("indexer calls = %d, want 12", len(indexer.calls))
+	}
+
+	// Verify all cached JPEGs exist
+	cacheDir := filepath.Join(proc.cfg.CachePath, noteID)
+	for i := 0; i < 12; i++ {
+		pageJPEG := filepath.Join(cacheDir, fmt.Sprintf("page_%d.jpg", i))
+		if _, err := os.Stat(pageJPEG); err != nil {
+			t.Errorf("cached JPEG for page %d not found: %v", i, err)
+		}
 	}
 }
 

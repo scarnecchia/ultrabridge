@@ -74,20 +74,21 @@ func (s *Store) EnqueueJob(ctx context.Context, notePath string) error {
 	// First ensure a boox_notes row exists (INSERT OR IGNORE with minimal defaults).
 	// This satisfies the FK constraint for the WebDAV callback before the worker
 	// has parsed the note metadata.
+	now := time.Now().UnixMilli()
 	_, err := s.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO boox_notes (path, note_id, title, device_model, note_type, folder, page_count, file_hash, version, created_at, updated_at)
 		VALUES (?, '', '', '', '', '', 0, '', 1, ?, ?)`,
-		notePath, time.Now().UnixMilli(), time.Now().UnixMilli(),
+		notePath, now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("ensure note row: %w", err)
 	}
 
-	// Now insert the job.
+	// Now insert the job. Use Unix() (seconds) for consistency with ClaimNextJob and ReclaimStuckJobs.
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO boox_jobs (note_path, status, queued_at)
 		VALUES (?, 'pending', ?)`,
-		notePath, time.Now().UnixMilli(),
+		notePath, time.Now().Unix(),
 	)
 	if err != nil {
 		return fmt.Errorf("enqueue job: %w", err)
@@ -119,7 +120,7 @@ func (s *Store) ClaimNextJob(ctx context.Context) (*BooxJob, error) {
 
 // CompleteJob marks a job as done with optional OCR source and API model.
 func (s *Store) CompleteJob(ctx context.Context, jobID int64, ocrSource, apiModel string) error {
-	now := time.Now().UnixMilli()
+	now := time.Now().Unix()
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE boox_jobs SET status = 'done', ocr_source = ?, api_model = ?, finished_at = ?
 		WHERE id = ?`,
@@ -133,7 +134,7 @@ func (s *Store) CompleteJob(ctx context.Context, jobID int64, ocrSource, apiMode
 
 // FailJob marks a job as failed with an error message.
 func (s *Store) FailJob(ctx context.Context, jobID int64, errMsg string) error {
-	now := time.Now().UnixMilli()
+	now := time.Now().Unix()
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE boox_jobs SET status = 'failed', last_error = ?, finished_at = ?
 		WHERE id = ?`,

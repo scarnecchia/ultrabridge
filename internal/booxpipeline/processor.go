@@ -80,7 +80,9 @@ func (p *Processor) processJob(ctx context.Context, job *BooxJob) {
 
 	if err := p.executeJob(ctx, job); err != nil {
 		p.logger.Error("boox job failed", "job_id", job.ID, "error", err)
-		p.store.FailJob(ctx, job.ID, err.Error())
+		if err := p.store.FailJob(ctx, job.ID, err.Error()); err != nil {
+			p.logger.Error("fail boox job", "job_id", job.ID, "error", err)
+		}
 		return
 	}
 
@@ -88,7 +90,9 @@ func (p *Processor) processJob(ctx context.Context, job *BooxJob) {
 	if p.cfg.OCR == nil {
 		ocrSource = ""
 	}
-	p.store.CompleteJob(ctx, job.ID, ocrSource, "")
+	if err := p.store.CompleteJob(ctx, job.ID, ocrSource, ""); err != nil {
+		p.logger.Error("complete boox job", "job_id", job.ID, "error", err)
+	}
 	p.logger.Info("boox note processed", "path", job.NotePath, "job_id", job.ID)
 }
 

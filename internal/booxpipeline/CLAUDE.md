@@ -34,7 +34,7 @@ for .note files uploaded via WebDAV, triggered by file uploads.
 - Worker polls every 5s when queue is empty; watchdog runs every 1 minute
 
 ## Gotchas
-- `Indexer` and `ContentDeleter` interfaces defined in processor package (to avoid circular imports)
+- `Indexer` interface defined in processor package; `ContentDeleter` defined locally in worker.go (to avoid circular imports)
 - Rendered pages cached to disk at `{CachePath}/{noteID}/page_{N}.jpg` (not in SQLite)
 - boox_notes.updated_at uses millisecond UTC unix timestamps (consistent with notedb convention)
 - boox_jobs timestamps use seconds (queued_at, started_at, finished_at for compatibility with watchdog timeout)
