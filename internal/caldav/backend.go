@@ -2,6 +2,7 @@ package caldav
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path"
 	"strings"
@@ -162,8 +163,23 @@ func (b *Backend) PutCalendarObject(ctx context.Context, urlPath string, cal *ic
 			return nil, err
 		}
 	} else {
-		// Update existing
+		// Update existing — carry over fields the VTODO doesn't set
 		task.TaskID = existing.TaskID
+		if !task.CompletedTime.Valid {
+			task.CompletedTime = existing.CompletedTime
+		}
+		if task.IsReminderOn == "" {
+			task.IsReminderOn = existing.IsReminderOn
+		}
+		if task.IsDeleted == "" {
+			task.IsDeleted = existing.IsDeleted
+		}
+		if task.Recurrence == (sql.NullString{}) && existing.Recurrence.Valid {
+			task.Recurrence = existing.Recurrence
+		}
+		if task.Links == (sql.NullString{}) && existing.Links.Valid {
+			task.Links = existing.Links
+		}
 		if err := b.store.Update(ctx, task); err != nil {
 			return nil, err
 		}
