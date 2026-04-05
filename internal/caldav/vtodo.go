@@ -187,6 +187,21 @@ func VTODOToTask(cal *ical.Calendar, dueTimeMode string) (*taskstore.Task, error
 		t.Importance = taskstore.SqlStr(prio.Value)
 	}
 
+	// Handle completion time mapping (Supernote quirk: last_modified = actual completion time)
+	if taskstore.NullStr(t.Status) == "completed" {
+		now := time.Now().UnixMilli()
+		if completed := todo.Props.Get("COMPLETED"); completed != nil {
+			ct, err := completed.DateTime(time.UTC)
+			if err == nil {
+				t.LastModified = sql.NullInt64{Int64: taskstore.TimeToMs(ct), Valid: true}
+			} else {
+				t.LastModified = sql.NullInt64{Int64: now, Valid: true}
+			}
+		} else {
+			t.LastModified = sql.NullInt64{Int64: now, Valid: true}
+		}
+	}
+
 	// Store full VCALENDAR as blob for round-trip fidelity
 	var buf bytes.Buffer
 	if err := ical.NewEncoder(&buf).Encode(cal); err == nil {
