@@ -608,6 +608,8 @@
             .catch(() => { btn.disabled = false; });
         }
 
+        let logWebSocket = null;
+
         // On page load, activate the tab the server designated (for /files and /search routes).
         (function() {
             const active = "{{.activeTab}}";
@@ -635,8 +637,6 @@
         // Poll sync status every 5 seconds (matches Files tab pattern)
         setInterval(updateSyncStatus, 5000);
         updateSyncStatus();
-
-        let logWebSocket = null;
 
         function connectLogs() {
             if (logWebSocket !== null && logWebSocket.readyState === WebSocket.OPEN) {
