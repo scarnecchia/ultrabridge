@@ -426,12 +426,22 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 			h.logger.Error("list boox notes", "error", err)
 		}
 		for _, bn := range booxNotes {
+			var mtime time.Time
+			if bn.UpdatedAt > 0 {
+				mtime = time.UnixMilli(bn.UpdatedAt)
+			}
+			var sizeBytes int64
+			if info, err := os.Stat(bn.Path); err == nil {
+				sizeBytes = info.Size()
+			}
 			files = append(files, notestore.NoteFile{
 				Path:      bn.Path,
 				RelPath:   bn.Title, // display title instead of path
 				Name:      bn.Title,
 				IsDir:     false,
 				FileType:  notestore.FileTypeNote,
+				SizeBytes: sizeBytes,
+				MTime:     mtime,
 				JobStatus: bn.JobStatus,
 			})
 		}
