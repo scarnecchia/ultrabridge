@@ -60,6 +60,7 @@ type BooxStore interface {
 	ListNotes(ctx context.Context) ([]booxpipeline.BooxNoteEntry, error)
 	GetVersions(ctx context.Context, path string) ([]booxpipeline.BooxVersion, error)
 	GetNoteID(ctx context.Context, path string) (string, error) // returns note_id for cache path resolution
+	EnqueueJob(ctx context.Context, notePath string) error
 }
 
 type Handler struct {
@@ -479,11 +480,17 @@ func (h *Handler) handleFilesQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	path := r.FormValue("path")
 	back := r.FormValue("back")
-	if path != "" && h.proc != nil {
+	if path != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		if err := h.proc.Enqueue(ctx, path); err != nil {
-			h.logger.Error("failed to enqueue file", "path", path, "error", err)
+		if h.booxStore != nil && h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) {
+			if err := h.booxStore.EnqueueJob(ctx, path); err != nil {
+				h.logger.Error("failed to enqueue boox file", "path", path, "error", err)
+			}
+		} else if h.proc != nil {
+			if err := h.proc.Enqueue(ctx, path); err != nil {
+				h.logger.Error("failed to enqueue file", "path", path, "error", err)
+			}
 		}
 	}
 	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)

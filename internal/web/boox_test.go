@@ -47,6 +47,10 @@ func (m *mockBooxStore) GetNoteID(ctx context.Context, path string) (string, err
 	return "", fmt.Errorf("note not found")
 }
 
+func (m *mockBooxStore) EnqueueJob(ctx context.Context, notePath string) error {
+	return nil
+}
+
 // TestFilesPage_ShowsBothSources verifies AC5.1: Files list shows both Supernote and Boox notes
 func TestFilesPage_ShowsBothSources(t *testing.T) {
 	// Create mock stores
