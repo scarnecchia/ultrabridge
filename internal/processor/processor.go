@@ -33,8 +33,9 @@ type WorkerConfig struct {
 	OCREnabled     bool
 	BackupPath     string
 	MaxFileMB      int
-	OCRClient      *OCRClient // nil = OCR disabled
-	Indexer        Indexer    // nil = indexing disabled
+	OCRClient      *OCRClient     // nil = OCR disabled
+	OCRPrompt      func() string  // returns current OCR prompt; nil = use default
+	Indexer        Indexer         // nil = indexing disabled
 	CatalogUpdater CatalogUpdater // nil = SPC catalog sync disabled
 }
 

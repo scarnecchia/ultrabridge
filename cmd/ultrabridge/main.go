@@ -166,6 +166,10 @@ func main() {
 		BackupPath: cfg.BackupPath,
 		MaxFileMB:  cfg.OCRMaxFileMB,
 		Indexer:    si,
+		OCRPrompt: func() string {
+			v, _ := notedb.GetSetting(context.Background(), noteDB, "sn_ocr_prompt")
+			return v
+		},
 	}
 	if database != nil {
 		workerCfg.CatalogUpdater = processor.NewSPCCatalog(database)
@@ -198,6 +202,10 @@ func main() {
 			Indexer:        si,  // shared search.Store (same as Supernote)
 			ContentDeleter: si,  // search.Store also satisfies ContentDeleter
 			CachePath:      filepath.Join(cfg.BooxNotesPath, ".cache"),
+			OCRPrompt: func() string {
+				v, _ := notedb.GetSetting(context.Background(), noteDB, "boox_ocr_prompt")
+				return v
+			},
 		}
 		if cfg.OCREnabled && cfg.OCRAPIURL != "" {
 			booxCfg.OCR = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel, cfg.OCRFormat)
@@ -279,7 +287,7 @@ func main() {
 		if booxProc != nil {
 			booxStore = booxProc.Store()
 		}
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, cfg.BooxNotesPath, logger, broadcaster)
+		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, cfg.BooxNotesPath, noteDB, logger, broadcaster)
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 

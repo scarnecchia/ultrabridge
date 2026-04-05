@@ -21,7 +21,8 @@ const (
 	OCRFormatOpenAI = "openai"
 )
 
-const ocrPrompt = "Transcribe all handwritten text from this page exactly as written. Return only the text, no commentary."
+// DefaultOCRPrompt is used when no custom prompt is configured.
+const DefaultOCRPrompt = "Transcribe all handwritten text from this page exactly as written. Return only the text, no commentary."
 
 // OCRClient posts JPEG images to a vision API and returns transcribed text.
 // Supports both Anthropic Messages API format and OpenAI Chat Completions format.
@@ -51,11 +52,15 @@ func NewOCRClient(apiURL, apiKey, model, format string) *OCRClient {
 }
 
 // Recognize sends a JPEG page image to the vision API and returns the transcribed text.
-func (c *OCRClient) Recognize(ctx context.Context, jpegData []byte) (string, error) {
-	if c.format == OCRFormatOpenAI {
-		return c.recognizeOpenAI(ctx, jpegData)
+// If prompt is empty, the default prompt is used.
+func (c *OCRClient) Recognize(ctx context.Context, jpegData []byte, prompt string) (string, error) {
+	if prompt == "" {
+		prompt = DefaultOCRPrompt
 	}
-	return c.recognizeAnthropic(ctx, jpegData)
+	if c.format == OCRFormatOpenAI {
+		return c.recognizeOpenAI(ctx, jpegData, prompt)
+	}
+	return c.recognizeAnthropic(ctx, jpegData, prompt)
 }
 
 // ── Anthropic Messages API ────────────────────────────────────────────────────
@@ -90,14 +95,14 @@ type anthropicResponse struct {
 	} `json:"content"`
 }
 
-func (c *OCRClient) recognizeAnthropic(ctx context.Context, jpegData []byte) (string, error) {
+func (c *OCRClient) recognizeAnthropic(ctx context.Context, jpegData []byte, prompt string) (string, error) {
 	reqBody := anthropicRequest{
 		Model:     c.model,
 		MaxTokens: 4096,
 		Messages: []anthropicMsg{{
 			Role: "user",
 			Content: []anthropicContent{
-				{Type: "text", Text: ocrPrompt},
+				{Type: "text", Text: prompt},
 				{Type: "image", Source: &anthropicSource{
 					Type:      "base64",
 					MediaType: "image/jpeg",
@@ -172,7 +177,7 @@ type openAIResponse struct {
 	} `json:"choices"`
 }
 
-func (c *OCRClient) recognizeOpenAI(ctx context.Context, jpegData []byte) (string, error) {
+func (c *OCRClient) recognizeOpenAI(ctx context.Context, jpegData []byte, prompt string) (string, error) {
 	dataURL := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(jpegData)
 
 	reqBody := openAIRequest{
@@ -181,7 +186,7 @@ func (c *OCRClient) recognizeOpenAI(ctx context.Context, jpegData []byte) (strin
 		Messages: []openAIMsg{{
 			Role: "user",
 			Content: []openAIContent{
-				{Type: "text", Text: ocrPrompt},
+				{Type: "text", Text: prompt},
 				{Type: "image_url", ImageURL: &openAIImgURL{URL: dataURL}},
 			},
 		}},

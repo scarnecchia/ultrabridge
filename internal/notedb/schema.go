@@ -98,6 +98,10 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			requeue_after INTEGER,
 			FOREIGN KEY (note_path) REFERENCES boox_notes(path)
 		)`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL DEFAULT ''
+		)`,
 	}
 	for i, stmt := range stmts {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

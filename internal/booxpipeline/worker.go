@@ -19,7 +19,7 @@ import (
 
 // OCRer abstracts the OCR capability. processor.OCRClient satisfies this interface.
 type OCRer interface {
-	Recognize(ctx context.Context, jpegData []byte) (string, error)
+	Recognize(ctx context.Context, jpegData []byte, prompt string) (string, error)
 }
 
 // ContentDeleter removes indexed content for a note path. search.Store satisfies this.
@@ -32,6 +32,7 @@ type WorkerConfig struct {
 	Indexer        processor.Indexer
 	ContentDeleter ContentDeleter // for clearing old content on re-process
 	OCR            OCRer          // nil = OCR disabled
+	OCRPrompt      func() string  // returns current OCR prompt; nil = use default
 	CachePath      string         // base dir for rendered page cache
 }
 
@@ -102,7 +103,11 @@ func (p *Processor) executeJob(ctx context.Context, job *BooxJob) error {
 		// OCR if client available.
 		var ocrText string
 		if p.cfg.OCR != nil {
-			text, err := p.cfg.OCR.Recognize(ctx, buf.Bytes())
+			prompt := ""
+			if p.cfg.OCRPrompt != nil {
+				prompt = p.cfg.OCRPrompt()
+			}
+			text, err := p.cfg.OCR.Recognize(ctx, buf.Bytes(), prompt)
 			if err != nil {
 				return fmt.Errorf("ocr page %d: %w", i, err)
 			}

@@ -23,6 +23,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/logging"
+	"github.com/sysop/ultrabridge/internal/notedb"
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/processor"
 	"github.com/sysop/ultrabridge/internal/search"
@@ -74,6 +75,7 @@ type Handler struct {
 	booxStore       BooxStore
 	booxNotesPath   string
 	booxCachePath   string
+	noteDB          *sql.DB // shared SQLite DB for settings
 	tmpl            *template.Template
 	mux             *http.ServeMux
 	logger          *slog.Logger
@@ -99,7 +101,7 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxNotesPath string, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
 		store:         store,
 		notifier:      notifier,
@@ -111,6 +113,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		booxStore:     booxStore,
 		booxNotesPath: booxNotesPath,
 		booxCachePath: filepath.Join(booxNotesPath, ".cache"),
+		noteDB:        noteDB,
 		logger:        logger,
 		mux:           http.NewServeMux(),
 		broadcaster:   broadcaster,
@@ -141,6 +144,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /tasks/bulk", h.handleBulkAction)
 	h.mux.HandleFunc("GET /logs", h.handleLogs)
 	h.mux.HandleFunc("GET /settings", h.handleSettings)
+	h.mux.HandleFunc("POST /settings/save", h.handleSettingsSave)
 	h.mux.HandleFunc("GET /files", h.handleFiles)
 	h.mux.HandleFunc("GET /search", h.handleSearch)
 	h.mux.HandleFunc("POST /files/queue", h.handleFilesQueue)
@@ -197,6 +201,12 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Settings keys for per-pipeline OCR prompts.
+const (
+	SettingKeySNOCRPrompt   = "sn_ocr_prompt"
+	SettingKeyBooxOCRPrompt = "boox_ocr_prompt"
+)
+
 // handleSettings renders the settings page
 func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -207,10 +217,56 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	data["SNPipelineActive"] = h.noteStore != nil
 	data["BooxActive"] = h.booxStore != nil
 
+	// Load OCR prompts from DB, falling back to default.
+	if h.noteDB != nil {
+		snPrompt, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeySNOCRPrompt)
+		if snPrompt == "" {
+			snPrompt = processor.DefaultOCRPrompt
+		}
+		data["SNOCRPrompt"] = snPrompt
+
+		booxPrompt, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxOCRPrompt)
+		if booxPrompt == "" {
+			booxPrompt = processor.DefaultOCRPrompt
+		}
+		data["BooxOCRPrompt"] = booxPrompt
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
 		h.logger.Error("failed to render template", "error", err)
 	}
+}
+
+// handleSettingsSave saves a settings form submission.
+func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	section := r.FormValue("section")
+	ocrPrompt := r.FormValue("ocr_prompt")
+
+	if h.noteDB != nil {
+		var key string
+		switch section {
+		case "supernote":
+			key = SettingKeySNOCRPrompt
+		case "boox":
+			key = SettingKeyBooxOCRPrompt
+		}
+		if key != "" {
+			if err := notedb.SetSetting(ctx, h.noteDB, key, ocrPrompt); err != nil {
+				h.logger.Error("save setting", "key", key, "error", err)
+			}
+		}
+	}
+
+	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
 // handleLogs renders the logs page

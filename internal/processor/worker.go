@@ -153,7 +153,11 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 			continue
 		}
 
-		text, err := s.cfg.OCRClient.Recognize(ctx, buf.Bytes())
+		prompt := ""
+		if s.cfg.OCRPrompt != nil {
+			prompt = s.cfg.OCRPrompt()
+		}
+		text, err := s.cfg.OCRClient.Recognize(ctx, buf.Bytes(), prompt)
 		if err != nil {
 			return fmt.Errorf("OCR page %d: %w", pageIdx, err)
 		}

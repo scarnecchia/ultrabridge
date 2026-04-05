@@ -513,7 +513,15 @@
             {{if not .SNPipelineActive}}
               <p class="settings-inactive-note">Supernote notes pipeline is not configured. Set UB_NOTES_PATH to enable.</p>
             {{else}}
-              <p style="color:#666;">Placeholder.</p>
+              <form method="POST" action="/settings/save">
+                <input type="hidden" name="section" value="supernote">
+                <label for="sn-ocr-prompt" style="font-weight:bold; display:block; margin-bottom:0.3rem;">OCR Prompt</label>
+                <p class="device-info" style="margin-bottom:0.5rem;">Sent to the vision API with each rendered page image.</p>
+                <textarea id="sn-ocr-prompt" name="ocr_prompt" rows="3"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-family:inherit; font-size:13px;"
+                >{{.SNOCRPrompt}}</textarea>
+                <button type="submit" style="margin-top:0.5rem; padding:0.3rem 0.8rem;">Save</button>
+              </form>
             {{end}}
           </div>
 
@@ -522,7 +530,15 @@
             {{if not .BooxActive}}
               <p class="settings-inactive-note">Boox integration is not enabled. Set UB_BOOX_ENABLED=true to enable.</p>
             {{else}}
-              <p style="color:#666;">Placeholder.</p>
+              <form method="POST" action="/settings/save">
+                <input type="hidden" name="section" value="boox">
+                <label for="boox-ocr-prompt" style="font-weight:bold; display:block; margin-bottom:0.3rem;">OCR Prompt</label>
+                <p class="device-info" style="margin-bottom:0.5rem;">Sent to the vision API with each rendered page image.</p>
+                <textarea id="boox-ocr-prompt" name="ocr_prompt" rows="3"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-family:inherit; font-size:13px;"
+                >{{.BooxOCRPrompt}}</textarea>
+                <button type="submit" style="margin-top:0.5rem; padding:0.3rem 0.8rem;">Save</button>
+              </form>
             {{end}}
           </div>
         </div>
