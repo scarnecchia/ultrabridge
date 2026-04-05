@@ -452,7 +452,15 @@
           <form method="GET" action="/search" style="margin-bottom:1rem;">
             <input type="text" name="q" value="{{.searchQuery}}"
                    placeholder="Search notes..."
-                   style="width:60%; padding:0.4rem; border:1px solid #ccc; border-radius:3px;">
+                   style="width:50%; padding:0.4rem; border:1px solid #ccc; border-radius:3px;">
+            {{if .searchFolders}}
+            <select name="folder" style="padding:0.4rem; margin-left:0.5rem; border:1px solid #ccc; border-radius:3px;">
+              <option value="">All folders</option>
+              {{range .searchFolders}}
+              <option value="{{.}}" {{if eq . $.searchFolder}}selected{{end}}>{{.}}</option>
+              {{end}}
+            </select>
+            {{end}}
             <button type="submit" style="padding:0.4rem 0.8rem; margin-left:0.5rem;">Search</button>
           </form>
           {{if .searchResults}}

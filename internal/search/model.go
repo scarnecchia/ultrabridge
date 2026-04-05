@@ -13,8 +13,9 @@ type NoteDocument struct {
 
 // SearchQuery is the input to a search operation.
 type SearchQuery struct {
-	Text  string
-	Limit int // 0 = use default (25)
+	Text   string
+	Folder string // filter by folder path segment (empty = all folders)
+	Limit  int    // 0 = use default (25)
 }
 
 // SearchResult is one ranked result.

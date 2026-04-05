@@ -492,14 +492,26 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	data["activeTab"] = "search"
 
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	folder := strings.TrimSpace(r.URL.Query().Get("folder"))
 	data["searchQuery"] = query
+	data["searchFolder"] = folder
 
-	if h.searchIndex != nil && query != "" {
-		results, err := h.searchIndex.Search(ctx, search.SearchQuery{Text: query})
+	if h.searchIndex != nil {
+		// Populate folder dropdown.
+		folders, err := h.searchIndex.ListFolders(ctx)
 		if err != nil {
-			h.logger.Error("handleSearch", "err", err)
+			h.logger.Error("handleSearch list folders", "err", err)
 		} else {
-			data["searchResults"] = results
+			data["searchFolders"] = folders
+		}
+
+		if query != "" {
+			results, err := h.searchIndex.Search(ctx, search.SearchQuery{Text: query, Folder: folder})
+			if err != nil {
+				h.logger.Error("handleSearch", "err", err)
+			} else {
+				data["searchResults"] = results
+			}
 		}
 	}
 

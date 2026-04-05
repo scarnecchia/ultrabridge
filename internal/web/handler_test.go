@@ -148,6 +148,9 @@ func (m *mockSearchIndex) IndexPage(_ context.Context, _ string, _ int, _, _, _,
 func (m *mockSearchIndex) GetContent(_ context.Context, _ string) ([]search.NoteDocument, error) {
 	return nil, nil
 }
+func (m *mockSearchIndex) ListFolders(_ context.Context) ([]string, error) {
+	return nil, nil
+}
 
 // mockProcessor implements Processor for testing
 type mockProcessor struct {

@@ -29,6 +29,9 @@ func (c *configSearchIndex) IndexPage(_ context.Context, _ string, _ int, _, _, 
 func (c *configSearchIndex) GetContent(_ context.Context, _ string) ([]search.NoteDocument, error) {
 	return nil, nil
 }
+func (c *configSearchIndex) ListFolders(_ context.Context) ([]string, error) {
+	return nil, nil
+}
 
 // boox-notes-pipeline.AC6.2: Search results include source badges (Boox and Supernote)
 func TestSearchPage_SourceBadges(t *testing.T) {

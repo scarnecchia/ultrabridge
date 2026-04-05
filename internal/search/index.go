@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path"
+	"sort"
 	"strings"
 	"time"
 )
@@ -18,6 +20,8 @@ type SearchIndex interface {
 	IndexPage(ctx context.Context, path string, pageIdx int, source, bodyText, titleText, keywords string) error
 	// GetContent returns all indexed content for a note, ordered by page.
 	GetContent(ctx context.Context, path string) ([]NoteDocument, error)
+	// ListFolders returns distinct parent directory names from indexed content.
+	ListFolders(ctx context.Context) ([]string, error)
 }
 
 // Store implements SearchIndex using SQLite FTS5.
@@ -73,7 +77,7 @@ func (s *Store) Search(ctx context.Context, q SearchQuery) ([]SearchResult, erro
 
 	// bm25() returns negative floats; ORDER BY ASC puts best matches first.
 	// snippet() targets body_text (column index 3: note_path, page, title_text, body_text, keywords).
-	rows, err := s.db.QueryContext(ctx, `
+	query := `
 		SELECT
 			nc.note_path,
 			nc.page,
@@ -81,11 +85,19 @@ func (s *Store) Search(ctx context.Context, q SearchQuery) ([]SearchResult, erro
 			snippet(note_fts, 3, '', '', '...', 25) AS snip
 		FROM note_fts
 		JOIN note_content nc ON nc.id = note_fts.rowid
-		WHERE note_fts MATCH ?
-		ORDER BY bm25(note_fts) ASC
-		LIMIT ?`,
-		escapeFTS5(q.Text), limit,
-	)
+		WHERE note_fts MATCH ?`
+	args := []interface{}{escapeFTS5(q.Text)}
+
+	if q.Folder != "" {
+		// Filter by folder path segment — matches "/{folder}/" anywhere in the path.
+		query += ` AND nc.note_path LIKE ?`
+		args = append(args, "%/"+q.Folder+"/%")
+	}
+
+	query += ` ORDER BY bm25(note_fts) ASC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search query: %w", err)
 	}
@@ -100,6 +112,35 @@ func (s *Store) Search(ctx context.Context, q SearchQuery) ([]SearchResult, erro
 		results = append(results, r)
 	}
 	return results, rows.Err()
+}
+
+func (s *Store) ListFolders(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT note_path FROM note_content`)
+	if err != nil {
+		return nil, fmt.Errorf("list folders: %w", err)
+	}
+	defer rows.Close()
+
+	seen := map[string]bool{}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		// Extract the parent directory name (last directory component before the filename).
+		dir := path.Dir(p)
+		folder := path.Base(dir)
+		if folder != "." && folder != "/" && !seen[folder] {
+			seen[folder] = true
+		}
+	}
+
+	folders := make([]string, 0, len(seen))
+	for f := range seen {
+		folders = append(folders, f)
+	}
+	sort.Strings(folders)
+	return folders, rows.Err()
 }
 
 func (s *Store) Delete(ctx context.Context, path string) error {
