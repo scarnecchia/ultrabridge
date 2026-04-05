@@ -66,6 +66,10 @@ type Config struct {
 	OCRConcurrency int
 	OCRMaxFileMB   int
 	OCRFormat      string // "anthropic" (default) or "openai"
+
+	// Boox notes pipeline
+	BooxEnabled   bool
+	BooxNotesPath string
 }
 
 func Load() (*Config, error) {
@@ -107,6 +111,9 @@ func Load() (*Config, error) {
 	cfg.OCRConcurrency = envIntOrDefault("UB_OCR_CONCURRENCY", 1)
 	cfg.OCRMaxFileMB   = envIntOrDefault("UB_OCR_MAX_FILE_MB", 0)
 	cfg.OCRFormat      = envOrDefault("UB_OCR_FORMAT", "anthropic")
+
+	cfg.BooxEnabled   = envBoolOrDefault("UB_BOOX_ENABLED", false)
+	cfg.BooxNotesPath = os.Getenv("UB_BOOX_NOTES_PATH")
 
 	// Load password hash from secrets file if not set via env var.
 	// This avoids the $$ escaping issue with Docker Compose env_file.
