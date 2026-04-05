@@ -206,6 +206,20 @@ func main() {
 				v, _ := notedb.GetSetting(context.Background(), noteDB, "boox_ocr_prompt")
 				return v
 			},
+			TodoEnabled: func() bool {
+				v, _ := notedb.GetSetting(context.Background(), noteDB, "boox_todo_enabled")
+				return v == "true"
+			},
+			TodoPrompt: func() string {
+				v, _ := notedb.GetSetting(context.Background(), noteDB, "boox_todo_prompt")
+				return v
+			},
+			OnTodosFound: func(ctx context.Context, notePath string, todos []booxpipeline.TodoItem) {
+				// Stage 3 will create CalDAV tasks here.
+				for _, todo := range todos {
+					logger.Info("red ink todo found", "path", notePath, "text", todo.Text)
+				}
+			},
 		}
 		if cfg.OCREnabled && cfg.OCRAPIURL != "" {
 			booxCfg.OCR = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel, cfg.OCRFormat)

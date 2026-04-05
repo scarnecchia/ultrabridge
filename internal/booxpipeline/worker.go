@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"image/jpeg"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/sysop/ultrabridge/internal/booxnote"
 	"github.com/sysop/ultrabridge/internal/booxrender"
@@ -27,12 +29,21 @@ type ContentDeleter interface {
 	Delete(ctx context.Context, path string) error
 }
 
+// TodoItem represents a to-do extracted from red ink on a page.
+type TodoItem struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 // WorkerConfig configures the Boox processing worker.
 type WorkerConfig struct {
 	Indexer        processor.Indexer
 	ContentDeleter ContentDeleter // for clearing old content on re-process
 	OCR            OCRer          // nil = OCR disabled
 	OCRPrompt      func() string  // returns current OCR prompt; nil = use default
+	TodoEnabled    func() bool    // returns whether red ink to-do extraction is on
+	TodoPrompt     func() string  // returns current to-do extraction prompt
+	OnTodosFound   func(ctx context.Context, notePath string, todos []TodoItem) // callback for extracted todos
 	CachePath      string         // base dir for rendered page cache
 }
 
@@ -125,5 +136,56 @@ func (p *Processor) executeJob(ctx context.Context, job *BooxJob) error {
 		}
 	}
 
+	// 7. Second OCR pass: red ink to-do extraction.
+	if p.cfg.OCR != nil && p.cfg.TodoEnabled != nil && p.cfg.TodoEnabled() {
+		var allTodos []TodoItem
+		todoPrompt := ""
+		if p.cfg.TodoPrompt != nil {
+			todoPrompt = p.cfg.TodoPrompt()
+		}
+
+		for i := range note.Pages {
+			cachePath := filepath.Join(cacheDir, fmt.Sprintf("page_%d.jpg", i))
+			jpegData, err := os.ReadFile(cachePath)
+			if err != nil {
+				p.logger.Warn("todo pass: read cached page", "page", i, "error", err)
+				continue
+			}
+
+			resp, err := p.cfg.OCR.Recognize(ctx, jpegData, todoPrompt)
+			if err != nil {
+				p.logger.Warn("todo pass: OCR failed", "page", i, "error", err)
+				continue
+			}
+
+			todos := parseTodoResponse(resp)
+			if len(todos) > 0 {
+				p.logger.Info("todos extracted", "page", i, "count", len(todos), "path", notePath)
+				allTodos = append(allTodos, todos...)
+			}
+		}
+
+		if len(allTodos) > 0 && p.cfg.OnTodosFound != nil {
+			p.cfg.OnTodosFound(ctx, notePath, allTodos)
+		}
+	}
+
 	return nil
+}
+
+// parseTodoResponse extracts TodoItem objects from the OCR response.
+// Each line is tried as a JSON object; non-JSON lines are skipped.
+func parseTodoResponse(resp string) []TodoItem {
+	var todos []TodoItem
+	for _, line := range strings.Split(resp, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] != '{' {
+			continue
+		}
+		var item TodoItem
+		if err := json.Unmarshal([]byte(line), &item); err == nil && item.Text != "" {
+			todos = append(todos, item)
+		}
+	}
+	return todos
 }
