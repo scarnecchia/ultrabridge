@@ -28,7 +28,7 @@ Rebuild and restart UltraBridge without reconfiguring.
 Requires install.sh to have been run first.
 
 Options:
-  --fresh, -f   Clear the SQLite database before rebuilding
+  --fresh, -f   Clear both SQLite databases (notes + tasks) before rebuilding
                 (prompts for confirmation unless -y)
   --nuke        Delete ALL UltraBridge data before rebuilding
                 (prompts for confirmation unless -y)
@@ -56,7 +56,8 @@ COMPOSE="sudo docker compose -f $SUPERNOTE_DIR/docker-compose.yml -f $SUPERNOTE_
 if [[ "$FRESH" == true ]]; then
     DATA_DIR="$SUPERNOTE_DIR/ultrabridge-data"
     warn "Fresh install requested. This will DELETE:"
-    echo "  - Database: $DATA_DIR/ultrabridge.db"
+    echo "  - Notes database: $DATA_DIR/ultrabridge.db"
+    echo "  - Task database:  $DATA_DIR/ultrabridge-tasks.db"
     echo
     if [[ "$YES" != true ]]; then
         printf '  Type "yes" to confirm: '
@@ -68,12 +69,14 @@ if [[ "$FRESH" == true ]]; then
     info "Stopping container..."
     $COMPOSE stop ultrabridge 2>/dev/null || true
     rm -f "$DATA_DIR/ultrabridge.db" "$DATA_DIR/ultrabridge.db-wal" "$DATA_DIR/ultrabridge.db-shm"
-    ok "Database cleared"
+    rm -f "$DATA_DIR/ultrabridge-tasks.db" "$DATA_DIR/ultrabridge-tasks.db-wal" "$DATA_DIR/ultrabridge-tasks.db-shm"
+    ok "Databases cleared"
 elif [[ "$NUKE" == true ]]; then
     DATA_DIR="$SUPERNOTE_DIR/ultrabridge-data"
     warn "NUKE requested. This will DELETE EVERYTHING:"
-    echo "  - Database: $DATA_DIR/ultrabridge.db"
-    echo "  - All data: $DATA_DIR/"
+    echo "  - Notes database: $DATA_DIR/ultrabridge.db"
+    echo "  - Task database:  $DATA_DIR/ultrabridge-tasks.db"
+    echo "  - All data:       $DATA_DIR/"
     echo
     if [[ "$YES" != true ]]; then
         printf '  Type "nuke" to confirm: '
