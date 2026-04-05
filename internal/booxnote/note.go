@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -20,10 +22,11 @@ type Note struct {
 
 // Page represents a single page within a note.
 type Page struct {
-	PageID string
-	Width  float64
-	Height float64
-	Shapes []*Shape // ordered by zorder
+	PageID     string
+	Width      float64
+	Height     float64
+	OrderIndex float32 // from VirtualPage protobuf; used for sorting
+	Shapes     []*Shape // ordered by zorder
 }
 
 // Shape represents a single shape (stroke, geometry, text, etc.) on a page.
@@ -91,14 +94,37 @@ func Open(r io.ReaderAt, size int64) (*Note, error) {
 		return nil, err
 	}
 
-	// Parse each page.
-	for _, pageName := range pageNames {
-		pg, err := parsePage(entries, noteID, pageName)
-		if err != nil {
-			return nil, fmt.Errorf("booxnote: page %s: %w", pageName, err)
+	// Parse each page. First try using pageNames as VirtualPage file IDs.
+	// If that fails, scan virtual/page/pb/ directory for all page files,
+	// since some firmware uses different IDs for VirtualPage files vs pageNameList.
+	vpPrefix := noteID + "/virtual/page/pb/"
+	vpFiles := findEntries(entries, vpPrefix)
+
+	if len(vpFiles) > 0 {
+		// Scan all VirtualPage files — the pageId field inside maps to shape/point dirs.
+		for _, vpPath := range vpFiles {
+			pg, err := parsePage(entries, noteID, vpPath)
+			if err != nil {
+				return nil, fmt.Errorf("booxnote: page %s: %w", vpPath, err)
+			}
+			note.Pages = append(note.Pages, pg)
 		}
-		note.Pages = append(note.Pages, pg)
+	} else {
+		// Fallback: try pageNames directly (older firmware).
+		for _, pageName := range pageNames {
+			pg, err := parsePage(entries, noteID, pageName)
+			if err != nil {
+				return nil, fmt.Errorf("booxnote: page %s: %w", pageName, err)
+			}
+			note.Pages = append(note.Pages, pg)
+		}
 	}
+	_ = pageNames // used in fallback path
+
+	// Sort pages by orderIndex for consistent ordering.
+	sort.Slice(note.Pages, func(i, j int) bool {
+		return note.Pages[i].OrderIndex < note.Pages[j].OrderIndex
+	})
 
 	return note, nil
 }
@@ -196,40 +222,34 @@ func unwrapField1(data []byte) []byte {
 	return data
 }
 
-// parsePage reads the VirtualPage protobuf for dimensions, parses shapes and points.
-func parsePage(entries map[string]*zip.File, noteID, pageID string) (*Page, error) {
-	// Read VirtualPage protobuf for dimensions.
-	vpPath := noteID + "/virtual/page/pb/" + pageID
-	vpData, err := readEntry(entries, vpPath)
-	if err != nil {
-		return nil, fmt.Errorf("read virtual page: %w", err)
-	}
-
-	// VirtualPage field numbers: pageId=1, pageSize=6
-	var vpPageID, vpPageSize string
-	raw := vpData
-	for len(raw) > 0 {
-		num, typ, n := protowire.ConsumeTag(raw)
+// parseVirtualPageFields extracts pageId (field 1), pageSize (field 6), and orderIndex (field 4) from raw protobuf wire data.
+func parseVirtualPageFields(data []byte) (pageID, pageSize string, orderIndex float32) {
+	for len(data) > 0 {
+		num, typ, n := protowire.ConsumeTag(data)
 		if n < 0 {
 			break
 		}
-		raw = raw[n:]
+		data = data[n:]
 		switch typ {
 		case protowire.VarintType:
-			_, n = protowire.ConsumeVarint(raw)
+			_, n = protowire.ConsumeVarint(data)
 		case protowire.Fixed32Type:
-			_, n = protowire.ConsumeFixed32(raw)
+			var v uint32
+			v, n = protowire.ConsumeFixed32(data)
+			if n >= 0 && num == 4 { // orderIndex
+				orderIndex = math.Float32frombits(v)
+			}
 		case protowire.Fixed64Type:
-			_, n = protowire.ConsumeFixed64(raw)
+			_, n = protowire.ConsumeFixed64(data)
 		case protowire.BytesType:
 			var v []byte
-			v, n = protowire.ConsumeBytes(raw)
+			v, n = protowire.ConsumeBytes(data)
 			if n >= 0 {
 				switch num {
 				case 1:
-					vpPageID = string(v)
+					pageID = string(v)
 				case 6:
-					vpPageSize = string(v)
+					pageSize = string(v)
 				}
 			}
 		default:
@@ -238,7 +258,37 @@ func parsePage(entries map[string]*zip.File, noteID, pageID string) (*Page, erro
 		if n < 0 {
 			break
 		}
-		raw = raw[n:]
+		data = data[n:]
+	}
+	return
+}
+
+// findEntries returns all non-directory ZIP entry names matching a prefix.
+func findEntries(entries map[string]*zip.File, prefix string) []string {
+	var result []string
+	for name, f := range entries {
+		if strings.HasPrefix(name, prefix) && !f.FileInfo().IsDir() {
+			result = append(result, name)
+		}
+	}
+	return result
+}
+
+// parsePage reads the VirtualPage protobuf for dimensions, parses shapes and points.
+// vpPath is the full ZIP path to the VirtualPage protobuf file.
+func parsePage(entries map[string]*zip.File, noteID, vpPath string) (*Page, error) {
+	// Read VirtualPage protobuf for dimensions.
+	vpData, err := readEntry(entries, vpPath)
+	if err != nil {
+		return nil, fmt.Errorf("read virtual page: %w", err)
+	}
+
+	// VirtualPage field numbers: pageId=1, pageSize=6
+	// Some firmware wraps VirtualPage in a container message. Try direct first,
+	// then unwrapped if pageSize is empty.
+	vpPageID, vpPageSize, vpOrderIndex := parseVirtualPageFields(vpData)
+	if vpPageSize == "" {
+		vpPageID, vpPageSize, vpOrderIndex = parseVirtualPageFields(unwrapField1(vpData))
 	}
 
 	width, height, err := parsePageSize(vpPageSize)
@@ -247,20 +297,22 @@ func parsePage(entries map[string]*zip.File, noteID, pageID string) (*Page, erro
 	}
 
 	pg := &Page{
-		PageID: vpPageID,
-		Width:  width,
-		Height: height,
+		PageID:     vpPageID,
+		Width:      width,
+		Height:     height,
+		OrderIndex: vpOrderIndex,
 	}
 
-	// Parse shapes from nested shape ZIP.
-	shapes, err := parseShapes(entries, noteID, pageID)
+	// Parse shapes from nested shape ZIP. Use vpPageID (from protobuf) as the
+	// shape/point directory key.
+	shapes, err := parseShapes(entries, noteID, vpPageID)
 	if err != nil {
 		return nil, fmt.Errorf("parse shapes: %w", err)
 	}
 	pg.Shapes = shapes
 
 	// Read point files and correlate to shapes.
-	pointMap, err := readPagePoints(entries, noteID, pageID)
+	pointMap, err := readPagePoints(entries, noteID, vpPageID)
 	if err != nil {
 		return nil, fmt.Errorf("read points: %w", err)
 	}

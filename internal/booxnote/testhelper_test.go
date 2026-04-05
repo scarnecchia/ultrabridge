@@ -69,11 +69,12 @@ func buildTestNote(t *testing.T, opts noteOpts) *bytes.Reader {
 	}
 
 	// Write each page's virtual page protobuf, shape ZIP, and point files.
-	for _, pg := range opts.Pages {
+	for i, pg := range opts.Pages {
 		// Write VirtualPage protobuf.
 		vp := &pb.VirtualPage{
-			PageId:   pg.PageID,
-			PageSize: fmt.Sprintf("%.1fx%.1f", pg.Width, pg.Height),
+			PageId:     pg.PageID,
+			PageSize:   fmt.Sprintf("%.1fx%.1f", pg.Width, pg.Height),
+			OrderIndex: float32(i),
 		}
 		vpData, err := proto.Marshal(vp)
 		if err != nil {
