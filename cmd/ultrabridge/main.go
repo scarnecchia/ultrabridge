@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	gocaldav "github.com/emersion/go-webdav/caldav"
@@ -14,6 +15,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/auth"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	ubwebdav "github.com/sysop/ultrabridge/internal/webdav"
+	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
 	"github.com/sysop/ultrabridge/internal/logging"
@@ -189,6 +191,25 @@ func main() {
 	pl.Start(context.Background())
 	defer pl.Close()
 
+	// Wire Boox pipeline if enabled
+	var booxProc *booxpipeline.Processor
+	if cfg.BooxEnabled && cfg.BooxNotesPath != "" {
+		booxCfg := booxpipeline.WorkerConfig{
+			Indexer:        si,  // shared search.Store (same as Supernote)
+			ContentDeleter: si,  // search.Store also satisfies ContentDeleter
+			CachePath:      filepath.Join(cfg.BooxNotesPath, ".cache"),
+		}
+		if cfg.OCREnabled && cfg.OCRAPIURL != "" {
+			booxCfg.OCR = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel, cfg.OCRFormat)
+		}
+		booxProc = booxpipeline.New(noteDB, cfg.BooxNotesPath, booxCfg, logger)
+		if err := booxProc.Start(context.Background()); err != nil {
+			logger.Warn("boox processor start failed", "err", err)
+		} else {
+			defer booxProc.Stop()
+		}
+	}
+
 	// Start sync engine if enabled
 	var syncEngine *tasksync.SyncEngine
 	if cfg.SNSyncEnabled {
@@ -236,7 +257,11 @@ func main() {
 	if cfg.BooxEnabled && cfg.BooxNotesPath != "" {
 		davHandler := ubwebdav.NewHandler(cfg.BooxNotesPath, func(absPath string) {
 			logger.Info("boox note uploaded", "path", absPath)
-			// Job enqueuing will be wired in Phase 4
+			if booxProc != nil {
+				if err := booxProc.Enqueue(context.Background(), absPath); err != nil {
+					logger.Error("enqueue boox job", "error", err, "path", absPath)
+				}
+			}
 		})
 		mux.Handle("/webdav/", authMW.Wrap(davHandler))
 		logger.Info("boox webdav enabled", "path", cfg.BooxNotesPath)
