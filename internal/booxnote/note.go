@@ -112,25 +112,29 @@ func parseNoteInfo(entries map[string]*zip.File, path string, note *Note) ([]str
 		return nil, fmt.Errorf("booxnote: read note_info: %w", err)
 	}
 
+	// The note_info file may contain a wrapper message with the actual NoteInfo
+	// nested in field 1. Unwrap if the top-level only contains field 1 bytes.
+	inner := unwrapField1(data)
+
 	// NoteInfo field numbers: title=6, pageNameList=20
 	var title, pageListJSON string
-	for len(data) > 0 {
-		num, typ, n := protowire.ConsumeTag(data)
+	for len(inner) > 0 {
+		num, typ, n := protowire.ConsumeTag(inner)
 		if n < 0 {
 			break
 		}
-		data = data[n:]
+		inner = inner[n:]
 
 		switch typ {
 		case protowire.VarintType:
-			_, n = protowire.ConsumeVarint(data)
+			_, n = protowire.ConsumeVarint(inner)
 		case protowire.Fixed32Type:
-			_, n = protowire.ConsumeFixed32(data)
+			_, n = protowire.ConsumeFixed32(inner)
 		case protowire.Fixed64Type:
-			_, n = protowire.ConsumeFixed64(data)
+			_, n = protowire.ConsumeFixed64(inner)
 		case protowire.BytesType:
 			var v []byte
-			v, n = protowire.ConsumeBytes(data)
+			v, n = protowire.ConsumeBytes(inner)
 			if n >= 0 {
 				switch num {
 				case 6: // title
@@ -140,24 +144,56 @@ func parseNoteInfo(entries map[string]*zip.File, path string, note *Note) ([]str
 				}
 			}
 		default:
-			break
+			n = 0
 		}
 		if n < 0 {
 			break
 		}
-		data = data[n:]
+		inner = inner[n:]
 	}
 
 	note.Title = title
 
+	// pageNameList may be a bare JSON array ["id1","id2"] or a JSON object
+	// {"pageNameList":["id1","id2"]} depending on device firmware.
 	var pageNames []string
 	if pageListJSON != "" {
 		if err := json.Unmarshal([]byte(pageListJSON), &pageNames); err != nil {
-			return nil, fmt.Errorf("booxnote: parse pageNameList: %w", err)
+			// Try wrapped format: {"pageNameList": [...]}
+			var wrapped struct {
+				PageNameList []string `json:"pageNameList"`
+			}
+			if err2 := json.Unmarshal([]byte(pageListJSON), &wrapped); err2 != nil {
+				return nil, fmt.Errorf("booxnote: parse pageNameList: %w", err)
+			}
+			pageNames = wrapped.PageNameList
 		}
 	}
 
 	return pageNames, nil
+}
+
+// unwrapField1 checks if the data is a wrapper message containing a single field 1
+// (length-delimited). If so, returns the inner bytes. Otherwise returns data unchanged.
+// Some Boox firmware wraps NoteInfo in an outer message.
+func unwrapField1(data []byte) []byte {
+	if len(data) == 0 {
+		return data
+	}
+	num, typ, n := protowire.ConsumeTag(data)
+	if n < 0 || num != 1 || typ != protowire.BytesType {
+		return data // not a wrapper
+	}
+	inner, n2 := protowire.ConsumeBytes(data[n:])
+	if n2 < 0 {
+		return data
+	}
+	// Check if the wrapper consumed all or most of the data
+	// (there may be a second field 1 for a second NoteInfo entry)
+	if n+n2 <= len(data) {
+		return inner
+	}
+	return data
 }
 
 // parsePage reads the VirtualPage protobuf for dimensions, parses shapes and points.
