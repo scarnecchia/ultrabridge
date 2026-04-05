@@ -360,13 +360,23 @@ func parsePageSize(s string) (width, height float64, err error) {
 			return w, h, nil
 		}
 	}
-	// Try JSON format.
+	// Try JSON {"width":N,"height":N} format.
 	var dim struct {
 		Width  float64 `json:"width"`
 		Height float64 `json:"height"`
 	}
 	if err := json.Unmarshal([]byte(s), &dim); err == nil && dim.Width > 0 && dim.Height > 0 {
 		return dim.Width, dim.Height, nil
+	}
+	// Try JSON rect {"left":N,"top":N,"right":N,"bottom":N} format.
+	var rect struct {
+		Left   float64 `json:"left"`
+		Top    float64 `json:"top"`
+		Right  float64 `json:"right"`
+		Bottom float64 `json:"bottom"`
+	}
+	if err := json.Unmarshal([]byte(s), &rect); err == nil && (rect.Right-rect.Left) > 0 && (rect.Bottom-rect.Top) > 0 {
+		return rect.Right - rect.Left, rect.Bottom - rect.Top, nil
 	}
 	return 0, 0, fmt.Errorf("booxnote: cannot parse page size: %q", s)
 }
