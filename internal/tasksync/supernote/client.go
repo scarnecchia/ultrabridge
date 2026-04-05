@@ -101,7 +101,7 @@ func (c *Client) FetchTasks(ctx context.Context) ([]SPCTask, error) {
 		Success      bool      `json:"success"`
 		ScheduleTask []SPCTask `json:"scheduleTask"`
 	}
-	if err := c.postJSON(ctx, "/api/file/schedule/task/all", nil, &resp, true); err != nil {
+	if err := c.postJSON(ctx, "/api/file/schedule/task/all", map[string]any{}, &resp, true); err != nil {
 		return nil, fmt.Errorf("fetch tasks: %w", err)
 	}
 	return resp.ScheduleTask, nil
