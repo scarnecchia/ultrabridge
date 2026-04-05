@@ -56,13 +56,12 @@ func renderScribble(dc *gg.Context, s *booxnote.Shape) {
 		return // AC2.7: skip shapes with empty/insufficient point data
 	}
 
-	dc.Push()
-	applyTransform(dc, s.MatrixValues)
+	mat := parseMatrix(s.MatrixValues)
 
 	r, g, b, a := decodeARGB(s.Color)
-	penStyle := getPenStyle(s.ShapeType)
+	ps := getPenStyle(s.ShapeType)
 
-	dc.SetRGBA(r, g, b, a*penStyle.AlphaMultiplier)
+	dc.SetRGBA(r, g, b, a*ps.AlphaMultiplier)
 	dc.SetLineCap(gg.LineCapRound)
 	dc.SetLineJoin(gg.LineJoinRound)
 
@@ -71,17 +70,21 @@ func renderScribble(dc *gg.Context, s *booxnote.Shape) {
 		p0 := s.Points[i]
 		p1 := s.Points[i+1]
 
-		// Interpolate pressure between points for smooth width transition.
+		x0, y0 := float64(p0.X), float64(p0.Y)
+		x1, y1 := float64(p1.X), float64(p1.Y)
+		if mat != nil {
+			x0, y0 = mat.transformPoint(x0, y0)
+			x1, y1 = mat.transformPoint(x1, y1)
+		}
+
 		pressure := (float64(p0.Pressure) + float64(p1.Pressure)) / 2.0
-		width := pressureToWidth(pressure, float64(s.Thickness), penStyle)
+		width := pressureToWidth(pressure, float64(s.Thickness), ps)
 
 		dc.SetLineWidth(width)
-		dc.MoveTo(float64(p0.X), float64(p0.Y))
-		dc.LineTo(float64(p1.X), float64(p1.Y))
+		dc.MoveTo(x0, y0)
+		dc.LineTo(x1, y1)
 		dc.Stroke()
 	}
-
-	dc.Pop()
 }
 
 // pressureToWidth maps pressure (0-4095 typical EMR range) to pixel width, modulated by pen type.
