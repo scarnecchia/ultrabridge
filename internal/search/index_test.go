@@ -171,13 +171,13 @@ func TestSearch_BM25ConsistentAcrossSources(t *testing.T) {
 	}
 
 	// Lower relevance: term appears once
-	supernooteLowRelevance := NoteDocument{
+	supernoteLowRelevance := NoteDocument{
 		Path:     "/notes/supernote.note",
 		Page:     0,
 		BodyText: "hello world",
 		Source:   "myScript",
 	}
-	if err := idx.Index(ctx, supernooteLowRelevance); err != nil {
+	if err := idx.Index(ctx, supernoteLowRelevance); err != nil {
 		t.Fatalf("Index supernote low: %v", err)
 	}
 

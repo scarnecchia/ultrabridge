@@ -457,9 +457,9 @@
                   <td>
                     {{$src := noteSource .Path}}
                     {{if eq $src "Boox"}}
-                      <span class="badge badge-boox">B</span>
+                      <span class="badge badge-boox" title="Boox">B</span>
                     {{else}}
-                      <span class="badge badge-sn">SN</span>
+                      <span class="badge badge-sn" title="Supernote">SN</span>
                     {{end}}
                   </td>
                   <td><a href="/files?path={{.Path}}">{{.Path}}</a></td>
