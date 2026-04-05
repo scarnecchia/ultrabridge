@@ -104,8 +104,7 @@ elif [[ "$NUKE" == true ]]; then
     mkdir -p "$DATA_DIR"
     ok "All data deleted"
 
-    # Read Boox path from existing config and clear all Boox data
-    BOOX_PATH=$(grep "^UB_BOOX_NOTES_PATH=" "$SUPERNOTE_DIR/.ultrabridge.env" 2>/dev/null | cut -d= -f2)
+    # BOOX_PATH already read above for warning display
     if [[ -n "$BOOX_PATH" ]]; then
         info "Clearing all Boox data including versions..."
         rm -rf "${BOOX_PATH}/.cache"
