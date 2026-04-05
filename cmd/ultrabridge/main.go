@@ -26,6 +26,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/search"
 	"github.com/sysop/ultrabridge/internal/sync"
 	"github.com/sysop/ultrabridge/internal/taskdb"
+	"github.com/sysop/ultrabridge/internal/taskstore"
 	"github.com/sysop/ultrabridge/internal/tasksync"
 	"github.com/sysop/ultrabridge/internal/tasksync/supernote"
 	"github.com/sysop/ultrabridge/internal/web"
@@ -215,9 +216,39 @@ func main() {
 				return v
 			},
 			OnTodosFound: func(ctx context.Context, notePath string, todos []booxpipeline.TodoItem) {
-				// Stage 3 will create CalDAV tasks here.
+				// List existing tasks once for dedup.
+				existing, err := store.List(ctx)
+				if err != nil {
+					logger.Error("todo: list tasks for dedup", "error", err)
+					return
+				}
+				titleSet := make(map[string]bool, len(existing))
+				for _, t := range existing {
+					if t.Title.Valid {
+						titleSet[t.Title.String] = true
+					}
+				}
+
 				for _, todo := range todos {
-					logger.Info("red ink todo found", "path", notePath, "text", todo.Text)
+					if titleSet[todo.Text] {
+						logger.Info("todo: skipping duplicate", "text", todo.Text)
+						continue
+					}
+					task := &taskstore.Task{
+						Title:  taskstore.SqlStr(todo.Text),
+						Detail: taskstore.SqlStr("From Boox red ink: " + notePath),
+					}
+					if err := store.Create(ctx, task); err != nil {
+						logger.Error("todo: create task", "text", todo.Text, "error", err)
+					} else {
+						logger.Info("todo: created task from red ink", "text", todo.Text, "task_id", task.TaskID)
+						titleSet[todo.Text] = true // prevent dupes within same batch
+					}
+				}
+
+				// Trigger device sync so new tasks appear on Supernote.
+				if notifier != nil {
+					notifier.Notify(ctx)
 				}
 			},
 		}
