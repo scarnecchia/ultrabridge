@@ -387,7 +387,7 @@ func readPagePoints(entries map[string]*zip.File, noteID, pageID string) (map[st
 	prefix := noteID + "/point/" + pageID + "/"
 
 	for name, f := range entries {
-		if !strings.HasPrefix(name, prefix) {
+		if !strings.HasPrefix(name, prefix) || f.FileInfo().IsDir() {
 			continue
 		}
 		rc, err := f.Open()
