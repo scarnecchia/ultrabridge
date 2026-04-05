@@ -104,8 +104,8 @@ func TestOpen_DeserializesShapes(t *testing.T) {
 		{
 			UniqueId:    "shape1",
 			ShapeType:   1,
-			Color:       int32(0xFF000000),
-			FillColor:   int32(0xFF0000FF),
+			Color:       -16777216,  // 0xFF000000 as signed int32
+			FillColor:   -16776961, // 0xFF0000FF as signed int32
 			Thickness:   2.5,
 			Zorder:      1,
 			BoundingRect: string(boundingRectJSON),
@@ -152,11 +152,11 @@ func TestOpen_DeserializesShapes(t *testing.T) {
 	if shape.ShapeType != 1 {
 		t.Errorf("got shapeType %d, want 1", shape.ShapeType)
 	}
-	if shape.Color != int32(0xFF000000) {
-		t.Errorf("got color 0x%X, want 0xFF000000", shape.Color)
+	if shape.Color != -16777216 { // 0xFF000000
+		t.Errorf("got color 0x%X, want 0xFF000000", uint32(shape.Color))
 	}
-	if shape.FillColor != int32(0xFF0000FF) {
-		t.Errorf("got fillColor 0x%X, want 0xFF0000FF", shape.FillColor)
+	if shape.FillColor != -16776961 { // 0xFF0000FF
+		t.Errorf("got fillColor 0x%X, want 0xFF0000FF", uint32(shape.FillColor))
 	}
 	if shape.Thickness != 2.5 {
 		t.Errorf("got thickness %.1f, want 2.5", shape.Thickness)
