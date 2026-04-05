@@ -2,6 +2,7 @@ package webdav
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -252,8 +253,8 @@ func TestFS_ConcurrentUploads(t *testing.T) {
 		go func(index int) {
 			defer wg.Done()
 
-			relPath := filepath.Join("onyx", "Device", "Notebooks", "Folder", "note_"+string(rune(48+index))+".note")
-			content := []byte("content_" + string(rune(48+index)))
+			relPath := filepath.Join("onyx", "Device", "Notebooks", "Folder", fmt.Sprintf("note_%d.note", index))
+			content := []byte(fmt.Sprintf("content_%d", index))
 
 			f, err := fs.OpenFile(context.Background(), relPath, os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
@@ -295,7 +296,7 @@ func TestFS_ConcurrentUploads(t *testing.T) {
 
 	// Verify all files exist with correct names
 	for i := 0; i < numFiles; i++ {
-		noteName := "note_" + string(rune(48+i)) + ".note"
+		noteName := fmt.Sprintf("note_%d.note", i)
 		expectedPath := filepath.Join(root, "onyx", "Device", "Notebooks", "Folder", noteName)
 		if _, err := os.Stat(expectedPath); err != nil {
 			t.Errorf("file not found: %s", expectedPath)

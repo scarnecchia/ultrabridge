@@ -2,9 +2,10 @@ package webdav
 
 import (
 	"bytes"
-	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -241,6 +242,11 @@ func TestHandler_PROPFIND_WithAuth(t *testing.T) {
 	}
 	mkResp.Body.Close()
 
+	// Verify MKCOL returns 201 Created
+	if mkResp.StatusCode != http.StatusCreated {
+		t.Errorf("MKCOL: expected status %d, got %d", http.StatusCreated, mkResp.StatusCode)
+	}
+
 	// Send PROPFIND request
 	propfindReq, err := http.NewRequest("PROPFIND", server.URL+"/webdav/onyx/Device", nil)
 	if err != nil {
@@ -255,10 +261,9 @@ func TestHandler_PROPFIND_WithAuth(t *testing.T) {
 	}
 	defer propfindResp.Body.Close()
 
-	// PROPFIND should return multi-status response
-	if propfindResp.StatusCode != http.StatusMultiStatus && propfindResp.StatusCode != http.StatusNotFound {
-		// Either multi-status (207) if directory exists, or 404 if not created
-		t.Logf("PROPFIND status: %d", propfindResp.StatusCode)
+	// PROPFIND should return multi-status response (207)
+	if propfindResp.StatusCode != http.StatusMultiStatus {
+		t.Errorf("PROPFIND: expected status %d (StatusMultiStatus), got %d", http.StatusMultiStatus, propfindResp.StatusCode)
 	}
 }
 
@@ -306,49 +311,36 @@ func TestHandler_VersionedUploads(t *testing.T) {
 		t.Errorf("second upload failed: status %d", resp2.StatusCode)
 	}
 
-	// Both uploads should succeed (versioning prevents conflicts)
-	t.Logf("first upload: %d, second upload: %d", resp1.StatusCode, resp2.StatusCode)
-}
-
-// TestHandler_BasicAuthEncoding verifies that Basic Auth encoding/decoding works correctly.
-func TestHandler_BasicAuthEncoding(t *testing.T) {
-	root := t.TempDir()
-	handler := NewHandler(root, func(absPath string) {})
-
-	password := "mypassword123"
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	// Verify that the current file contains the second content
+	currentPath := filepath.Join(root, "test.note")
+	currentContent, err := os.ReadFile(currentPath)
 	if err != nil {
-		t.Fatalf("GenerateFromPassword failed: %v", err)
+		t.Fatalf("ReadFile current failed: %v", err)
+	}
+	if string(currentContent) != string(content2) {
+		t.Errorf("current file content mismatch: got %q, want %q", currentContent, content2)
 	}
 
-	authMW := auth.New("admin", string(hash))
-	wrappedHandler := authMW.Wrap(handler)
+	// Verify that old content was moved to .versions/
+	versionsDir := filepath.Join(root, ".versions")
+	versionFound := false
+	err = filepath.Walk(versionsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		content, readErr := os.ReadFile(path)
+		if readErr == nil && string(content) == string(content1) {
+			versionFound = true
+		}
+		return nil
+	})
 
-	server := httptest.NewServer(wrappedHandler)
-	defer server.Close()
-
-	client := &http.Client{}
-
-	// Verify that the Basic Auth header is properly formatted
-	_ = base64.StdEncoding.EncodeToString([]byte("admin:mypassword123"))
-
-	content := []byte("test")
-	req, err := http.NewRequest("PUT", server.URL+"/webdav/test.note", bytes.NewReader(content))
-	if err != nil {
-		t.Fatalf("NewRequest failed: %v", err)
+	if err != nil && err != os.ErrNotExist {
+		t.Fatalf("walk .versions failed: %v", err)
 	}
 
-	// Use SetBasicAuth which should produce the same header
-	req.SetBasicAuth("admin", "mypassword123")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("Do failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
-		t.Errorf("expected auth to succeed with status 201/204, got %d", resp.StatusCode)
+	if !versionFound {
+		t.Errorf("old content not found in .versions/ directory")
 	}
 }
 

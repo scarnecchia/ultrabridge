@@ -97,7 +97,7 @@ func (fs *FS) archiveVersion(name, absPath string) error {
 		return err
 	}
 
-	timestamp := time.Now().UTC().Format("20060102T150405")
+	timestamp := time.Now().UTC().Format("20060102T150405.000000000")
 	versionPath := filepath.Join(versionDir, timestamp+ext)
 
 	return os.Rename(absPath, versionPath)
