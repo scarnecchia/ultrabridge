@@ -117,17 +117,28 @@ info "Building and restarting UltraBridge..."
 $COMPOSE up -d --build --force-recreate ultrabridge || fail "Build/restart failed"
 ok "Container running"
 
-sleep 2
-PORT=$(grep -oP '"\K\d+(?=:8443")' "$SUPERNOTE_DIR/docker-compose.override.yml" || echo "8443")
-if curl -sf "http://localhost:${PORT}/health" >/dev/null 2>&1; then
-    ok "Health check passed"
-else
-    sleep 3
-    if curl -sf "http://localhost:${PORT}/health" >/dev/null 2>&1; then
-        ok "Health check passed"
-    else
-        fail "Health check failed. Run: sudo docker logs ultrabridge"
+PORT=$(grep -oP '"\K\d+(?=:8443")' "$SUPERNOTE_DIR/docker-compose.override.yml" 2>/dev/null \
+    || grep -oP '"\K\d+(?=:8443")' "$SUPERNOTE_DIR/docker-compose.yml" 2>/dev/null \
+    || echo "8443")
+HEALTH_URL="http://localhost:${PORT}/health"
+HEALTH_TIMEOUT=90
+info "Waiting for health check (up to ${HEALTH_TIMEOUT}s)..."
+HEALTH_OK=false
+for i in $(seq 1 $HEALTH_TIMEOUT); do
+    if curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
+        HEALTH_OK=true
+        break
     fi
+    if (( i % 10 == 0 )); then
+        echo "  ... still waiting (${i}s)"
+    fi
+    sleep 1
+done
+
+if [[ "$HEALTH_OK" == true ]]; then
+    ok "Health check passed (${i}s)"
+else
+    fail "Health check failed after ${HEALTH_TIMEOUT}s. Run: sudo docker logs ultrabridge"
 fi
 
 info "Done!"

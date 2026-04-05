@@ -495,29 +495,36 @@ $COMPOSE up -d --force-recreate ultrabridge || fail "Failed to start container"
 
 # --- verify ---
 
-info "Verifying..."
-sleep 2
-
 HEALTH_URL="http://localhost:${UB_PORT}/health"
-if curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
-    ok "Health check passed: $HEALTH_URL"
-else
-    # Give it a few more seconds (DB connection can take a moment)
-    sleep 3
+HEALTH_TIMEOUT=90
+info "Waiting for health check (up to ${HEALTH_TIMEOUT}s)..."
+HEALTH_OK=false
+for i in $(seq 1 $HEALTH_TIMEOUT); do
     if curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
-        ok "Health check passed: $HEALTH_URL"
-    else
-        warn "Health check failed. Check logs:"
-        echo "  $COMPOSE logs ultrabridge"
-        echo
-        echo "  Common causes:"
-        if [[ "$SPC_AVAILABLE" == true ]]; then
-        echo "  - MariaDB not running"
-        echo "  - No user in u_user table (open Supernote web UI first)"
-        fi
-        echo "  - Port $UB_PORT already in use"
-        exit 1
+        HEALTH_OK=true
+        break
     fi
+    # Show progress every 10 seconds
+    if (( i % 10 == 0 )); then
+        echo "  ... still waiting (${i}s)"
+    fi
+    sleep 1
+done
+
+if [[ "$HEALTH_OK" == true ]]; then
+    ok "Health check passed (${i}s): $HEALTH_URL"
+else
+    warn "Health check failed after ${HEALTH_TIMEOUT}s. Check logs:"
+    echo "  $COMPOSE logs ultrabridge"
+    echo
+    echo "  Common causes:"
+    if [[ "$SPC_AVAILABLE" == true ]]; then
+    echo "  - MariaDB not running"
+    echo "  - No user in u_user table (open Supernote web UI first)"
+    fi
+    echo "  - Port $UB_PORT already in use"
+    echo "  - Slow startup (SPC sync, large database migration)"
+    exit 1
 fi
 
 # --- done ---
