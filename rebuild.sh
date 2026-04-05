@@ -121,7 +121,7 @@ PORT=$(grep -oP '"\K\d+(?=:8443")' "$SUPERNOTE_DIR/docker-compose.override.yml" 
     || grep -oP '"\K\d+(?=:8443")' "$SUPERNOTE_DIR/docker-compose.yml" 2>/dev/null \
     || echo "8443")
 HEALTH_URL="http://localhost:${PORT}/health"
-HEALTH_TIMEOUT=90
+HEALTH_TIMEOUT=180
 info "Waiting for health check (up to ${HEALTH_TIMEOUT}s)..."
 HEALTH_OK=false
 for i in $(seq 1 $HEALTH_TIMEOUT); do

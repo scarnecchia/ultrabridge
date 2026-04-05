@@ -496,7 +496,7 @@ $COMPOSE up -d --force-recreate ultrabridge || fail "Failed to start container"
 # --- verify ---
 
 HEALTH_URL="http://localhost:${UB_PORT}/health"
-HEALTH_TIMEOUT=90
+HEALTH_TIMEOUT=180
 info "Waiting for health check (up to ${HEALTH_TIMEOUT}s)..."
 HEALTH_OK=false
 for i in $(seq 1 $HEALTH_TIMEOUT); do
