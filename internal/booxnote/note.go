@@ -8,9 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"google.golang.org/protobuf/proto"
-
-	pb "github.com/sysop/ultrabridge/internal/booxnote/proto"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 // Note represents a fully parsed Boox .note file.
@@ -105,23 +103,53 @@ func Open(r io.ReaderAt, size int64) (*Note, error) {
 	return note, nil
 }
 
-// parseNoteInfo reads and unmarshals the note_info protobuf, extracts the title,
-// and returns the page name list (JSON array of page ID strings).
+// parseNoteInfo reads the note_info protobuf using low-level wire parsing.
+// We avoid proto.Unmarshal because real Boox devices produce string fields
+// with non-UTF-8 bytes, which Go's proto3 unmarshaler rejects.
 func parseNoteInfo(entries map[string]*zip.File, path string, note *Note) ([]string, error) {
 	data, err := readEntry(entries, path)
 	if err != nil {
 		return nil, fmt.Errorf("booxnote: read note_info: %w", err)
 	}
 
-	var noteInfo pb.NoteInfo
-	if err := proto.Unmarshal(data, &noteInfo); err != nil {
-		return nil, fmt.Errorf("booxnote: unmarshal note_info: %w", err)
+	// NoteInfo field numbers: title=6, pageNameList=20
+	var title, pageListJSON string
+	for len(data) > 0 {
+		num, typ, n := protowire.ConsumeTag(data)
+		if n < 0 {
+			break
+		}
+		data = data[n:]
+
+		switch typ {
+		case protowire.VarintType:
+			_, n = protowire.ConsumeVarint(data)
+		case protowire.Fixed32Type:
+			_, n = protowire.ConsumeFixed32(data)
+		case protowire.Fixed64Type:
+			_, n = protowire.ConsumeFixed64(data)
+		case protowire.BytesType:
+			var v []byte
+			v, n = protowire.ConsumeBytes(data)
+			if n >= 0 {
+				switch num {
+				case 6: // title
+					title = string(v)
+				case 20: // pageNameList
+					pageListJSON = string(v)
+				}
+			}
+		default:
+			break
+		}
+		if n < 0 {
+			break
+		}
+		data = data[n:]
 	}
 
-	note.Title = noteInfo.GetTitle()
+	note.Title = title
 
-	// Parse pageNameList JSON to extract page IDs.
-	pageListJSON := noteInfo.GetPageNameList()
 	var pageNames []string
 	if pageListJSON != "" {
 		if err := json.Unmarshal([]byte(pageListJSON), &pageNames); err != nil {
@@ -141,18 +169,49 @@ func parsePage(entries map[string]*zip.File, noteID, pageID string) (*Page, erro
 		return nil, fmt.Errorf("read virtual page: %w", err)
 	}
 
-	var vp pb.VirtualPage
-	if err := proto.Unmarshal(vpData, &vp); err != nil {
-		return nil, fmt.Errorf("unmarshal virtual page: %w", err)
+	// VirtualPage field numbers: pageId=1, pageSize=6
+	var vpPageID, vpPageSize string
+	raw := vpData
+	for len(raw) > 0 {
+		num, typ, n := protowire.ConsumeTag(raw)
+		if n < 0 {
+			break
+		}
+		raw = raw[n:]
+		switch typ {
+		case protowire.VarintType:
+			_, n = protowire.ConsumeVarint(raw)
+		case protowire.Fixed32Type:
+			_, n = protowire.ConsumeFixed32(raw)
+		case protowire.Fixed64Type:
+			_, n = protowire.ConsumeFixed64(raw)
+		case protowire.BytesType:
+			var v []byte
+			v, n = protowire.ConsumeBytes(raw)
+			if n >= 0 {
+				switch num {
+				case 1:
+					vpPageID = string(v)
+				case 6:
+					vpPageSize = string(v)
+				}
+			}
+		default:
+			n = 0
+		}
+		if n < 0 {
+			break
+		}
+		raw = raw[n:]
 	}
 
-	width, height, err := parsePageSize(vp.GetPageSize())
+	width, height, err := parsePageSize(vpPageSize)
 	if err != nil {
 		return nil, err
 	}
 
 	pg := &Page{
-		PageID: vp.GetPageId(),
+		PageID: vpPageID,
 		Width:  width,
 		Height: height,
 	}
