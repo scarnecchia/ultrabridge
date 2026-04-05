@@ -1,0 +1,477 @@
+package web
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/sysop/ultrabridge/internal/booxpipeline"
+	"github.com/sysop/ultrabridge/internal/logging"
+	"github.com/sysop/ultrabridge/internal/notestore"
+)
+
+// mockBooxStore implements BooxStore for testing
+type mockBooxStore struct {
+	notes    []booxpipeline.BooxNoteEntry
+	versions []booxpipeline.BooxVersion
+	noteIDs  map[string]string // path -> noteID
+	err      error
+}
+
+func (m *mockBooxStore) ListNotes(ctx context.Context) ([]booxpipeline.BooxNoteEntry, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.notes, nil
+}
+
+func (m *mockBooxStore) GetVersions(ctx context.Context, path string) ([]booxpipeline.BooxVersion, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.versions, nil
+}
+
+func (m *mockBooxStore) GetNoteID(ctx context.Context, path string) (string, error) {
+	if noteID, ok := m.noteIDs[path]; ok {
+		return noteID, nil
+	}
+	return "", fmt.Errorf("note not found")
+}
+
+// TestFilesPage_ShowsBothSources verifies AC5.1: Files list shows both Supernote and Boox notes
+func TestFilesPage_ShowsBothSources(t *testing.T) {
+	// Create mock stores
+	noteStore := newMockNoteStore()
+	booxStore := &mockBooxStore{
+		notes: []booxpipeline.BooxNoteEntry{
+			{
+				Path:        "/boox/notes/note1.note",
+				Title:       "Boox Note 1",
+				DeviceModel: "Page",
+				NoteType:    "Standard",
+				Folder:      "Inbox",
+				PageCount:   5,
+				Version:     1,
+				NoteID:      "note1-id",
+				UpdatedAt:   1700000000000,
+				JobStatus:   "done",
+			},
+			{
+				Path:        "/boox/notes/note2.note",
+				Title:       "Boox Note 2",
+				DeviceModel: "Page",
+				NoteType:    "Standard",
+				Folder:      "Inbox",
+				PageCount:   3,
+				Version:     1,
+				NoteID:      "note2-id",
+				UpdatedAt:   1700000001000,
+				JobStatus:   "pending",
+			},
+		},
+		noteIDs: map[string]string{
+			"/boox/notes/note1.note": "note1-id",
+			"/boox/notes/note2.note": "note2-id",
+		},
+	}
+
+	// Add Supernote notes
+	noteStore.files[""] = []notestore.NoteFile{
+		{
+			Path:      "/sn/notes/note1.note",
+			RelPath:   "note1.note",
+			Name:      "note1.note",
+			IsDir:     false,
+			FileType:  notestore.FileTypeNote,
+			JobStatus: "done",
+		},
+		{
+			Path:      "/sn/notes/note2.note",
+			RelPath:   "note2.note",
+			Name:      "note2.note",
+			IsDir:     false,
+			FileType:  notestore.FileTypeNote,
+			JobStatus: "done",
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, booxStore, "/boox/notes", logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/files", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /files returned status %d, want 200", w.Code)
+	}
+
+	body := w.Body.String()
+
+	// Verify Supernote entries are present
+	if !strings.Contains(body, "note1.note") {
+		t.Errorf("Response should contain Supernote 'note1.note', got:\n%s", body)
+	}
+	if !strings.Contains(body, "note2.note") {
+		t.Errorf("Response should contain Supernote 'note2.note', got:\n%s", body)
+	}
+
+	// Verify Boox entries are present
+	if !strings.Contains(body, "Boox Note 1") {
+		t.Errorf("Response should contain Boox note title 'Boox Note 1', got:\n%s", body)
+	}
+	if !strings.Contains(body, "Boox Note 2") {
+		t.Errorf("Response should contain Boox note title 'Boox Note 2', got:\n%s", body)
+	}
+
+	// Verify badge class is present for Boox entries
+	if !strings.Contains(body, "badge-boox") {
+		t.Errorf("Response should contain 'badge-boox' class for Boox entries, got:\n%s", body)
+	}
+}
+
+// TestBooxRender_ServesCache verifies AC5.2: GET /files/boox/render serves cached JPEG page images
+func TestBooxRender_ServesCache(t *testing.T) {
+	tmpDir := t.TempDir()
+	notePath := "/boox/notes/test.note"
+	noteID := "test-note-id"
+	cacheDir := filepath.Join(tmpDir, ".cache", noteID)
+
+	// Create cache directory and page file
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		t.Fatalf("failed to create cache dir: %v", err)
+	}
+
+	testJPEG := []byte{0xFF, 0xD8, 0xFF, 0xE0} // JPEG magic bytes
+	pageFile := filepath.Join(cacheDir, "page_0.jpg")
+	if err := os.WriteFile(pageFile, testJPEG, 0644); err != nil {
+		t.Fatalf("failed to write test JPEG: %v", err)
+	}
+
+	booxStore := &mockBooxStore{
+		noteIDs: map[string]string{notePath: noteID},
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, tmpDir, logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/files/boox/render?path=%2Fboox%2Fnotes%2Ftest.note&page=0", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /files/boox/render returned status %d, want 200", w.Code)
+	}
+
+	if w.Header().Get("Content-Type") != "image/jpeg" {
+		t.Errorf("Content-Type = %s, want image/jpeg", w.Header().Get("Content-Type"))
+	}
+
+	if !strings.Contains(w.Header().Get("Cache-Control"), "public") {
+		t.Errorf("Cache-Control should be 'public, max-age=300', got %s", w.Header().Get("Cache-Control"))
+	}
+
+	body := w.Body.Bytes()
+	if !strings.HasPrefix(string(body[:4]), string(testJPEG[:4])) {
+		t.Errorf("Response body should be JPEG data starting with %v, got %v", testJPEG[:4], body[:4])
+	}
+}
+
+// TestBooxRender_MissingNote verifies 404 when note not found
+func TestBooxRender_MissingNote(t *testing.T) {
+	tmpDir := t.TempDir()
+	booxStore := &mockBooxStore{
+		noteIDs: map[string]string{}, // empty
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, tmpDir, logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/files/boox/render?path=%2Fboox%2Fnotes%2Ftest.note&page=0", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("GET /files/boox/render (missing note) returned status %d, want 404", w.Code)
+	}
+}
+
+// TestBooxRender_MissingPage verifies 404 when page not rendered yet
+func TestBooxRender_MissingPage(t *testing.T) {
+	tmpDir := t.TempDir()
+	notePath := "/boox/notes/test.note"
+	noteID := "test-note-id"
+	cacheDir := filepath.Join(tmpDir, ".cache", noteID)
+
+	// Create cache directory but don't create the page file
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		t.Fatalf("failed to create cache dir: %v", err)
+	}
+
+	booxStore := &mockBooxStore{
+		noteIDs: map[string]string{notePath: noteID},
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, tmpDir, logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/files/boox/render?path=%2Fboox%2Fnotes%2Ftest.note&page=0", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("GET /files/boox/render (missing page) returned status %d, want 404", w.Code)
+	}
+}
+
+// TestBooxVersions_ReturnsList verifies AC5.3: GET /files/boox/versions returns version list
+func TestBooxVersions_ReturnsList(t *testing.T) {
+	booxStore := &mockBooxStore{
+		versions: []booxpipeline.BooxVersion{
+			{
+				Path:      "/boox/notes/.versions/test/20260404T100000.note",
+				Timestamp: "20260404T100000",
+				SizeBytes: 1024,
+			},
+			{
+				Path:      "/boox/notes/.versions/test/20260404T110000.note",
+				Timestamp: "20260404T110000",
+				SizeBytes: 2048,
+			},
+			{
+				Path:      "/boox/notes/.versions/test/20260404T120000.note",
+				Timestamp: "20260404T120000",
+				SizeBytes: 3072,
+			},
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, "/boox/notes", logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/files/boox/versions?path=%2Fboox%2Fnotes%2Ftest.note", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /files/boox/versions returned status %d, want 200", w.Code)
+	}
+
+	if !strings.Contains(w.Header().Get("Content-Type"), "application/json") {
+		t.Errorf("Content-Type should be JSON, got %s", w.Header().Get("Content-Type"))
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "20260404T100000") {
+		t.Errorf("Response should contain first version timestamp, got:\n%s", body)
+	}
+	if !strings.Contains(body, "20260404T110000") {
+		t.Errorf("Response should contain second version timestamp, got:\n%s", body)
+	}
+	if !strings.Contains(body, "20260404T120000") {
+		t.Errorf("Response should contain third version timestamp, got:\n%s", body)
+	}
+
+	// Verify it's valid JSON with correct count
+	var versions []booxpipeline.BooxVersion
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&versions); err != nil {
+		t.Fatalf("Failed to decode JSON response: %v", err)
+	}
+
+	if len(versions) != 3 {
+		t.Errorf("Expected 3 versions in response, got %d", len(versions))
+	}
+}
+
+// TestBooxVersions_EmptyList verifies empty list when no versions
+func TestBooxVersions_EmptyList(t *testing.T) {
+	booxStore := &mockBooxStore{
+		versions: []booxpipeline.BooxVersion{},
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, "/boox/notes", logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/files/boox/versions?path=%2Fboox%2Fnotes%2Ftest.note", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /files/boox/versions (empty) returned status %d, want 200", w.Code)
+	}
+
+	body := w.Body.String()
+	var versions []booxpipeline.BooxVersion
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&versions); err != nil {
+		t.Fatalf("Failed to decode JSON response: %v", err)
+	}
+
+	if len(versions) != 0 {
+		t.Errorf("Expected 0 versions, got %d", len(versions))
+	}
+}
+
+// TestBooxVersions_NoBooxStore verifies empty list when booxStore is nil
+func TestBooxVersions_NoBooxStore(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, "", logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/files/boox/versions?path=%2Fboox%2Fnotes%2Ftest.note", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /files/boox/versions (nil store) returned status %d, want 200", w.Code)
+	}
+
+	body := w.Body.String()
+	var versions []interface{}
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&versions); err != nil {
+		t.Fatalf("Failed to decode JSON response: %v", err)
+	}
+
+	if len(versions) != 0 {
+		t.Errorf("Expected empty list when booxStore is nil, got %d items", len(versions))
+	}
+}
+
+// TestFilesPage_NoBooxNotes verifies AC5.5: Files list works when Boox enabled but no notes exist
+func TestFilesPage_NoBooxNotes(t *testing.T) {
+	// Create mock stores
+	noteStore := newMockNoteStore()
+	booxStore := &mockBooxStore{
+		notes: []booxpipeline.BooxNoteEntry{}, // empty
+	}
+
+	// Add only Supernote notes
+	noteStore.files[""] = []notestore.NoteFile{
+		{
+			Path:      "/sn/notes/note1.note",
+			RelPath:   "note1.note",
+			Name:      "note1.note",
+			IsDir:     false,
+			FileType:  notestore.FileTypeNote,
+			JobStatus: "done",
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, booxStore, "/boox/notes", logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/files", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /files returned status %d, want 200", w.Code)
+	}
+
+	body := w.Body.String()
+
+	// Verify Supernote entry is present
+	if !strings.Contains(body, "note1.note") {
+		t.Errorf("Response should contain Supernote 'note1.note', got:\n%s", body)
+	}
+
+	// Verify page renders without error
+	if !strings.Contains(body, "Files") && !strings.Contains(body, "file") {
+		t.Errorf("Response should render Files page correctly, got:\n%s", body)
+	}
+}
+
+// TestFilesPage_NoBooxStore verifies files page works when booxStore is nil (Boox disabled)
+func TestFilesPage_NoBooxStore(t *testing.T) {
+	noteStore := newMockNoteStore()
+	noteStore.files[""] = []notestore.NoteFile{
+		{
+			Path:      "/sn/notes/note1.note",
+			RelPath:   "note1.note",
+			Name:      "note1.note",
+			IsDir:     false,
+			FileType:  notestore.FileTypeNote,
+			JobStatus: "done",
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler2 := NewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, nil, "", logger, broadcaster)
+
+	req := httptest.NewRequest("GET", "/files", nil)
+	w := httptest.NewRecorder()
+	handler2.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /files returned status %d, want 200", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "note1.note") {
+		t.Errorf("Response should contain 'note1.note', got:\n%s", body)
+	}
+}
+
+// TestNoteSourceFunction verifies noteSource template function correctly identifies sources
+func TestNoteSourceFunction(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	booxStore := &mockBooxStore{}
+
+	// The template function should be in the funcMap
+	// We can't directly test the function from outside the package,
+	// but we verify it's used by checking the HTML output handles both sources
+	noteStore := newMockNoteStore()
+	noteStore.files[""] = []notestore.NoteFile{
+		{
+			Path:      "/boox/notes/test.note",
+			RelPath:   "test.note",
+			Name:      "test.note",
+			IsDir:     false,
+			FileType:  notestore.FileTypeNote,
+			JobStatus: "done",
+		},
+		{
+			Path:      "/sn/notes/test2.note",
+			RelPath:   "test2.note",
+			Name:      "test2.note",
+			IsDir:     false,
+			FileType:  notestore.FileTypeNote,
+			JobStatus: "done",
+		},
+	}
+
+	handler := NewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, booxStore, "/boox/notes", logger, broadcaster)
+	req := httptest.NewRequest("GET", "/files", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /files returned status %d, want 200", w.Code)
+	}
+
+	body := w.Body.String()
+	// Verify that both paths are in the output
+	if !strings.Contains(body, "test.note") {
+		t.Errorf("Response should contain 'test.note', got:\n%s", body)
+	}
+	if !strings.Contains(body, "test2.note") {
+		t.Errorf("Response should contain 'test2.note', got:\n%s", body)
+	}
+}

@@ -70,6 +70,34 @@ func migrate(ctx context.Context, db *sql.DB) error {
 				INSERT INTO note_fts(rowid, note_path, page, title_text, body_text, keywords)
 				VALUES (new.id, new.note_path, new.page, new.title_text, new.body_text, new.keywords);
 			END`,
+		`CREATE TABLE IF NOT EXISTS boox_notes (
+			path TEXT PRIMARY KEY,
+			note_id TEXT NOT NULL DEFAULT '',
+			title TEXT NOT NULL DEFAULT '',
+			device_model TEXT NOT NULL DEFAULT '',
+			note_type TEXT NOT NULL DEFAULT '',
+			folder TEXT NOT NULL DEFAULT '',
+			page_count INTEGER NOT NULL DEFAULT 0,
+			file_hash TEXT NOT NULL DEFAULT '',
+			version INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS boox_jobs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			note_path TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			skip_reason TEXT NOT NULL DEFAULT '',
+			ocr_source TEXT NOT NULL DEFAULT '',
+			api_model TEXT NOT NULL DEFAULT '',
+			attempts INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			queued_at INTEGER NOT NULL DEFAULT 0,
+			started_at INTEGER NOT NULL DEFAULT 0,
+			finished_at INTEGER NOT NULL DEFAULT 0,
+			requeue_after INTEGER,
+			FOREIGN KEY (note_path) REFERENCES boox_notes(path)
+		)`,
 	}
 	for i, stmt := range stmts {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

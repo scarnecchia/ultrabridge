@@ -6,13 +6,16 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	gocaldav "github.com/emersion/go-webdav/caldav"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/sysop/ultrabridge/internal/auth"
+	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
+	ubwebdav "github.com/sysop/ultrabridge/internal/webdav"
 	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
 	"github.com/sysop/ultrabridge/internal/logging"
@@ -188,6 +191,25 @@ func main() {
 	pl.Start(context.Background())
 	defer pl.Close()
 
+	// Wire Boox pipeline if enabled
+	var booxProc *booxpipeline.Processor
+	if cfg.BooxEnabled && cfg.BooxNotesPath != "" {
+		booxCfg := booxpipeline.WorkerConfig{
+			Indexer:        si,  // shared search.Store (same as Supernote)
+			ContentDeleter: si,  // search.Store also satisfies ContentDeleter
+			CachePath:      filepath.Join(cfg.BooxNotesPath, ".cache"),
+		}
+		if cfg.OCREnabled && cfg.OCRAPIURL != "" {
+			booxCfg.OCR = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel, cfg.OCRFormat)
+		}
+		booxProc = booxpipeline.New(noteDB, cfg.BooxNotesPath, booxCfg, logger)
+		if err := booxProc.Start(context.Background()); err != nil {
+			logger.Warn("boox processor start failed", "err", err)
+		} else {
+			defer booxProc.Stop()
+		}
+	}
+
 	// Start sync engine if enabled
 	var syncEngine *tasksync.SyncEngine
 	if cfg.SNSyncEnabled {
@@ -231,6 +253,20 @@ func main() {
 		})).ServeHTTP(w, r)
 	})
 
+	// Wire Boox WebDAV server if enabled
+	if cfg.BooxEnabled && cfg.BooxNotesPath != "" {
+		davHandler := ubwebdav.NewHandler(cfg.BooxNotesPath, func(absPath string) {
+			logger.Info("boox note uploaded", "path", absPath)
+			if booxProc != nil {
+				if err := booxProc.Enqueue(context.Background(), absPath); err != nil {
+					logger.Error("enqueue boox job", "error", err, "path", absPath)
+				}
+			}
+		})
+		mux.Handle("/webdav/", authMW.Wrap(davHandler))
+		logger.Info("boox webdav enabled", "path", cfg.BooxNotesPath)
+	}
+
 	// Wire web UI if enabled
 	if cfg.WebEnabled {
 		// If sync is enabled, wrap syncEngine for web UI; otherwise nil
@@ -238,7 +274,12 @@ func main() {
 		if cfg.SNSyncEnabled && syncEngine != nil {
 			syncProvider = &syncProviderAdapter{engine: syncEngine}
 		}
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, logger, broadcaster)
+		// If Boox is enabled, pass the store from the processor; otherwise nil
+		var booxStore web.BooxStore
+		if booxProc != nil {
+			booxStore = booxProc.Store()
+		}
+		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, cfg.BooxNotesPath, logger, broadcaster)
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 

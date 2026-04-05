@@ -1,0 +1,298 @@
+package booxpipeline
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// Store manages Boox notes and jobs in SQLite.
+type Store struct {
+	db        *sql.DB
+	notesRoot string
+}
+
+// NewStore creates a new Boox pipeline store.
+func NewStore(db *sql.DB) *Store {
+	return &Store{db: db}
+}
+
+// NewStoreWithRoot creates a new Boox pipeline store with a notes root for version discovery.
+func NewStoreWithRoot(db *sql.DB, notesRoot string) *Store {
+	return &Store{db: db, notesRoot: notesRoot}
+}
+
+// BooxNote represents a Boox note in the database.
+type BooxNote struct {
+	Path        string
+	NoteID      string
+	Title       string
+	DeviceModel string
+	NoteType    string
+	Folder      string
+	PageCount   int
+	FileHash    string
+	Version     int
+	CreatedAt   int64
+	UpdatedAt   int64
+}
+
+// BooxJob represents a processing job in the queue.
+type BooxJob struct {
+	ID           int64
+	NotePath     string
+	Status       string
+	SkipReason   string
+	OCRSource    string
+	APIModel     string
+	Attempts     int
+	LastError    string
+	QueuedAt     int64
+	StartedAt    int64
+	FinishedAt   int64
+	RequeueAfter *int64
+}
+
+// BooxNoteEntry is a summary for web display.
+type BooxNoteEntry struct {
+	Path        string
+	Title       string
+	DeviceModel string
+	NoteType    string
+	Folder      string
+	PageCount   int
+	Version     int
+	NoteID      string // top-level directory name from ZIP, used for cache paths
+	UpdatedAt   int64  // unix millis
+	JobStatus   string // latest job status
+}
+
+// BooxVersion represents an archived version of a Boox note.
+type BooxVersion struct {
+	Path      string
+	Timestamp string // formatted timestamp from filename
+	SizeBytes int64
+}
+
+// UpsertNote inserts or updates a boox_notes row, incrementing version on conflict.
+func (s *Store) UpsertNote(ctx context.Context, path, noteID, title, deviceModel, noteType, folder string, pageCount int, fileHash string) error {
+	now := time.Now().UnixMilli()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO boox_notes (path, note_id, title, device_model, note_type, folder, page_count, file_hash, version, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET
+			note_id = excluded.note_id,
+			title = excluded.title,
+			device_model = excluded.device_model,
+			note_type = excluded.note_type,
+			folder = excluded.folder,
+			page_count = excluded.page_count,
+			file_hash = excluded.file_hash,
+			version = version + 1,
+			updated_at = excluded.updated_at`,
+		path, noteID, title, deviceModel, noteType, folder, pageCount, fileHash, now, now,
+	)
+	return err
+}
+
+// EnqueueJob adds a job to the queue, first ensuring a boox_notes row exists with minimal defaults.
+func (s *Store) EnqueueJob(ctx context.Context, notePath string) error {
+	// First ensure a boox_notes row exists (INSERT OR IGNORE with minimal defaults).
+	// This satisfies the FK constraint for the WebDAV callback before the worker
+	// has parsed the note metadata.
+	now := time.Now().UnixMilli()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO boox_notes (path, note_id, title, device_model, note_type, folder, page_count, file_hash, version, created_at, updated_at)
+		VALUES (?, '', '', '', '', '', 0, '', 1, ?, ?)`,
+		notePath, now, now,
+	)
+	if err != nil {
+		return fmt.Errorf("ensure note row: %w", err)
+	}
+
+	// Now insert the job. Use Unix() (seconds) for consistency with ClaimNextJob and ReclaimStuckJobs.
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO boox_jobs (note_path, status, queued_at)
+		VALUES (?, 'pending', ?)`,
+		notePath, time.Now().Unix(),
+	)
+	if err != nil {
+		return fmt.Errorf("enqueue job: %w", err)
+	}
+	return nil
+}
+
+// ClaimNextJob atomically claims the oldest pending job using SQLite RETURNING.
+// Returns nil, nil if no jobs are available.
+func (s *Store) ClaimNextJob(ctx context.Context) (*BooxJob, error) {
+	now := time.Now().Unix()
+	var job BooxJob
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE boox_jobs SET status = 'in_progress', started_at = ?
+		WHERE id = (SELECT id FROM boox_jobs WHERE status = 'pending'
+			AND (requeue_after IS NULL OR requeue_after <= ?)
+			ORDER BY queued_at ASC LIMIT 1)
+		RETURNING id, note_path, status, attempts, last_error, queued_at, started_at`,
+		now, now,
+	).Scan(&job.ID, &job.NotePath, &job.Status, &job.Attempts, &job.LastError, &job.QueuedAt, &job.StartedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil // no jobs available
+	}
+	if err != nil {
+		return nil, fmt.Errorf("claim boox job: %w", err)
+	}
+	return &job, nil
+}
+
+// CompleteJob marks a job as done with optional OCR source and API model.
+func (s *Store) CompleteJob(ctx context.Context, jobID int64, ocrSource, apiModel string) error {
+	now := time.Now().Unix()
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE boox_jobs SET status = 'done', ocr_source = ?, api_model = ?, finished_at = ?
+		WHERE id = ?`,
+		ocrSource, apiModel, now, jobID,
+	)
+	if err != nil {
+		return fmt.Errorf("complete job: %w", err)
+	}
+	return nil
+}
+
+// FailJob marks a job as failed with an error message.
+func (s *Store) FailJob(ctx context.Context, jobID int64, errMsg string) error {
+	now := time.Now().Unix()
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE boox_jobs SET status = 'failed', last_error = ?, finished_at = ?
+		WHERE id = ?`,
+		errMsg, now, jobID,
+	)
+	if err != nil {
+		return fmt.Errorf("fail job: %w", err)
+	}
+	return nil
+}
+
+// GetNote retrieves a boox_notes row by path.
+func (s *Store) GetNote(ctx context.Context, path string) (*BooxNote, error) {
+	var note BooxNote
+	err := s.db.QueryRowContext(ctx, `
+		SELECT path, note_id, title, device_model, note_type, folder, page_count, file_hash, version, created_at, updated_at
+		FROM boox_notes WHERE path = ?`,
+		path,
+	).Scan(&note.Path, &note.NoteID, &note.Title, &note.DeviceModel, &note.NoteType, &note.Folder, &note.PageCount, &note.FileHash, &note.Version, &note.CreatedAt, &note.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get note: %w", err)
+	}
+	return &note, nil
+}
+
+// GetNoteID returns the note_id for a given note path, used for cache path resolution.
+func (s *Store) GetNoteID(ctx context.Context, path string) (string, error) {
+	var noteID string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT note_id FROM boox_notes WHERE path = ?`,
+		path,
+	).Scan(&noteID)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("note not found")
+	}
+	if err != nil {
+		return "", fmt.Errorf("get note id: %w", err)
+	}
+	return noteID, nil
+}
+
+// ReclaimStuckJobs reclaims jobs that have been in_progress for longer than the timeout.
+// Sets status back to pending and increments the attempts counter.
+func (s *Store) ReclaimStuckJobs(ctx context.Context, timeout time.Duration) error {
+	cutoff := time.Now().Add(-timeout).Unix()
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE boox_jobs SET status = 'pending', attempts = attempts + 1
+		WHERE status = 'in_progress' AND started_at < ?`,
+		cutoff,
+	)
+	if err != nil {
+		return fmt.Errorf("reclaim stuck jobs: %w", err)
+	}
+	return nil
+}
+
+// ListNotes returns all Boox notes with their latest job status.
+func (s *Store) ListNotes(ctx context.Context) ([]BooxNoteEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT bn.path, bn.title, bn.device_model, bn.note_type, bn.folder,
+		       bn.page_count, bn.version, bn.note_id, bn.updated_at,
+		       COALESCE((SELECT status FROM boox_jobs WHERE note_path = bn.path
+		                ORDER BY id DESC LIMIT 1), '') as job_status
+		FROM boox_notes bn
+		ORDER BY bn.updated_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list notes query: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []BooxNoteEntry
+	for rows.Next() {
+		var e BooxNoteEntry
+		if err := rows.Scan(&e.Path, &e.Title, &e.DeviceModel, &e.NoteType, &e.Folder,
+			&e.PageCount, &e.Version, &e.NoteID, &e.UpdatedAt, &e.JobStatus); err != nil {
+			return nil, fmt.Errorf("scan note row: %w", err)
+		}
+		entries = append(entries, e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list notes iteration: %w", err)
+	}
+	return entries, nil
+}
+
+// GetVersions returns archived versions of a Boox note.
+// Version files live at {notesRoot}/.versions/{relDir}/{nameNoExt}/{timestamp}.note
+func (s *Store) GetVersions(ctx context.Context, path string) ([]BooxVersion, error) {
+	// Derive the version directory from the note path.
+	relPath, err := filepath.Rel(s.notesRoot, path)
+	if err != nil {
+		return nil, fmt.Errorf("compute rel path: %w", err)
+	}
+
+	relDir := filepath.Dir(relPath)
+	baseName := filepath.Base(relPath)
+	nameNoExt := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+	versionDir := filepath.Join(s.notesRoot, ".versions", relDir, nameNoExt)
+
+	entries, err := os.ReadDir(versionDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // no versions yet
+		}
+		return nil, fmt.Errorf("read version dir: %w", err)
+	}
+
+	var versions []BooxVersion
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		// Parse timestamp from filename: e.g., "20260404T120000.note"
+		name := e.Name()
+		ts := strings.TrimSuffix(name, filepath.Ext(name))
+		versions = append(versions, BooxVersion{
+			Path:      filepath.Join(versionDir, name),
+			Timestamp: ts,
+			SizeBytes: info.Size(),
+		})
+	}
+	return versions, nil
+}

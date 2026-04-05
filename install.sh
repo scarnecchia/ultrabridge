@@ -27,7 +27,8 @@ Options:
                     environment variables instead of prompting.
                     Required vars: UB_USERNAME, UB_PASSWORD
                     Optional: UB_PORT, UB_COLLECTION_NAME, UB_NOTES_PATH,
-                    UB_SN_SYNC_ENABLED, UB_SN_ACCOUNT, UB_SN_PASSWORD, etc.
+                    UB_SN_SYNC_ENABLED, UB_SN_ACCOUNT, UB_SN_PASSWORD,
+                    UB_BOOX_ENABLED, UB_BOOX_NOTES_PATH, etc.
   -h, --help      Show this help message
 
 Prerequisites:
@@ -274,6 +275,28 @@ if [[ "${enable_sync,,}" == "y" ]]; then
 fi
 
 echo
+info "── Boox Device Integration ──"
+echo "Boox devices can auto-export handwritten notes via WebDAV."
+echo "When enabled, UltraBridge runs a WebDAV server at /webdav/ that"
+echo "accepts .note file uploads, renders pages, and indexes text."
+echo ""
+
+UB_BOOX_ENABLED="${UB_BOOX_ENABLED:-false}"
+UB_BOOX_NOTES_PATH="${UB_BOOX_NOTES_PATH:-}"
+
+if [[ "$UNATTENDED" == true ]]; then
+    enable_boox=$([[ "${UB_BOOX_ENABLED:-false}" == "true" ]] && echo "y" || echo "n")
+else
+    read -rp "Enable Boox device uploads via WebDAV? (y/N): " enable_boox
+fi
+
+if [[ "${enable_boox,,}" == "y" ]]; then
+    UB_BOOX_ENABLED="true"
+    prompt UB_BOOX_NOTES_PATH "Boox notes directory (WebDAV root)" "${SUPERNOTE_DIR}/boox-notes"
+    mkdir -p "$UB_BOOX_NOTES_PATH"
+fi
+
+echo
 
 # --- build image first (needed for password hashing) ---
 
@@ -343,6 +366,9 @@ UB_TASK_DB_PATH=/data/ultrabridge-tasks.db
 
 # Supernote Sync
 UB_SN_SYNC_ENABLED=${UB_SN_SYNC_ENABLED}
+
+# Boox Device Integration
+UB_BOOX_ENABLED=${UB_BOOX_ENABLED}
 EOF
 
 chmod 600 "$SUPERNOTE_DIR/.ultrabridge.env"
@@ -356,6 +382,11 @@ UB_SN_SYNC_INTERVAL=${UB_SN_SYNC_INTERVAL}
 UB_SN_API_URL=${UB_SN_API_URL}
 UB_SN_PASSWORD=${UB_SN_PASSWORD}
 EOF_SYNC
+fi
+
+# Conditionally append Boox path when enabled
+if [[ "$UB_BOOX_ENABLED" == "true" ]]; then
+    echo "UB_BOOX_NOTES_PATH=${UB_BOOX_NOTES_PATH}" >> "$SUPERNOTE_DIR/.ultrabridge.env"
 fi
 
 # --- write docker-compose.override.yml ---
@@ -388,6 +419,10 @@ if [[ -n "$UB_BACKUP_PATH" ]]; then
     mkdir -p "$UB_BACKUP_PATH"
     VOLUMES_BLOCK="$VOLUMES_BLOCK
       - $UB_BACKUP_PATH:/backup"
+fi
+if [[ -n "$UB_BOOX_NOTES_PATH" ]]; then
+    VOLUMES_BLOCK="$VOLUMES_BLOCK
+      - ${UB_BOOX_NOTES_PATH}:${UB_BOOX_NOTES_PATH}"
 fi
 
 cat > "$SUPERNOTE_DIR/docker-compose.override.yml" <<EOF

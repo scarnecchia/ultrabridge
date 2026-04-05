@@ -1,9 +1,9 @@
 # Note Database
 
-Last verified: 2026-03-20
+Last verified: 2026-04-05
 
 ## Purpose
-Opens and migrates the SQLite database used by the notes pipeline.
+Opens and migrates the SQLite database used by both the Supernote and Boox notes pipelines.
 Centralizes schema ownership so all pipeline packages share one DB connection.
 
 ## Contracts
@@ -13,7 +13,7 @@ Centralizes schema ownership so all pipeline packages share one DB connection.
 
 ## Dependencies
 - **Uses**: `modernc.org/sqlite` (pure-Go, no CGO)
-- **Used by**: `cmd/ultrabridge` (startup), indirectly by `notestore`, `processor`, `search`
+- **Used by**: `cmd/ultrabridge` (startup), indirectly by `notestore`, `processor`, `search`, `booxpipeline`
 - **Boundary**: Only owns schema DDL. No CRUD logic -- that lives in domain packages.
 
 ## Key Decisions
@@ -23,11 +23,22 @@ Centralizes schema ownership so all pipeline packages share one DB connection.
 ## Invariants
 - `notes.path` is PRIMARY KEY (absolute filesystem path)
 - `jobs.note_path` has FK to `notes.path` -- notes row must exist before job insert
+- `boox_notes.path` is PRIMARY KEY (absolute filesystem path)
+- `boox_jobs.note_path` has FK to `boox_notes.path` -- boox_notes row must exist before job insert
 - `note_fts` is a contentless FTS5 table synced via triggers on `note_content`
 - `note_content` has UNIQUE(note_path, page) -- one content row per page per note
+- `note_content` is shared by both Supernote and Boox pipelines (unified search)
 
 ## Schema Tables
+
+### Supernote Pipeline
 - `notes` -- file metadata (path, type, size, mtime, backup state)
 - `jobs` -- processing queue (status, attempts, timestamps, requeue_after)
+
+### Boox Pipeline
+- `boox_notes` -- file metadata (path PK, note_id, title, device_model, note_type, folder, page_count, file_hash, version, timestamps)
+- `boox_jobs` -- processing queue (status, attempts, timestamps, requeue_after, ocr_source, api_model; FK to boox_notes.path)
+
+### Shared (both pipelines)
 - `note_content` -- extracted text per page (title, body, keywords, source)
 - `note_fts` -- FTS5 virtual table for full-text search

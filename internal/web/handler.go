@@ -20,6 +20,7 @@ import (
 
 	gosnote "github.com/jdkruzr/go-sn/note"
 
+	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/notestore"
@@ -53,18 +54,29 @@ type SyncStatusProvider interface {
 	TriggerSync()
 }
 
+// BooxStore provides Boox note data to the web handler.
+// Types are defined in booxpipeline package to avoid circular imports.
+type BooxStore interface {
+	ListNotes(ctx context.Context) ([]booxpipeline.BooxNoteEntry, error)
+	GetVersions(ctx context.Context, path string) ([]booxpipeline.BooxVersion, error)
+	GetNoteID(ctx context.Context, path string) (string, error) // returns note_id for cache path resolution
+}
+
 type Handler struct {
-	store        ubcaldav.TaskStore
-	notifier     ubcaldav.SyncNotifier
-	noteStore    notestore.NoteStore
-	searchIndex  search.SearchIndex
-	proc         processor.Processor
-	scanner      FileScanner
-	syncProvider SyncStatusProvider
-	tmpl         *template.Template
-	mux          *http.ServeMux
-	logger       *slog.Logger
-	broadcaster  *logging.LogBroadcaster
+	store           ubcaldav.TaskStore
+	notifier        ubcaldav.SyncNotifier
+	noteStore       notestore.NoteStore
+	searchIndex     search.SearchIndex
+	proc            processor.Processor
+	scanner         FileScanner
+	syncProvider    SyncStatusProvider
+	booxStore       BooxStore
+	booxNotesPath   string
+	booxCachePath   string
+	tmpl            *template.Template
+	mux             *http.ServeMux
+	logger          *slog.Logger
+	broadcaster     *logging.LogBroadcaster
 }
 
 // formatDueTime converts a millisecond Unix timestamp to a formatted date string.
@@ -86,18 +98,21 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxNotesPath string, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
-		store:        store,
-		notifier:     notifier,
-		noteStore:    noteStore,
-		searchIndex:  searchIndex,
-		proc:         proc,
-		scanner:      scanner,
-		syncProvider: syncProvider,
-		logger:       logger,
-		mux:          http.NewServeMux(),
-		broadcaster:  broadcaster,
+		store:         store,
+		notifier:      notifier,
+		noteStore:     noteStore,
+		searchIndex:   searchIndex,
+		proc:          proc,
+		scanner:       scanner,
+		syncProvider:  syncProvider,
+		booxStore:     booxStore,
+		booxNotesPath: booxNotesPath,
+		booxCachePath: filepath.Join(booxNotesPath, ".cache"),
+		logger:        logger,
+		mux:           http.NewServeMux(),
+		broadcaster:   broadcaster,
 	}
 
 	// Parse the embedded templates with custom function map
@@ -105,6 +120,12 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		"formatDueTime": formatDueTime,
 		"formatCreated": formatCreated,
 		"fileTypeStr":   func(ft notestore.FileType) string { return string(ft) },
+		"noteSource": func(path string) string {
+			if h.booxStore != nil && strings.HasPrefix(path, h.booxNotesPath) {
+				return "Boox"
+			}
+			return "Supernote"
+		},
 	}
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
@@ -127,6 +148,8 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("GET /files/history", h.handleFilesHistory)
 	h.mux.HandleFunc("GET /files/content", h.handleFilesContent)
 	h.mux.HandleFunc("GET /files/render", h.handleFilesRender)
+	h.mux.HandleFunc("GET /files/boox/render", h.handleBooxRender)
+	h.mux.HandleFunc("GET /files/boox/versions", h.handleBooxVersions)
 	h.mux.HandleFunc("POST /processor/start", h.handleProcessorStart)
 	h.mux.HandleFunc("POST /processor/stop", h.handleProcessorStop)
 	h.mux.HandleFunc("POST /files/scan", h.handleFilesScan)
@@ -152,6 +175,7 @@ func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
 	} else {
 		data["tasks"] = tasks
 	}
+	data["BooxNotesPath"] = h.booxNotesPath
 	return data
 }
 
@@ -392,6 +416,24 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("handleFiles list", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+
+	// Merge Boox notes into file list (only at root level).
+	if h.booxStore != nil && relPath == "" {
+		booxNotes, err := h.booxStore.ListNotes(ctx)
+		if err != nil {
+			h.logger.Error("list boox notes", "error", err)
+		}
+		for _, bn := range booxNotes {
+			files = append(files, notestore.NoteFile{
+				Path:      bn.Path,
+				RelPath:   bn.Title, // display title instead of path
+				Name:      bn.Title,
+				IsDir:     false,
+				FileType:  notestore.FileTypeNote,
+				JobStatus: bn.JobStatus,
+			})
+		}
 	}
 
 	data["files"] = files
@@ -660,4 +702,60 @@ func (h *Handler) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	h.syncProvider.TriggerSync()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(h.syncProvider.Status())
+}
+
+// handleBooxRender serves cached JPEG page images for Boox notes.
+// GET /files/boox/render?path=<absolute_path>&page=<int>
+func (h *Handler) handleBooxRender(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	pageStr := r.URL.Query().Get("page")
+	page, _ := strconv.Atoi(pageStr)
+
+	if h.booxStore == nil {
+		http.Error(w, "Boox not configured", http.StatusNotFound)
+		return
+	}
+
+	// Look up note_id from boox_notes table to construct cache path.
+	// The cache is at {BooxCachePath}/{noteId}/page_{N}.jpg
+	noteID, err := h.booxStore.GetNoteID(r.Context(), path)
+	if err != nil || noteID == "" {
+		h.logger.Debug("boox render: note not found", "path", path, "error", err)
+		http.Error(w, "Note not found", http.StatusNotFound)
+		return
+	}
+	cachePath := filepath.Join(h.booxCachePath, noteID, fmt.Sprintf("page_%d.jpg", page))
+
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		h.logger.Debug("boox render: page not rendered yet", "path", cachePath, "error", err)
+		http.Error(w, "Page not rendered yet", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.Write(data)
+}
+
+// handleBooxVersions returns a list of archived versions for a Boox note.
+// GET /files/boox/versions?path=<absolute_path>
+func (h *Handler) handleBooxVersions(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if h.booxStore == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]interface{}{})
+		return
+	}
+	versions, err := h.booxStore.GetVersions(r.Context(), path)
+	if err != nil {
+		h.logger.Error("boox versions: get versions failed", "path", path, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if versions == nil {
+		versions = []booxpipeline.BooxVersion{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(versions)
 }

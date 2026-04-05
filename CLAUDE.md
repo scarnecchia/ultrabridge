@@ -2,12 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Last verified: 2026-04-04
+Last verified: 2026-04-05
 
-Go sidecar service for Supernote Private Cloud. Three subsystems:
+Go sidecar service for Supernote Private Cloud. Four subsystems:
 1. **CalDAV task sync** -- CalDAV VTODO over local SQLite task store
 2. **Device sync** -- bidirectional task sync with Supernote via SPC REST API (adapter-based)
-3. **Notes pipeline** -- scans .note files, extracts/OCRs text, indexes for full-text search
+3. **Supernote notes pipeline** -- scans Supernote .note files, extracts/OCRs text, indexes for full-text search
+4. **Boox notes pipeline** -- receives Boox .note files via WebDAV, parses ZIP+protobuf, renders strokes, OCRs, indexes for unified search
 
 ## Bash Commands: No `cd &&` Compounds
 
@@ -25,11 +26,17 @@ Instead: `git -C /path`, `go -C /path build`, or absolute paths.
 - `internal/tasksync/supernote/` -- Supernote SPC REST adapter: JWT auth, field mapping, migration (see domain CLAUDE.md)
 - `internal/sync/` -- Engine.IO v3 notifier: STARTSYNC push + inbound events (see domain CLAUDE.md)
 - `internal/auth/` -- Basic Auth middleware (bcrypt)
-- `internal/config/` -- env vars (UB_ prefix) + .dbenv file loading + pipeline config + sync config
+- `internal/config/` -- env vars (UB_ prefix) + .dbenv file loading + pipeline config + sync config + boox config
 - `internal/db/` -- MariaDB pool + single-user discovery
 - `internal/logging/` -- structured slog, file rotation, syslog, WebSocket broadcast
-- `internal/web/` -- HTML UI: task list, Files tab, Search tab, processor C&C, sync status, SSE log stream (see domain CLAUDE.md)
-- `internal/notedb/` -- SQLite DB opener + schema migrations for notes pipeline (see domain CLAUDE.md)
+- `internal/web/` -- HTML UI: task list, Files tab, Search tab, processor C&C, sync status, Boox render/versions, SSE log stream (see domain CLAUDE.md)
+- `internal/booxnote/` -- Boox .note ZIP parser: protobuf pages, nested shape ZIPs, binary point files (see domain CLAUDE.md)
+- `internal/booxnote/proto/` -- Generated protobuf code for Boox .note format (NoteInfo, VirtualPage, ShapeInfoProto)
+- `internal/booxnote/testutil/` -- Exported test helper: builds synthetic .note ZIP files for tests
+- `internal/booxrender/` -- Stroke renderer: pressure-sensitive scribbles, geometric shapes via fogleman/gg (see domain CLAUDE.md)
+- `internal/booxpipeline/` -- Boox processing pipeline: store, worker, processor (parse/render/OCR/index) (see domain CLAUDE.md)
+- `internal/webdav/` -- WebDAV server for Boox file uploads with versioning (see domain CLAUDE.md)
+- `internal/notedb/` -- SQLite DB opener + schema migrations for notes pipeline + Boox pipeline (see domain CLAUDE.md)
 - `internal/notestore/` -- file inventory (scan, list, get), content hashing, job transfer against SQLite notes table (see domain CLAUDE.md)
 - `internal/processor/` -- background OCR job queue: backup, extract, render, OCR, inject, SPC catalog sync (see domain CLAUDE.md)
 - `internal/search/` -- FTS5 full-text search over note content (see domain CLAUDE.md)
@@ -65,6 +72,9 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 
 - `github.com/jdkruzr/go-sn` -- Supernote .note file parser/writer (rendering, RECOGNTEXT injection, JIIX)
 - `github.com/emersion/go-webdav` -- CalDAV protocol handler
+- `github.com/fogleman/gg` -- 2D rendering (Boox stroke renderer)
+- `google.golang.org/protobuf` -- Boox .note protobuf parsing
+- `golang.org/x/net/webdav` -- WebDAV protocol handler (Boox uploads)
 - `modernc.org/sqlite` -- pure-Go SQLite (no CGO)
 
 ## Subcommands
@@ -104,3 +114,14 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 - Requeue with delay: jobs can be set back to pending with a future `requeue_after` timestamp
 - Content hash dedup: SHA-256 stored on job completion; pipeline detects moved/renamed files and transfers job records instead of re-processing
 - Pipeline env vars: UB_NOTES_PATH, UB_DB_PATH, UB_BACKUP_PATH, UB_OCR_*
+
+### Boox Notes Pipeline (WebDAV + shared SQLite notedb)
+- Boox .note format: ZIP containing protobuf metadata, nested shape ZIPs, binary point files
+- WebDAV upload endpoint at `/webdav/` (behind Basic Auth) receives .note files from Boox devices
+- On upload: parse ZIP, render pages to JPEG cache, OCR via vision API, index into shared FTS5 tables
+- Shares SQLite notedb with Supernote pipeline (boox_notes, boox_jobs tables alongside notes, jobs)
+- Shares search index: same note_content/note_fts tables, unified search across both device types
+- Shares OCR client: same processor.Indexer and processor.OCRClient interfaces
+- File versioning: overwritten .note files archived to `.versions/` directory tree
+- Rendered page cache: JPEG images at `{UB_BOOX_NOTES_PATH}/.cache/{noteID}/page_{N}.jpg`
+- Config: UB_BOOX_ENABLED (feature flag), UB_BOOX_NOTES_PATH (filesystem root for uploads + cache)
