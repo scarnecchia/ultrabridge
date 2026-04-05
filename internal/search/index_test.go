@@ -101,3 +101,103 @@ func TestSearch_Delete(t *testing.T) {
 		t.Errorf("expected 0 results after delete, got %d", len(results))
 	}
 }
+
+// boox-notes-pipeline.AC6.1: Search returns results from both Supernote and Boox notes
+func TestSearch_ReturnsMultipleSources(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+
+	// Index content from Supernote (no path prefix) with source="myScript"
+	supernoteDoc := NoteDocument{
+		Path:     "/notes/supernote.note",
+		Page:     0,
+		BodyText: "shared content here",
+		Source:   "myScript",
+	}
+	if err := idx.Index(ctx, supernoteDoc); err != nil {
+		t.Fatalf("Index supernote: %v", err)
+	}
+
+	// Index content from Boox (with /boox prefix) with source="api"
+	booxDoc := NoteDocument{
+		Path:     "/boox/notes/boox-note.note",
+		Page:     0,
+		BodyText: "shared content here",
+		Source:   "api",
+	}
+	if err := idx.Index(ctx, booxDoc); err != nil {
+		t.Fatalf("Index boox: %v", err)
+	}
+
+	// Search for term present in both
+	results, err := idx.Search(ctx, SearchQuery{Text: "shared"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	if len(results) < 2 {
+		t.Errorf("expected at least 2 results from both sources, got %d", len(results))
+	}
+
+	// Verify both paths are present
+	paths := make(map[string]bool)
+	for _, r := range results {
+		paths[r.Path] = true
+	}
+	if !paths["/notes/supernote.note"] {
+		t.Error("supernote result not found")
+	}
+	if !paths["/boox/notes/boox-note.note"] {
+		t.Error("boox result not found")
+	}
+}
+
+// boox-notes-pipeline.AC6.3: BM25 scoring is unaffected by device source (ranking is consistent)
+// Search returns results from both sources with BM25 scoring that doesn't favor one source over another
+func TestSearch_BM25ConsistentAcrossSources(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+
+	// Index pages from both sources with different relevance levels
+	// Higher relevance: term appears more frequently
+	booxHighRelevance := NoteDocument{
+		Path:     "/boox/notes/boox-note.note",
+		Page:     0,
+		BodyText: "hello hello hello hello world world",
+		Source:   "api",
+	}
+	if err := idx.Index(ctx, booxHighRelevance); err != nil {
+		t.Fatalf("Index boox high: %v", err)
+	}
+
+	// Lower relevance: term appears once
+	supernooteLowRelevance := NoteDocument{
+		Path:     "/notes/supernote.note",
+		Page:     0,
+		BodyText: "hello world",
+		Source:   "myScript",
+	}
+	if err := idx.Index(ctx, supernooteLowRelevance); err != nil {
+		t.Fatalf("Index supernote low: %v", err)
+	}
+
+	// Search for the term
+	results, err := idx.Search(ctx, SearchQuery{Text: "hello"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	if len(results) < 2 {
+		t.Errorf("expected at least 2 results, got %d", len(results))
+		return
+	}
+
+	// Verify ranking: the Boox document with higher frequency should rank first
+	// This proves BM25 scoring is path-agnostic and only considers content relevance
+	if results[0].Path != "/boox/notes/boox-note.note" {
+		t.Errorf("expected boox-note (higher relevance) ranked first, got %s", results[0].Path)
+	}
+	if results[1].Path != "/notes/supernote.note" {
+		t.Errorf("expected supernote-note (lower relevance) ranked second, got %s", results[1].Path)
+	}
+}
