@@ -45,8 +45,10 @@ func (a *Adapter) Pull(ctx context.Context, since string) ([]tasksync.RemoteTask
 		return nil, since, fmt.Errorf("fetch SPC tasks: %w", err)
 	}
 
+	a.logger.Info("pull fetched tasks from SPC", "count", len(spcTasks))
 	var remote []tasksync.RemoteTask
 	for _, spc := range spcTasks {
+		a.logger.Debug("pull task", "id", spc.ID, "title", spc.Title, "deleted", spc.IsDeleted)
 		if spc.IsDeleted == "Y" {
 			continue
 		}

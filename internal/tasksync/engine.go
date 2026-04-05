@@ -280,6 +280,7 @@ func (e *SyncEngine) processRemoteTask(ctx context.Context, adapterID string, rt
 
 	if entry == nil {
 		// New remote task — import to local store
+		e.logger.Info("importing new remote task", "remote_id", rt.RemoteID, "title", rt.Title)
 		t := remoteToLocal(rt)
 		if err := e.store.Create(ctx, t); err != nil {
 			return fmt.Errorf("create imported task: %w", err)
