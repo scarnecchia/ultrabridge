@@ -392,6 +392,8 @@
                     {{$src := noteSource .Path}}
                     {{if eq $src "Boox"}}
                       <span class="badge badge-boox" title="Boox">B</span>
+                    {{else}}
+                      <span class="badge badge-sn" title="Supernote">SN</span>
                     {{end}}
                   </td>
                   <td>{{.FileType}}</td>
