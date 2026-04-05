@@ -6,10 +6,12 @@
  <h1>UltraBridge</h1>
 </p>
 
-UltraBridge is a sidecar service for [Supernote Private Cloud](https://support.supernote.com/article/75/set-up-supernote-partner-cloud), adding two capabilities to the self-hosted Supernote stack:
+UltraBridge is a sidecar service for [Supernote Private Cloud](https://support.supernote.com/article/75/set-up-supernote-partner-cloud), adding four capabilities to the self-hosted Supernote stack:
 
 1. **CalDAV task sync** — synchronise Supernote tasks with any CalDAV client (DAVx5, GNOME Evolution, 2Do, etc.)
-2. **Notes pipeline** — automatically discover `.note` files, extract handwritten text, index it for full-text search, and optionally run vision-API OCR
+2. **Supernote notes pipeline** — automatically discover `.note` files, extract handwritten text, index it for full-text search, and optionally run vision-API OCR
+3. **Boox notes pipeline** — accept Boox `.note` file uploads via WebDAV, parse the ZIP/protobuf format, render pages, OCR, and index for unified search alongside Supernote notes
+4. **Unified search** — full-text search across both Supernote and Boox notes with source indicators
 
 This software was developed using Claude Code, trained on open source software, and will therefore always be open-source software.
 
@@ -18,6 +20,7 @@ This software was developed using Claude Code, trained on open source software, 
 - **Supernote Private Cloud** running with Docker Compose (at `/mnt/supernote/`)
 - **Docker** and **Docker Compose**
 - For CalDAV sync: a CalDAV client on your device
+- For Boox integration: a Boox device with WebDAV export support (Tab Ultra C Pro, NoteAir, Note Air5C, etc.)
 - For OCR: an API key for Anthropic or OpenRouter
 
 ## Quick Start
@@ -31,7 +34,7 @@ Have the following ready:
 - **Full path for backups** *(recommended)* — a directory with sufficient free space; UltraBridge copies each `.note` file here before writing OCR results, so you can always recover the original
 - **API credentials** *(optional, for OCR)* — an [OpenRouter](https://openrouter.ai) key, a direct Anthropic key, or the base URL of a local vLLM instance
 
-You can skip the notes pipeline during install and enable it later by re-running `install.sh`.
+You can skip the notes pipeline and/or Boox integration during install and enable them later by re-running `install.sh`.
 
 ### Run the installer
 
@@ -39,7 +42,7 @@ You can skip the notes pipeline during install and enable it later by re-running
 ./install.sh
 ```
 
-It prompts for username, password, port, collection name, and optional notes pipeline settings, then builds and starts the container. Safe to re-run to change configuration.
+It prompts for username, password, port, collection name, optional notes pipeline settings, and optional Boox WebDAV integration, then builds and starts the container. Safe to re-run to change configuration.
 
 After code changes, rebuild and restart without reconfiguring:
 
@@ -64,8 +67,8 @@ Navigate to `http://<host>:<port>/` after starting the service.
 | Tab | What it does |
 |-----|-------------|
 | **Tasks** | View, create, and complete Supernote tasks |
-| **Files** | Browse `.note` files; queue/skip/force individual files; start/stop the OCR processor |
-| **Search** | Full-text keyword search over indexed note content |
+| **Files** | Browse `.note` files from both Supernote and Boox; source badges distinguish origin; queue/skip/force individual files; view rendered Boox pages and version history |
+| **Search** | Full-text keyword search across all indexed notes with source badges (Supernote / Boox) |
 | **Logs** | Live log stream (SSE) |
 
 ## CalDAV Client Setup
@@ -131,6 +134,19 @@ All pipeline variables are optional. Omitting `UB_NOTES_PATH` disables the pipel
 | `UB_OCR_CONCURRENCY` | `1` | Parallel OCR workers |
 | `UB_OCR_MAX_FILE_MB` | `0` | Skip files larger than N MB (0 = no limit) |
 
+### Boox Notes Pipeline
+
+When enabled, UltraBridge runs a WebDAV server at `/webdav/` that Boox devices can sync to. Uploaded `.note` files are parsed (ZIP + protobuf), rendered to page images, OCR'd, and indexed alongside Supernote notes.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UB_BOOX_ENABLED` | `false` | Enable Boox WebDAV uploads and processing |
+| `UB_BOOX_NOTES_PATH` | (empty) | Root directory for Boox note uploads (WebDAV root) |
+
+On the Boox device, configure WebDAV sync under Settings > Cloud Storage with `http://<host>:<port>/webdav/` as the server URL and your UltraBridge credentials. Uploaded notes appear in the Files tab with a "B" badge.
+
+Re-uploaded notes are versioned automatically — the previous version is archived under `.versions/` before the new file is written.
+
 ### Task Store
 
 | Variable | Default | Description |
@@ -164,38 +180,42 @@ When sync is enabled, tasks are bidirectionally synced between UltraBridge and t
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ Supernote Private Cloud Stack                                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐ │
-│  │  nginx       │  │  MariaDB     │  │  .note file store     │ │
-│  │  (proxy)     │  │  (tasks)     │  │  (NFS / volume)       │ │
-│  └──────────────┘  └──────────────┘  └───────────────────────┘ │
-│         ▲                 ▲                       ▲             │
-│         │                 │                       │             │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  UltraBridge                                             │  │
-│  │                                                          │  │
-│  │  ┌─────────────────────────┐  ┌──────────────────────┐  │  │
-│  │  │  CalDAV subsystem       │  │  Notes pipeline      │  │  │
-│  │  │  CalDAV ← TaskStore     │  │  Pipeline            │  │  │
-│  │  │         → MariaDB       │  │   ↓ fsnotify watcher │  │  │
-│  │  │         → Engine.IO     │  │   ↓ reconciler       │  │  │
-│  │  └─────────────────────────┘  │  NoteStore → SQLite  │  │  │
-│  │                               │  Processor (OCR jobs)│  │  │
-│  │  ┌─────────────────────────┐  │  SearchIndex (FTS5)  │  │  │
-│  │  │  Web UI                 │  └──────────────────────┘  │  │
-│  │  │  Tasks / Files / Search │                             │  │
-│  │  └─────────────────────────┘                             │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│ Supernote Private Cloud Stack                                        │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────────┐ │
+│  │  nginx       │  │  MariaDB     │  │  .note file store          │ │
+│  │  (proxy)     │  │  (tasks)     │  │  (NFS / volume)            │ │
+│  └──────────────┘  └──────────────┘  └────────────────────────────┘ │
+│         ▲                 ▲                       ▲                  │
+│         │                 │                       │                  │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  UltraBridge                                                  │  │
+│  │                                                               │  │
+│  │  ┌──────────────────────┐  ┌───────────────────────────────┐  │  │
+│  │  │  CalDAV subsystem    │  │  Supernote notes pipeline     │  │  │
+│  │  │  CalDAV ← TaskStore  │  │   ↓ fsnotify watcher          │  │  │
+│  │  │        → MariaDB     │  │   ↓ reconciler                │  │  │
+│  │  │        → Engine.IO   │  │  NoteStore → SQLite           │  │  │
+│  │  └──────────────────────┘  │  Processor (OCR jobs)         │  │  │
+│  │                            └───────────────────────────────┘  │  │
+│  │  ┌──────────────────────┐  ┌───────────────────────────────┐  │  │
+│  │  │  Boox notes pipeline │  │  Shared services              │  │  │
+│  │  │  WebDAV server ←─────│──│  SearchIndex (FTS5)           │  │  │
+│  │  │   ↓ .note parser    │  │  Web UI (Tasks/Files/Search)  │  │  │
+│  │  │   ↓ page renderer   │  │  Auth middleware               │  │  │
+│  │  │   ↓ OCR + indexer ──│─▶│                                │  │  │
+│  │  │  Version archive     │  │                                │  │  │
+│  │  └──────────────────────┘  └───────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-### Notes pipeline flow
+### Supernote notes pipeline flow
 
 ```
-.note file written/changed
+.note file written/changed on device
          │
          ▼
    fsnotify watcher  ──(2s debounce)──▶  Processor queue
@@ -214,6 +234,32 @@ When sync is enabled, tasks are bidirectionally synced between UltraBridge and t
                   │
                   ▼
            FTS5 search index
+```
+
+### Boox notes pipeline flow
+
+```
+Boox device syncs via WebDAV
+         │
+         ▼
+   WebDAV PUT /webdav/onyx/{model}/{type}/{folder}/{name}.note
+         │
+         ├─ version-on-overwrite (old file → .versions/)
+         ├─ parent directories auto-created
+         └─ upload callback → enqueue job
+                  │
+                  ▼
+   Boox processor picks up job (5s poll)
+         │
+         ├─ parse ZIP (protobuf metadata, shapes, point files)
+         ├─ extract title, device model, page count
+         ├─ render each page → JPEG cache
+         ├─ if OCR enabled: vision API → text
+         ├─ index page text → FTS5
+         └─ job marked done
+                  │
+                  ▼
+   Unified FTS5 search index (shared with Supernote)
 ```
 
 ## Development
@@ -307,6 +353,19 @@ Set `UB_NOTES_PATH` in `.ultrabridge.env` to the directory containing your `.not
 ### OCR jobs stuck in "in_progress"
 
 The watchdog reclaims stuck jobs after 10 minutes. If jobs consistently get stuck, check `UB_OCR_API_URL` and `UB_OCR_API_KEY` are correct and the API is reachable from inside the container.
+
+### Boox WebDAV sync fails
+
+1. Verify `UB_BOOX_ENABLED=true` in `.ultrabridge.env`
+2. Check the WebDAV URL is `http://<host>:<port>/webdav/` (trailing slash required for some Boox firmware)
+3. Confirm credentials match your UltraBridge username/password
+4. Check container logs: `docker logs ultrabridge | grep boox`
+
+### Boox notes not appearing in Files tab
+
+1. Verify `UB_BOOX_NOTES_PATH` is set and the directory exists inside the container
+2. Check the Docker volume mount includes the Boox notes path in `docker-compose.override.yml`
+3. Uploaded files should appear at `{UB_BOOX_NOTES_PATH}/onyx/{model}/...`
 
 ### CalDAV client shows empty collection
 
