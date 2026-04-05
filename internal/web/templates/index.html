@@ -464,7 +464,7 @@
                       <span class="badge badge-sn" title="Supernote">SN</span>
                     {{end}}
                   </td>
-                  <td><a href="/files?path={{.Path}}">{{.Path}}</a></td>
+                  <td><a href="#" onclick="switchTab('files'); showHistory('{{.Path}}'); return false;">{{.Path}}</a></td>
                   <td>{{.Page}}</td>
                   <td>{{.Snippet}}</td>
                 </tr>
