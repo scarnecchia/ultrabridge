@@ -33,10 +33,10 @@ Options:
 
 Prerequisites:
   - Docker and Docker Compose v2
-  - Supernote Private Cloud installed and configured
-  - MariaDB container running (from the Supernote stack)
+  - For Supernote features: Supernote Private Cloud installed and configured
+  - Boox-only mode works without Supernote Private Cloud
 
-Generated files (in your Supernote directory):
+Generated files (in your install directory):
   .ultrabridge.env              Environment/config for the container
   docker-compose.override.yml   Compose service definition
   ultrabridge-data/             Persistent data directory
@@ -128,35 +128,36 @@ if ! docker compose version &>/dev/null; then
 fi
 ok "Docker Compose found"
 
-# Supernote stack directory
-prompt SUPERNOTE_DIR "Supernote Private Cloud directory" "$DEFAULT_SUPERNOTE_DIR"
+# Detect Supernote Private Cloud
+prompt SUPERNOTE_DIR "Install directory" "$DEFAULT_SUPERNOTE_DIR"
 
-if [[ ! -f "$SUPERNOTE_DIR/docker-compose.yml" ]]; then
-    fail "No docker-compose.yml found in $SUPERNOTE_DIR. Is the Supernote Private Cloud installed?"
-fi
-ok "Supernote stack found at $SUPERNOTE_DIR"
+SPC_AVAILABLE=false
+if [[ -f "$SUPERNOTE_DIR/docker-compose.yml" ]] && [[ -f "$SUPERNOTE_DIR/.dbenv" ]]; then
+    SPC_AVAILABLE=true
+    ok "Supernote Private Cloud found at $SUPERNOTE_DIR"
 
-# .dbenv
-if [[ ! -f "$SUPERNOTE_DIR/.dbenv" ]]; then
-    fail "No .dbenv found in $SUPERNOTE_DIR. The Supernote Private Cloud must be configured first."
-fi
-ok ".dbenv found"
-
-# MariaDB running?
-if docker ps --format '{{.Names}}' | grep -q mariadb; then
-    ok "MariaDB container is running"
-else
-    warn "MariaDB container doesn't appear to be running."
-    if [[ "$UNATTENDED" == true ]]; then
-        warn "Continuing in unattended mode..."
+    # MariaDB running?
+    if docker ps --format '{{.Names}}' | grep -q mariadb; then
+        ok "MariaDB container is running"
     else
-        echo "  UltraBridge needs MariaDB. Start the Supernote stack first:"
-        echo "  cd $SUPERNOTE_DIR && docker compose up -d"
-        echo
-        printf 'Continue anyway? [y/N]: '
-        read -r yn
-        [[ "$yn" =~ ^[Yy] ]] || exit 1
+        warn "MariaDB container doesn't appear to be running."
+        if [[ "$UNATTENDED" == true ]]; then
+            warn "Continuing in unattended mode..."
+        else
+            echo "  Supernote features need MariaDB. Start the Supernote stack first:"
+            echo "  cd $SUPERNOTE_DIR && docker compose up -d"
+            echo
+            printf 'Continue anyway? [y/N]: '
+            read -r yn
+            [[ "$yn" =~ ^[Yy] ]] || exit 1
+        fi
     fi
+else
+    info "No Supernote Private Cloud detected — running in standalone mode."
+    echo "  Supernote notes pipeline and device sync will not be available."
+    echo "  Boox device integration, CalDAV tasks, and web UI will work normally."
+    echo
+    mkdir -p "$SUPERNOTE_DIR"
 fi
 
 echo
@@ -164,19 +165,18 @@ echo
 # --- fresh install ---
 
 DATA_DIR="$SUPERNOTE_DIR/ultrabridge-data"
-if [[ "$NUKE_INSTALL" == true ]]; then
-    warn "NUKE: deleting ALL UltraBridge data"
-    COMPOSE="sudo docker compose -f $SUPERNOTE_DIR/docker-compose.yml -f $SUPERNOTE_DIR/docker-compose.override.yml"
-    $COMPOSE stop ultrabridge 2>/dev/null || true
-    rm -rf "$DATA_DIR"
-    mkdir -p "$DATA_DIR"
-    ok "All data deleted"
-elif [[ "$FRESH_INSTALL" == true ]]; then
-    if [[ -f "$DATA_DIR/ultrabridge.db" ]]; then
+if [[ "$NUKE_INSTALL" == true ]] || [[ "$FRESH_INSTALL" == true ]]; then
+    # Stop container if running (try both compose file patterns)
+    docker stop ultrabridge 2>/dev/null || true
+    if [[ "$NUKE_INSTALL" == true ]]; then
+        warn "NUKE: deleting ALL UltraBridge data"
+        rm -rf "$DATA_DIR"
+        mkdir -p "$DATA_DIR"
+        ok "All data deleted"
+    elif [[ -f "$DATA_DIR/ultrabridge.db" ]]; then
         warn "Fresh install: clearing database"
-        COMPOSE="sudo docker compose -f $SUPERNOTE_DIR/docker-compose.yml -f $SUPERNOTE_DIR/docker-compose.override.yml"
-        $COMPOSE stop ultrabridge 2>/dev/null || true
         rm -f "$DATA_DIR/ultrabridge.db" "$DATA_DIR/ultrabridge.db-wal" "$DATA_DIR/ultrabridge.db-shm"
+        rm -f "$DATA_DIR/ultrabridge-tasks.db" "$DATA_DIR/ultrabridge-tasks.db-wal" "$DATA_DIR/ultrabridge-tasks.db-shm"
         ok "Database cleared"
     fi
 fi
@@ -193,6 +193,21 @@ prompt UB_USERNAME "Username" "$DEFAULT_USERNAME"
 prompt_password UB_PASSWORD "Password"
 prompt UB_PORT "Port to expose on host" "$DEFAULT_PORT"
 prompt UB_COLLECTION_NAME "CalDAV collection name" "Supernote Tasks"
+
+UB_NOTES_PATH=""
+UB_BACKUP_PATH=""
+UB_OCR_ENABLED=false
+UB_OCR_FORMAT=""
+UB_OCR_API_URL=""
+UB_OCR_API_KEY=""
+UB_OCR_MODEL=""
+UB_SN_SYNC_ENABLED="false"
+UB_SN_ACCOUNT=""
+UB_SN_SYNC_INTERVAL="300"
+UB_SN_API_URL=""
+UB_SN_PASSWORD=""
+
+if [[ "$SPC_AVAILABLE" == true ]]; then
 
 echo
 info "── Supernote Notes Pipeline (optional) ──"
@@ -256,11 +271,6 @@ echo "Sync tasks between UltraBridge and your Supernote device."
 echo "This requires the Supernote Private Cloud to be running."
 echo ""
 
-UB_SN_SYNC_ENABLED="false"
-UB_SN_SYNC_INTERVAL="300"
-UB_SN_API_URL=""
-UB_SN_PASSWORD=""
-
 if [[ "$UNATTENDED" == true ]]; then
     enable_sync=$([[ "${UB_SN_SYNC_ENABLED:-false}" == "true" ]] && echo "y" || echo "n")
 else
@@ -273,6 +283,8 @@ if [[ "${enable_sync,,}" == "y" ]]; then
     prompt UB_SN_SYNC_INTERVAL "Sync interval (seconds)" "300"
     prompt_password UB_SN_PASSWORD "Supernote Private Cloud password"
 fi
+
+fi  # end SPC_AVAILABLE
 
 echo
 info "── Boox Device Integration ──"
@@ -425,7 +437,9 @@ if [[ -n "$UB_BOOX_NOTES_PATH" ]]; then
       - ${UB_BOOX_NOTES_PATH}:${UB_BOOX_NOTES_PATH}"
 fi
 
-cat > "$SUPERNOTE_DIR/docker-compose.override.yml" <<EOF
+if [[ "$SPC_AVAILABLE" == true ]]; then
+    # Attach to Supernote stack with MariaDB
+    cat > "$SUPERNOTE_DIR/docker-compose.override.yml" <<EOF
 services:
   ultrabridge:
     image: ultrabridge:dev
@@ -443,18 +457,39 @@ $VOLUMES_BLOCK
       - mariadb
     restart: unless-stopped
 EOF
+else
+    # Standalone mode — no MariaDB, no .dbenv
+    cat > "$SUPERNOTE_DIR/docker-compose.yml" <<EOF
+services:
+  ultrabridge:
+    image: ultrabridge:dev
+    build:
+      context: $SCRIPT_DIR
+      dockerfile: Dockerfile
+    container_name: ultrabridge
+    ports:
+      - "${UB_PORT}:8443"
+    env_file:
+      - .ultrabridge.env
+$VOLUMES_BLOCK
+    restart: unless-stopped
+EOF
+fi
 
 ok "Docker Compose override written"
 
 # --- build and start ---
 
-# The Supernote stack's .dbenv is root-owned (600), so docker compose
-# needs sudo to read it via env_file. This matches how the Supernote
-# stack itself is managed.
-COMPOSE="sudo docker compose -f $SUPERNOTE_DIR/docker-compose.yml -f $SUPERNOTE_DIR/docker-compose.override.yml"
+if [[ "$SPC_AVAILABLE" == true ]]; then
+    # SPC mode: .dbenv is root-owned (600), so docker compose needs sudo
+    COMPOSE="sudo docker compose -f $SUPERNOTE_DIR/docker-compose.yml -f $SUPERNOTE_DIR/docker-compose.override.yml"
+else
+    # Standalone mode: single compose file
+    COMPOSE="docker compose -f $SUPERNOTE_DIR/docker-compose.yml"
+fi
 
 echo
-info "Starting UltraBridge (sudo required to read .dbenv)..."
+info "Starting UltraBridge..."
 
 $COMPOSE up -d --force-recreate ultrabridge || fail "Failed to start container"
 
@@ -476,8 +511,11 @@ else
         echo "  $COMPOSE logs ultrabridge"
         echo
         echo "  Common causes:"
+        if [[ "$SPC_AVAILABLE" == true ]]; then
         echo "  - MariaDB not running"
         echo "  - No user in u_user table (open Supernote web UI first)"
+        fi
+        echo "  - Port $UB_PORT already in use"
         exit 1
     fi
 fi

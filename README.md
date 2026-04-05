@@ -17,11 +17,13 @@ This software was developed using Claude Code, trained on open source software, 
 
 ## Prerequisites
 
-- **Supernote Private Cloud** running with Docker Compose (at `/mnt/supernote/`)
-- **Docker** and **Docker Compose**
-- For CalDAV sync: a CalDAV client on your device
+- **Docker** and **Docker Compose v2**
+- For Supernote features: **Supernote Private Cloud** running with Docker Compose
 - For Boox integration: a Boox device with WebDAV export support (Tab Ultra C Pro, NoteAir, Note Air5C, etc.)
+- For CalDAV sync: a CalDAV client on your device
 - For OCR: an API key for Anthropic or OpenRouter
+
+> **Boox-only users:** UltraBridge works without Supernote Private Cloud. The installer auto-detects whether SPC is present and adjusts accordingly. CalDAV tasks, Boox WebDAV uploads, OCR, and search all work in standalone mode.
 
 ## Quick Start
 
@@ -30,11 +32,12 @@ This software was developed using Claude Code, trained on open source software, 
 Have the following ready:
 
 - **Username and password** for CalDAV/web access (you choose these)
-- **Full path to your `.note` files** — the directory where Supernote stores notes, usually `/mnt/supernote/note/your@email.com` (the directory name contains your account email)
-- **Full path for backups** *(recommended)* — a directory with sufficient free space; UltraBridge copies each `.note` file here before writing OCR results, so you can always recover the original
+- **For Supernote pipeline:** full path to your `.note` files (usually `/mnt/supernote/note/your@email.com`)
+- **For Supernote pipeline:** full path for backups *(recommended)* — originals are copied here before OCR writes
+- **For Boox pipeline:** a directory for Boox note uploads (the WebDAV root)
 - **API credentials** *(optional, for OCR)* — an [OpenRouter](https://openrouter.ai) key, a direct Anthropic key, or the base URL of a local vLLM instance
 
-You can skip the notes pipeline and/or Boox integration during install and enable them later by re-running `install.sh`.
+You can skip any feature during install and enable it later by re-running `install.sh`. The installer auto-detects Supernote Private Cloud and only shows relevant prompts.
 
 ### Run the installer
 
@@ -334,7 +337,9 @@ Zeroing RECOGNFILE removes the data the device uses to re-derive RECOGNTEXT, pre
 
 ### "database connection failed"
 
-Check that `.dbenv` is readable and MariaDB is running:
+This is expected in standalone mode (no Supernote Private Cloud). The warning is non-fatal — UltraBridge continues with SQLite-only storage.
+
+If you have SPC installed, check that `.dbenv` is readable and MariaDB is running:
 
 ```bash
 cat /mnt/supernote/.dbenv
