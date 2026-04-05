@@ -13,11 +13,13 @@ fail() { printf '\033[1;31m FAIL \033[0m %s\n' "$*"; exit 1; }
 # Parse arguments: --fresh/-f flag and optional supernote dir
 FRESH=false
 NUKE=false
+YES=false
 SUPERNOTE_DIR="/mnt/supernote"
 for arg in "$@"; do
     case "$arg" in
         --fresh|-f) FRESH=true ;;
         --nuke) NUKE=true ;;
+        -y|--yes) YES=true ;;
         -h|--help)
             cat <<EOF
 Usage: rebuild.sh [OPTIONS] [SUPERNOTE_DIR]
@@ -27,9 +29,10 @@ Requires install.sh to have been run first.
 
 Options:
   --fresh, -f   Clear the SQLite database before rebuilding
-                (prompts for confirmation)
+                (prompts for confirmation unless -y)
   --nuke        Delete ALL UltraBridge data before rebuilding
-                (prompts for confirmation)
+                (prompts for confirmation unless -y)
+  -y, --yes     Skip confirmation prompts (for --fresh and --nuke)
   -h, --help    Show this help message
 
 Arguments:
@@ -55,10 +58,12 @@ if [[ "$FRESH" == true ]]; then
     warn "Fresh install requested. This will DELETE:"
     echo "  - Database: $DATA_DIR/ultrabridge.db"
     echo
-    printf '  Type "yes" to confirm: '
-    read -r confirm
-    if [[ "$confirm" != "yes" ]]; then
-        fail "Aborted."
+    if [[ "$YES" != true ]]; then
+        printf '  Type "yes" to confirm: '
+        read -r confirm
+        if [[ "$confirm" != "yes" ]]; then
+            fail "Aborted."
+        fi
     fi
     info "Stopping container..."
     $COMPOSE stop ultrabridge 2>/dev/null || true
@@ -70,10 +75,12 @@ elif [[ "$NUKE" == true ]]; then
     echo "  - Database: $DATA_DIR/ultrabridge.db"
     echo "  - All data: $DATA_DIR/"
     echo
-    printf '  Type "nuke" to confirm: '
-    read -r confirm
-    if [[ "$confirm" != "nuke" ]]; then
-        fail "Aborted."
+    if [[ "$YES" != true ]]; then
+        printf '  Type "nuke" to confirm: '
+        read -r confirm
+        if [[ "$confirm" != "nuke" ]]; then
+            fail "Aborted."
+        fi
     fi
     info "Stopping container..."
     $COMPOSE stop ultrabridge 2>/dev/null || true

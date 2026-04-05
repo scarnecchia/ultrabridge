@@ -19,11 +19,16 @@ builds the Docker image, and starts the service.
 Safe to re-run: overwrites generated config files each time.
 
 Options:
-  --fresh, -f   Clear the SQLite database before installing
-                (preserves other data in ultrabridge-data/)
-  --nuke        Delete ALL UltraBridge data before installing
-                (removes entire ultrabridge-data/ directory)
-  -h, --help    Show this help message
+  --fresh, -f     Clear the SQLite database before installing
+                  (preserves other data in ultrabridge-data/)
+  --nuke          Delete ALL UltraBridge data before installing
+                  (removes entire ultrabridge-data/ directory)
+  -y, --unattended  Non-interactive mode. Reads all configuration from
+                    environment variables instead of prompting.
+                    Required vars: UB_USERNAME, UB_PASSWORD
+                    Optional: UB_PORT, UB_COLLECTION_NAME, UB_NOTES_PATH,
+                    UB_SN_SYNC_ENABLED, UB_SN_ACCOUNT, UB_SN_PASSWORD, etc.
+  -h, --help      Show this help message
 
 Prerequisites:
   - Docker and Docker Compose v2
@@ -47,6 +52,12 @@ fail()  { printf '\033[1;31m FAIL \033[0m %s\n' "$*"; exit 1; }
 
 prompt() {
     local var="$1" msg="$2" default="$3"
+    if [[ "$UNATTENDED" == true ]]; then
+        # In unattended mode, use existing env var value or default
+        local current="${!var:-$default}"
+        eval "$var=\"$current\""
+        return
+    fi
     local input
     if [[ -n "$default" ]]; then
         printf '%s [%s]: ' "$msg" "$default"
@@ -59,6 +70,13 @@ prompt() {
 
 prompt_password() {
     local var="$1" msg="$2"
+    if [[ "$UNATTENDED" == true ]]; then
+        # In unattended mode, use existing env var value
+        if [[ -z "${!var:-}" ]]; then
+            fail "Required variable $var is not set (unattended mode)"
+        fi
+        return
+    fi
     local pw1 pw2
     while true; do
         printf '%s: ' "$msg"
@@ -79,15 +97,18 @@ prompt_password() {
     done
 }
 
-# --- fresh install option ---
+# --- parse arguments ---
 
 FRESH_INSTALL=false
 NUKE_INSTALL=false
-if [[ "${1:-}" == "--fresh" || "${1:-}" == "-f" ]]; then
-    FRESH_INSTALL=true
-elif [[ "${1:-}" == "--nuke" ]]; then
-    NUKE_INSTALL=true
-fi
+UNATTENDED=false
+for arg in "$@"; do
+    case "$arg" in
+        --fresh|-f) FRESH_INSTALL=true ;;
+        --nuke) NUKE_INSTALL=true ;;
+        -y|--unattended) UNATTENDED=true ;;
+    esac
+done
 
 # --- pre-flight checks ---
 
@@ -125,12 +146,16 @@ if docker ps --format '{{.Names}}' | grep -q mariadb; then
     ok "MariaDB container is running"
 else
     warn "MariaDB container doesn't appear to be running."
-    echo "  UltraBridge needs MariaDB. Start the Supernote stack first:"
-    echo "  cd $SUPERNOTE_DIR && docker compose up -d"
-    echo
-    printf 'Continue anyway? [y/N]: '
-    read -r yn
-    [[ "$yn" =~ ^[Yy] ]] || exit 1
+    if [[ "$UNATTENDED" == true ]]; then
+        warn "Continuing in unattended mode..."
+    else
+        echo "  UltraBridge needs MariaDB. Start the Supernote stack first:"
+        echo "  cd $SUPERNOTE_DIR && docker compose up -d"
+        echo
+        printf 'Continue anyway? [y/N]: '
+        read -r yn
+        [[ "$yn" =~ ^[Yy] ]] || exit 1
+    fi
 fi
 
 echo
@@ -191,8 +216,12 @@ prompt UB_NOTES_PATH "Path to your .note files (leave blank to skip)" ""
 if [[ -n "$UB_NOTES_PATH" ]]; then
     prompt UB_BACKUP_PATH "Backup directory (copy originals here before OCR writes; leave blank to skip)" ""
 
-    printf 'Enable OCR via vision API? [y/N]: '
-    read -r yn
+    if [[ "$UNATTENDED" == true ]]; then
+        yn=$([[ "${UB_OCR_ENABLED:-false}" == "true" ]] && echo "y" || echo "n")
+    else
+        printf 'Enable OCR via vision API? [y/N]: '
+        read -r yn
+    fi
     if [[ "$yn" =~ ^[Yy] ]]; then
         UB_OCR_ENABLED=true
         echo
@@ -231,7 +260,11 @@ UB_SN_SYNC_INTERVAL="300"
 UB_SN_API_URL=""
 UB_SN_PASSWORD=""
 
-read -rp "Enable Supernote task sync? (y/N): " enable_sync
+if [[ "$UNATTENDED" == true ]]; then
+    enable_sync=$([[ "${UB_SN_SYNC_ENABLED:-false}" == "true" ]] && echo "y" || echo "n")
+else
+    read -rp "Enable Supernote task sync? (y/N): " enable_sync
+fi
 if [[ "${enable_sync,,}" == "y" ]]; then
     UB_SN_SYNC_ENABLED="true"
     prompt UB_SN_ACCOUNT "Supernote account (email)" ""
