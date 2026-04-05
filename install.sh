@@ -195,24 +195,24 @@ prompt UB_PORT "Port to expose on host" "$DEFAULT_PORT"
 prompt UB_COLLECTION_NAME "CalDAV collection name" "Supernote Tasks"
 
 echo
-info "Notes Pipeline (optional)"
+info "── Supernote Notes Pipeline (optional) ──"
 echo
-echo "  UltraBridge can scan your .note files, index handwritten text, and"
-echo "  optionally run vision-API OCR to extract content from unrecognised pages."
+echo "  UltraBridge can scan your Supernote .note files, index handwritten text,"
+echo "  and optionally run vision-API OCR to extract content from unrecognised pages."
 echo
 echo "  Before continuing, have these ready:"
-echo "    - Full path to your .note files directory"
+echo "    - Full path to your Supernote .note files directory"
 echo "      (usually /mnt/supernote/note/<your-email@address>)"
 echo "    - Full path to a backup directory with sufficient free space"
 echo "      (recommended — originals are copied here before any OCR writes)"
 echo "    - API credentials if you want OCR"
 echo "      (OpenRouter key, or http://localhost:<port> for a local vLLM)"
 echo
-echo "  Leave the path blank now to skip the pipeline — you can re-run"
+echo "  Leave the path blank now to skip the Supernote pipeline — you can re-run"
 echo "  install.sh at any time to enable it later."
 echo
 
-prompt UB_NOTES_PATH "Path to your .note files (leave blank to skip)" ""
+prompt UB_NOTES_PATH "Path to your Supernote .note files (leave blank to skip)" ""
 
 if [[ -n "$UB_NOTES_PATH" ]]; then
     prompt UB_BACKUP_PATH "Backup directory (copy originals here before OCR writes; leave blank to skip)" ""
@@ -492,6 +492,9 @@ echo "  Files tab:        http://localhost:${UB_PORT}/files"
 echo "  Search tab:       http://localhost:${UB_PORT}/search"
 echo "  CalDAV endpoint:  http://localhost:${UB_PORT}/caldav/tasks/"
 echo "  CalDAV discovery: http://localhost:${UB_PORT}/.well-known/caldav"
+if [[ "$UB_BOOX_ENABLED" == "true" ]]; then
+echo "  Boox WebDAV:      http://localhost:${UB_PORT}/webdav/"
+fi
 echo "  Health check:     http://localhost:${UB_PORT}/health"
 echo
 echo "  Username: $UB_USERNAME"
@@ -500,6 +503,14 @@ echo
 echo "  CalDAV client setup:"
 echo "    Server URL: https://your-host/.well-known/caldav"
 echo "    (Use a reverse proxy like NPM for HTTPS)"
+if [[ "$UB_BOOX_ENABLED" == "true" ]]; then
+echo
+echo "  Boox device setup:"
+echo "    Settings > Cloud Storage > WebDAV"
+echo "    Server URL: http://your-host:${UB_PORT}/webdav/"
+echo "    Username:   $UB_USERNAME"
+echo "    Password:   (the one you just entered)"
+fi
 echo
 echo "  To reconfigure, just run this script again."
 echo "  To view logs: docker logs -f ultrabridge"
