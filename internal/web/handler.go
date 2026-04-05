@@ -120,6 +120,12 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		"formatDueTime": formatDueTime,
 		"formatCreated": formatCreated,
 		"fileTypeStr":   func(ft notestore.FileType) string { return string(ft) },
+		"noteSource": func(path string) string {
+			if h.booxStore != nil && strings.HasPrefix(path, h.booxNotesPath) {
+				return "Boox"
+			}
+			return "Supernote"
+		},
 	}
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
@@ -142,6 +148,8 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("GET /files/history", h.handleFilesHistory)
 	h.mux.HandleFunc("GET /files/content", h.handleFilesContent)
 	h.mux.HandleFunc("GET /files/render", h.handleFilesRender)
+	h.mux.HandleFunc("GET /files/boox/render", h.handleBooxRender)
+	h.mux.HandleFunc("GET /files/boox/versions", h.handleBooxVersions)
 	h.mux.HandleFunc("POST /processor/start", h.handleProcessorStart)
 	h.mux.HandleFunc("POST /processor/stop", h.handleProcessorStop)
 	h.mux.HandleFunc("POST /files/scan", h.handleFilesScan)
@@ -693,4 +701,56 @@ func (h *Handler) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	h.syncProvider.TriggerSync()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(h.syncProvider.Status())
+}
+
+// handleBooxRender serves cached JPEG page images for Boox notes.
+// GET /files/boox/render?path=<absolute_path>&page=<int>
+func (h *Handler) handleBooxRender(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	pageStr := r.URL.Query().Get("page")
+	page, _ := strconv.Atoi(pageStr)
+
+	if h.booxStore == nil {
+		http.Error(w, "Boox not configured", http.StatusNotFound)
+		return
+	}
+
+	// Look up note_id from boox_notes table to construct cache path.
+	// The cache is at {BooxCachePath}/{noteId}/page_{N}.jpg
+	noteID, err := h.booxStore.GetNoteID(r.Context(), path)
+	if err != nil || noteID == "" {
+		h.logger.Debug("boox render: note not found", "path", path, "error", err)
+		http.Error(w, "Note not found", http.StatusNotFound)
+		return
+	}
+	cachePath := filepath.Join(h.booxCachePath, noteID, fmt.Sprintf("page_%d.jpg", page))
+
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		h.logger.Debug("boox render: page not rendered yet", "path", cachePath, "error", err)
+		http.Error(w, "Page not rendered yet", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.Write(data)
+}
+
+// handleBooxVersions returns a list of archived versions for a Boox note.
+// GET /files/boox/versions?path=<absolute_path>
+func (h *Handler) handleBooxVersions(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if h.booxStore == nil {
+		json.NewEncoder(w).Encode([]interface{}{})
+		return
+	}
+	versions, err := h.booxStore.GetVersions(r.Context(), path)
+	if err != nil {
+		h.logger.Error("boox versions: get versions failed", "path", path, "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(versions)
 }

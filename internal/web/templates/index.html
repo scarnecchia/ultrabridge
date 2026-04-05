@@ -214,6 +214,17 @@
         .badge-failed      { background: #f8d7da; color: #842029; }
         .badge-skipped     { background: #e2e3e5; color: #41464b; }
         .badge-unsupported { background: #f0f0f0; color: #999; font-style: italic; }
+        .badge-boox {
+            display: inline-block;
+            padding: 1px 5px;
+            font-size: 10px;
+            font-weight: bold;
+            color: #fff;
+            background-color: #6b7280;
+            border-radius: 3px;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
     </style>
 </head>
 <body>
@@ -367,6 +378,10 @@
                   <td>
                     {{if eq (fileTypeStr .FileType) "note"}}📝{{else if eq (fileTypeStr .FileType) "pdf"}}📄{{else if eq (fileTypeStr .FileType) "epub"}}📚{{else}}📎{{end}}
                     {{if .IsDir}}<a href="/files?path={{.RelPath}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}
+                    {{$src := noteSource .Path}}
+                    {{if eq $src "Boox"}}
+                      <span class="badge badge-boox" title="Boox">B</span>
+                    {{end}}
                   </td>
                   <td>{{.FileType}}</td>
                   <td>{{.SizeBytes}}</td>
@@ -689,6 +704,10 @@
                 pagesDiv.innerHTML = '<p style="color:#666;">No indexed content.</p>';
                 return;
               }
+
+              // Detect source from first page (all pages have same source)
+              var isBoox = pages.length > 0 && pages[0].Source === 'api';
+
               pagesDiv.innerHTML = '<h4 style="margin:0 0 0.5rem;">Pages</h4>';
               pages.forEach(function(pg) {
                 var div = document.createElement('div');
@@ -697,7 +716,11 @@
                 var imgDiv = document.createElement('div');
                 imgDiv.style.cssText = 'flex-shrink:0;';
                 var img = document.createElement('img');
-                img.src = '/files/render?path=' + encodeURIComponent(pg.Path) + '&page=' + pg.Page;
+                // Use Boox render endpoint if Boox note, otherwise use standard render
+                var renderUrl = isBoox
+                    ? '/files/boox/render?path=' + encodeURIComponent(path) + '&page=' + pg.Page
+                    : '/files/render?path=' + encodeURIComponent(path) + '&page=' + pg.Page;
+                img.src = renderUrl;
                 img.alt = 'Page ' + pg.Page;
                 img.style.cssText = 'width:200px; border:1px solid #ddd; border-radius:3px; background:#fafafa;';
                 img.onerror = function() { this.alt = 'No render'; this.style.display = 'none'; };
@@ -716,6 +739,27 @@
                 div.appendChild(textDiv);
                 pagesDiv.appendChild(div);
               });
+
+              // If Boox note, fetch and display version history
+              if (isBoox) {
+                fetch('/files/boox/versions?path=' + encodeURIComponent(path))
+                  .then(function(r) { return r.json(); })
+                  .then(function(versions) {
+                    if (!versions || versions.length === 0) {
+                      return;
+                    }
+                    var versionsHtml = '<h4 style="margin:1rem 0 0.5rem;">Version History</h4>';
+                    versionsHtml += '<ul style="font-size:0.9rem; color:#555; padding-left:1.5rem;">';
+                    versions.forEach(function(v) {
+                      versionsHtml += '<li>' + v.Timestamp + ' (' + (v.SizeBytes / 1024).toFixed(1) + ' KB)</li>';
+                    });
+                    versionsHtml += '</ul>';
+                    pagesDiv.innerHTML += versionsHtml;
+                  })
+                  .catch(function() {
+                    // silently fail if versions can't be loaded
+                  });
+              }
             })
             .catch(function() {
               pagesDiv.innerHTML = '<p style="color:#842029;">Failed to load content.</p>';
