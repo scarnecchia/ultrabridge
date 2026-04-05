@@ -32,7 +32,7 @@ type noteOpts struct {
 }
 
 // buildTestNote constructs a complete Boox .note ZIP in memory with the given options.
-func buildTestNote(t *testing.T, opts noteOpts) io.ReaderAt {
+func buildTestNote(t *testing.T, opts noteOpts) *bytes.Reader {
 	if opts.NoteID == "" {
 		opts.NoteID = "test-note-id"
 	}

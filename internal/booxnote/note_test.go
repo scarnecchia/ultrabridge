@@ -22,7 +22,15 @@ func TestOpen_ExtractsTitle(t *testing.T) {
 		},
 	})
 
-	note, err := Open(reader, int64(reader.(*bytes.Reader).Len()))
+	size, err := reader.Seek(0, 2) // Seek to end to get size
+	if err != nil {
+		t.Fatalf("Seek failed: %v", err)
+	}
+	_, err = reader.Seek(0, 0) // Reset to beginning
+	if err != nil {
+		t.Fatalf("Seek failed: %v", err)
+	}
+	note, err := Open(reader, size)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
@@ -46,7 +54,15 @@ func TestOpen_ExtractsPageDimensions(t *testing.T) {
 		},
 	})
 
-	note, err := Open(reader, int64(reader.(*bytes.Reader).Len()))
+	size, err := reader.Seek(0, 2) // Seek to end to get size
+	if err != nil {
+		t.Fatalf("Seek failed: %v", err)
+	}
+	_, err = reader.Seek(0, 0) // Reset to beginning
+	if err != nil {
+		t.Fatalf("Seek failed: %v", err)
+	}
+	note, err := Open(reader, size)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
@@ -110,7 +126,15 @@ func TestOpen_DeserializesShapes(t *testing.T) {
 		},
 	})
 
-	note, err := Open(reader, int64(reader.(*bytes.Reader).Len()))
+	size, err := reader.Seek(0, 2) // Seek to end to get size
+	if err != nil {
+		t.Fatalf("Seek failed: %v", err)
+	}
+	_, err = reader.Seek(0, 0) // Reset to beginning
+	if err != nil {
+		t.Fatalf("Seek failed: %v", err)
+	}
+	note, err := Open(reader, size)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
@@ -183,7 +207,15 @@ func TestOpen_CorrelatesShapesToPoints(t *testing.T) {
 		},
 	})
 
-	note, err := Open(reader, int64(reader.(*bytes.Reader).Len()))
+	size, err := reader.Seek(0, 2) // Seek to end to get size
+	if err != nil {
+		t.Fatalf("Seek failed: %v", err)
+	}
+	_, err = reader.Seek(0, 0) // Reset to beginning
+	if err != nil {
+		t.Fatalf("Seek failed: %v", err)
+	}
+	note, err := Open(reader, size)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
@@ -235,7 +267,15 @@ func TestOpen_BlankPage(t *testing.T) {
 		},
 	})
 
-	note, err := Open(reader, int64(reader.(*bytes.Reader).Len()))
+	size, err := reader.Seek(0, 2) // Seek to end to get size
+	if err != nil {
+		t.Fatalf("Seek failed: %v", err)
+	}
+	_, err = reader.Seek(0, 0) // Reset to beginning
+	if err != nil {
+		t.Fatalf("Seek failed: %v", err)
+	}
+	note, err := Open(reader, size)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
@@ -274,7 +314,15 @@ func TestOpen_MultiplePages(t *testing.T) {
 		},
 	})
 
-	note, err := Open(reader, int64(reader.(*bytes.Reader).Len()))
+	size, err := reader.Seek(0, 2) // Seek to end to get size
+	if err != nil {
+		t.Fatalf("Seek failed: %v", err)
+	}
+	_, err = reader.Seek(0, 0) // Reset to beginning
+	if err != nil {
+		t.Fatalf("Seek failed: %v", err)
+	}
+	note, err := Open(reader, size)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
