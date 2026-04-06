@@ -86,7 +86,14 @@ func (m *mockTaskStore) MaxLastModified(ctx context.Context) (int64, error) {
 	return max, nil
 }
 func (m *mockTaskStore) DeleteCompleted(ctx context.Context) (int64, error) {
-	return 0, nil
+	var count int64
+	for id, t := range m.tasks {
+		if t.Status.Valid && t.Status.String == "completed" && t.IsDeleted == "N" {
+			m.tasks[id].IsDeleted = "Y"
+			count++
+		}
+	}
+	return count, nil
 }
 
 // mockNotifier implements SyncNotifier for testing
