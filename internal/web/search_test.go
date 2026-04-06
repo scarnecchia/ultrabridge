@@ -66,6 +66,7 @@ func TestSearchPage_SourceBadges(t *testing.T) {
 		&mockSyncProvider{},
 		nil, // booxStore not needed for this test
 		booxNotesPath,
+		"",  // snNotesPath
 		nil, // noteDB
 		logger,
 		broadcaster,

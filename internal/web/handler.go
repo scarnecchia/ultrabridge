@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -74,6 +75,7 @@ type Handler struct {
 	scanner         FileScanner
 	syncProvider    SyncStatusProvider
 	booxStore       BooxStore
+	snNotesPath     string // UB_NOTES_PATH for Supernote device path mapping
 	booxNotesPath   string
 	booxCachePath   string
 	noteDB          *sql.DB // shared SQLite DB for settings
@@ -102,7 +104,7 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
 		store:         store,
 		notifier:      notifier,
@@ -111,6 +113,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		proc:          proc,
 		scanner:       scanner,
 		syncProvider:  syncProvider,
+		snNotesPath:   snNotesPath,
 		booxStore:     booxStore,
 		booxNotesPath: booxNotesPath,
 		booxCachePath: filepath.Join(booxNotesPath, ".cache"),
@@ -133,6 +136,37 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		},
 		"hasPrefix":  strings.HasPrefix,
 		"trimPrefix": strings.TrimPrefix,
+		"taskLink": func(links string) map[string]interface{} {
+			if links == "" {
+				return nil
+			}
+			data, err := base64.StdEncoding.DecodeString(links)
+			if err != nil {
+				return nil
+			}
+			var link struct {
+				AppName  string `json:"appName"`
+				FilePath string `json:"filePath"`
+				Page     int    `json:"page"`
+			}
+			if err := json.Unmarshal(data, &link); err != nil {
+				return nil
+			}
+			if link.FilePath == "" {
+				return nil
+			}
+			// Map device path to local path.
+			// Device: /storage/emulated/0/Note/... → local: {snNotesPath}/...
+			const devicePrefix = "/storage/emulated/0/Note/"
+			localPath := link.FilePath
+			if h.snNotesPath != "" && strings.HasPrefix(link.FilePath, devicePrefix) {
+				localPath = filepath.Join(h.snNotesPath, link.FilePath[len(devicePrefix):])
+			}
+			return map[string]interface{}{
+				"Path": localPath,
+				"Page": link.Page,
+			}
+		},
 	}
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html")
 	if err != nil {

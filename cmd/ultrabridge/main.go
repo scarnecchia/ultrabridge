@@ -301,7 +301,7 @@ func main() {
 		if booxProc != nil {
 			booxStore = booxProc.Store()
 		}
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, cfg.BooxNotesPath, noteDB, logger, broadcaster)
+		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster)
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 

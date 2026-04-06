@@ -330,6 +330,9 @@
                                     {{if .Detail.Valid}}{{if .Detail.String}}
                                     <br><span class="device-info">{{$detail := .Detail.String}}{{if hasPrefix $detail "From Boox red ink: "}}<a href="/files?detail={{trimPrefix $detail "From Boox red ink: " | urlquery}}" style="color:#6b7280;">{{$detail}}</a>{{else}}{{$detail}}{{end}}</span>
                                     {{end}}{{end}}
+                                    {{if .Links.Valid}}{{with taskLink .Links.String}}
+                                    <br><span class="device-info"><a href="/files?detail={{.Path | urlquery}}" style="color:#6b7280;">⬔ From note, page {{.Page}}</a></span>
+                                    {{end}}{{end}}
                                 </td>
                                 <td>
                                     <span class="task-status {{if eq .Status.String "completed"}}status-completed{{else}}status-needsaction{{end}}">
