@@ -135,6 +135,8 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 			return "Supernote"
 		},
 		"hasPrefix":  strings.HasPrefix,
+		"add":        func(a, b int) int { return a + b },
+		"sub":        func(a, b int) int { return a - b },
 		"trimPrefix": strings.TrimPrefix,
 		"taskLink": func(links string) map[string]interface{} {
 			if links == "" {
@@ -653,9 +655,40 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		files = filtered
 	}
 
+	// Pagination.
+	perPage := 25
+	if pp, err := strconv.Atoi(r.URL.Query().Get("per_page")); err == nil {
+		switch pp {
+		case 10, 25, 50:
+			perPage = pp
+		}
+	}
+	page := 1
+	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 0 {
+		page = p
+	}
+	totalFiles := len(files)
+	totalPages := (totalFiles + perPage - 1) / perPage
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * perPage
+	end := start + perPage
+	if end > totalFiles {
+		end = totalFiles
+	}
+	files = files[start:end]
+
 	data["files"] = files
 	data["relPath"] = relPath
 	data["breadcrumbs"] = buildBreadcrumbs(relPath)
+	data["filesPage"] = page
+	data["filesPerPage"] = perPage
+	data["filesTotalPages"] = totalPages
+	data["filesTotalFiles"] = totalFiles
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {

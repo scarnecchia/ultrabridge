@@ -404,13 +404,19 @@
                 <button type="submit" class="btn-small">⟳ Scan Now</button>
               </form>
               {{if .filesFolders}}
-              <select onchange="window.location='/files?folder='+this.value" style="padding:0.3rem; border:1px solid #ccc; border-radius:3px;">
+              <select onchange="filesNav({folder:this.value,page:1})" style="padding:0.3rem; border:1px solid #ccc; border-radius:3px;">
                 <option value="">All folders</option>
                 {{range .filesFolders}}
                 <option value="{{.}}" {{if eq . $.filesFolder}}selected{{end}}>{{.}}</option>
                 {{end}}
               </select>
               {{end}}
+              <select onchange="filesNav({per_page:this.value,page:1})" style="padding:0.3rem; border:1px solid #ccc; border-radius:3px;">
+                <option value="10" {{if eq .filesPerPage 10}}selected{{end}}>10 / page</option>
+                <option value="25" {{if eq .filesPerPage 25}}selected{{end}}>25 / page</option>
+                <option value="50" {{if eq .filesPerPage 50}}selected{{end}}>50 / page</option>
+              </select>
+              <span style="font-size:0.85rem; color:#666;">{{.filesTotalFiles}} files</span>
             </div>
             <div class="breadcrumb">
               {{range .breadcrumbs}}
@@ -476,6 +482,17 @@
                 {{end}}
               </tbody>
             </table>
+            {{if gt .filesTotalPages 1}}
+            <div style="margin-top:0.75rem; display:flex; align-items:center; gap:0.5rem; font-size:0.9rem;">
+              {{if gt .filesPage 1}}
+                <button class="btn-small" onclick="filesNav({page:{{sub .filesPage 1}}})">◂ Prev</button>
+              {{end}}
+              <span>Page {{.filesPage}} of {{.filesTotalPages}}</span>
+              {{if lt .filesPage .filesTotalPages}}
+                <button class="btn-small" onclick="filesNav({page:{{add .filesPage 1}}})">Next ▸</button>
+              {{end}}
+            </div>
+            {{end}}
           {{else}}
             <p style="padding:1rem; color:#666;">No files found.</p>
           {{end}}
@@ -601,6 +618,19 @@
     <script>
         // Global Boox notes path for client-side source detection
         var booxNotesPath = "{{.BooxNotesPath}}";
+
+        // Navigate files tab preserving current query params.
+        function filesNav(overrides) {
+            var params = new URLSearchParams(window.location.search);
+            for (var key in overrides) {
+                if (overrides[key] === '' || overrides[key] === null) {
+                    params.delete(key);
+                } else {
+                    params.set(key, overrides[key]);
+                }
+            }
+            window.location = '/files?' + params.toString();
+        }
 
         // Hide completed tasks by default on page load
         document.addEventListener('DOMContentLoaded', function() {
