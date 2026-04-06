@@ -325,7 +325,12 @@
                             {{range .tasks}}
                             <tr data-status="{{.Status.String}}">
                                 <td><input type="checkbox" name="task_ids" value="{{.TaskID}}" class="task-checkbox" onchange="updateBulkActions()"></td>
-                                <td class="task-title">{{.Title.String}}</td>
+                                <td class="task-title">
+                                    {{.Title.String}}
+                                    {{if .Detail.Valid}}{{if .Detail.String}}
+                                    <br><span class="device-info">{{$detail := .Detail.String}}{{if hasPrefix $detail "From Boox red ink: "}}<a href="/files?detail={{trimPrefix $detail "From Boox red ink: " | urlquery}}" style="color:#6b7280;">{{$detail}}</a>{{else}}{{$detail}}{{end}}</span>
+                                    {{end}}{{end}}
+                                </td>
                                 <td>
                                     <span class="task-status {{if eq .Status.String "completed"}}status-completed{{else}}status-needsaction{{end}}">
                                         {{if eq .Status.String "completed"}}Completed{{else}}Needs Action{{end}}
