@@ -118,6 +118,19 @@ func (s *Store) Update(ctx context.Context, t *Task) error {
 	return nil
 }
 
+// DeleteCompleted soft-deletes all completed tasks. Returns the number of tasks deleted.
+func (s *Store) DeleteCompleted(ctx context.Context) (int64, error) {
+	now := time.Now().UnixMilli()
+	result, err := s.db.ExecContext(ctx, `UPDATE t_schedule_task SET
+		is_deleted = 'Y', last_modified = ?
+		WHERE user_id = ? AND is_deleted = 'N' AND status = 'completed'`,
+		now, s.userID)
+	if err != nil {
+		return 0, fmt.Errorf("delete completed tasks: %w", err)
+	}
+	return result.RowsAffected()
+}
+
 // MaxLastModified returns the maximum last_modified value across all non-deleted tasks.
 // Used for CTag computation without loading all tasks into memory.
 func (s *Store) MaxLastModified(ctx context.Context) (int64, error) {

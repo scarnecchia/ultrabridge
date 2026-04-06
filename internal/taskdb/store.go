@@ -138,6 +138,19 @@ func (s *Store) Delete(ctx context.Context, taskID string) error {
 	return nil
 }
 
+// DeleteCompleted soft-deletes all completed tasks. Returns the number of tasks deleted.
+func (s *Store) DeleteCompleted(ctx context.Context) (int64, error) {
+	now := time.Now().UnixMilli()
+	result, err := s.db.ExecContext(ctx, `UPDATE tasks SET
+		is_deleted = 'Y', last_modified = ?, updated_at = ?
+		WHERE is_deleted = 'N' AND status = 'completed'`,
+		now, now)
+	if err != nil {
+		return 0, fmt.Errorf("delete completed tasks: %w", err)
+	}
+	return result.RowsAffected()
+}
+
 // IsEmpty returns true if the task store has no tasks (including deleted ones).
 // Used to detect first-run state for migration.
 func (s *Store) IsEmpty(ctx context.Context) (bool, error) {

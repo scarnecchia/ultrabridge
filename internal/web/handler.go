@@ -142,6 +142,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /tasks", h.handleCreateTask)
 	h.mux.HandleFunc("POST /tasks/{id}/complete", h.handleCompleteTask)
 	h.mux.HandleFunc("POST /tasks/bulk", h.handleBulkAction)
+	h.mux.HandleFunc("POST /tasks/purge-completed", h.handlePurgeCompleted)
 	h.mux.HandleFunc("GET /logs", h.handleLogs)
 	h.mux.HandleFunc("GET /settings", h.handleSettings)
 	h.mux.HandleFunc("POST /settings/save", h.handleSettingsSave)
@@ -459,6 +460,26 @@ func (h *Handler) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 	if h.notifier != nil {
 		if err := h.notifier.Notify(ctx); err != nil {
 			h.logger.Warn("failed to notify", "error", err)
+		}
+	}
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (h *Handler) handlePurgeCompleted(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	count, err := h.store.DeleteCompleted(ctx)
+	if err != nil {
+		h.logger.Error("purge completed tasks", "error", err)
+	} else {
+		h.logger.Info("purged completed tasks", "count", count)
+	}
+
+	if h.notifier != nil {
+		if err := h.notifier.Notify(ctx); err != nil {
+			h.logger.Warn("failed to notify after purge", "error", err)
 		}
 	}
 

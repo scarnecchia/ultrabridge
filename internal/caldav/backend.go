@@ -20,6 +20,7 @@ type TaskStore interface {
 	Create(ctx context.Context, t *taskstore.Task) error
 	Update(ctx context.Context, t *taskstore.Task) error
 	Delete(ctx context.Context, taskID string) error
+	DeleteCompleted(ctx context.Context) (int64, error)
 	MaxLastModified(ctx context.Context) (int64, error)
 }
 

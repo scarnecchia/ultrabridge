@@ -85,6 +85,9 @@ func (m *mockTaskStore) MaxLastModified(ctx context.Context) (int64, error) {
 	}
 	return max, nil
 }
+func (m *mockTaskStore) DeleteCompleted(ctx context.Context) (int64, error) {
+	return 0, nil
+}
 
 // mockNotifier implements SyncNotifier for testing
 type mockNotifier struct {

@@ -350,6 +350,9 @@
                     </table>
                 </div>
                 </form>
+                <form method="POST" action="/tasks/purge-completed" style="margin-top:0.5rem; text-align:right;">
+                  <button type="submit" class="btn-small" style="background:#dc3545;" onclick="return confirm('Purge all completed tasks? This cannot be undone.')">✗ Purge Completed</button>
+                </form>
                 {{else}}
                 <div class="empty-state">
                     <p>No tasks yet.</p>
