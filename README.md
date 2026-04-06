@@ -13,7 +13,7 @@ UltraBridge is a data management application for e-ink tablets including Onyx Bo
 3. **Boox notes pipeline** — accept Boox `.note` file uploads via WebDAV, parse the ZIP/protobuf format, render pages, OCR, extract TODOs via color coding, and index for unified search alongside Supernote notes
 4. **Unified search** — full-text search across both Supernote and Boox notes with source indicators
 
-**This software was developed using Claude Code, trained on open source software, and will therefore always be open-source software.**
+**This software was developed using Claude Code, which was trained on open source software, and will therefore always be open-source software.**
 
 ## Prerequisites
 
@@ -392,3 +392,6 @@ The watchdog reclaims stuck jobs after 10 minutes. If jobs consistently get stuc
 ## License
 
 [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0.txt)
+
+## Credits
+This project owes a bunch to two self-hosted Supernote Private Cloud reimplementation projects: [Supernote Knowledge Hub](https://github.com/allenporter/supernote) and [OpenNoteCloud](https://github.com/k4z4n0v4/opennotecloud), both of which helped shape how Ultrabridge evolved (and will continue to in the future).
