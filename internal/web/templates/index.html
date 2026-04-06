@@ -818,14 +818,14 @@
                     ? '/files/boox/render?path=' + encodeURIComponent(path) + '&page=' + pg.Page
                     : '/files/render?path=' + encodeURIComponent(path) + '&page=' + pg.Page;
                 img.src = renderUrl;
-                img.alt = 'Page ' + pg.Page;
+                img.alt = 'Page ' + (pg.Page + 1);
                 img.style.cssText = 'width:200px; border:1px solid #ddd; border-radius:3px; background:#fafafa;';
                 img.onerror = function() { this.alt = 'No render'; this.style.display = 'none'; };
                 imgDiv.appendChild(img);
 
                 var textDiv = document.createElement('div');
                 textDiv.style.cssText = 'flex:1; min-width:0;';
-                var header = '<strong>Page ' + pg.Page + '</strong> <span style="color:#888; font-size:0.8rem;">[' + pg.Source + ']</span>';
+                var header = '<strong>Page ' + (pg.Page + 1) + '</strong> <span style="color:#888; font-size:0.8rem;">[' + pg.Source + ']</span>';
                 var bodyText = pg.BodyText || '<em style="color:#999;">empty</em>';
                 textDiv.innerHTML = header + '<pre style="font-size:0.8rem; white-space:pre-wrap; margin-top:0.3rem; max-height:200px; overflow-y:auto;">' + escapeHtml(bodyText) + '</pre>';
                 if (pg.Keywords) {
