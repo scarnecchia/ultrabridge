@@ -69,10 +69,17 @@ Navigate to `http://<host>:<port>/` after starting the service.
 
 | Tab | What it does |
 |-----|-------------|
-| **Tasks** | View, create, and complete Supernote tasks |
-| **Files** | Browse `.note` files from both Supernote and Boox; source badges distinguish origin; queue/skip/force individual files; view rendered Boox pages and version history |
-| **Search** | Full-text keyword search across all indexed notes with source badges (Supernote / Boox) |
-| **Logs** | Live log stream (SSE) |
+| **Tasks** | View, create, and complete tasks; bulk actions; purge all completed tasks |
+| **Files** | Browse `.note` files from both Supernote and Boox with source badges; view rendered pages, OCR text, and version history; queue/skip/force processing; scan now |
+| **Search** | Full-text keyword search across all indexed notes with source badges and folder filter |
+| **Logs** | Live WebSocket log stream with level filtering |
+| **Settings** | Per-pipeline OCR prompts (Supernote / Boox); red ink to-do extraction toggle and prompt |
+
+### Red Ink To-Do Extraction
+
+When enabled in Settings > Boox, a second OCR pass scans each Boox page for **red handwriting**. Any red text found is automatically created as a CalDAV task — visible in the Tasks tab, synced to your CalDAV client, and pushed to your Supernote device.
+
+This lets you use red ink on your Boox device as a "to-do" marker: write in red, and UltraBridge picks it up. Duplicate detection prevents the same task from being created twice (checks both incomplete and completed tasks).
 
 ## CalDAV Client Setup
 

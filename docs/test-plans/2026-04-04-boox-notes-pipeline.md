@@ -122,3 +122,53 @@
 | AC5.5 | `TestFilesPage_NoBooxNotes` | -- |
 | AC6.1-AC6.3 | All covered | E2E mixed search |
 | AC7.1-AC7.4 | -- | Phase 4 steps |
+
+## Post-Plan Features (added during integration testing)
+
+The following features were added after the initial 7-phase plan and have their own test coverage.
+
+### Automated Tests
+
+| Feature | Tests | Location |
+|---------|-------|----------|
+| Wrapper message unwrapping | `TestOpen_WrappedNoteInfo`, `TestUnwrapField1` | `booxnote/format_test.go` |
+| Wrapped pageNameList JSON | `TestOpen_WrappedPageNameList` | `booxnote/format_test.go` |
+| Rect-format pageSize | `TestOpen_RectPageSize`, `TestParsePageSize_AllFormats` | `booxnote/format_test.go` |
+| Directory entries in point files | `TestOpen_DirectoryEntriesInPointFiles` | `booxnote/format_test.go` |
+| Settings page render | `TestSettingsPage_Renders`, `_InactiveSections`, `_ActiveSections` | `web/routes_test.go` |
+| Settings save (OCR prompts, todo toggle) | `TestSettingsSave_BooxOCRPrompt`, `_SupernoteOCRPrompt` | `web/routes_test.go` |
+| Logs page | `TestLogsPage_Renders` | `web/routes_test.go` |
+| Boox job history routing | `TestFilesHistory_BooxRoute`, `_SupernoteRoute` | `web/routes_test.go` |
+| Purge completed tasks | `TestPurgeCompleted_Redirects`, `_DeletesCompletedTasks` | `web/routes_test.go` |
+| Folder search filter | `TestSearchPage_FolderFilter`, `_FolderDropdown` | `web/routes_test.go` |
+| Todo JSON parsing | `TestParseTodoResponse_*` (7 tests) | `booxpipeline/todo_test.go` |
+| Red ink to task creation | `TestCreateTasksFromTodos_*` (7 tests) | `booxpipeline/todotask_test.go` |
+
+### Human Verification: Red Ink To-Do Extraction
+
+| Step | Action | Expected |
+|------|--------|----------|
+| 1 | In Settings > Boox, set Red Ink To-Do Extraction to "Enabled" | Saved successfully |
+| 2 | On Boox device, create a note with black handwriting and some red handwriting | Both colors visible |
+| 3 | Upload via WebDAV sync | Processing completes (job status "done") |
+| 4 | Check Tasks tab | New task(s) created matching the red text, with detail "From Boox red ink: {path}" |
+| 5 | Click the detail link on the task | Navigates to Files tab with note detail modal open |
+| 6 | Upload the same note again | No duplicate tasks created |
+| 7 | Complete one of the red ink tasks, then re-upload | Completed task not re-created |
+
+### Human Verification: Settings Tab
+
+| Step | Action | Expected |
+|------|--------|----------|
+| 1 | Navigate to /settings | General, Supernote, Boox sections visible |
+| 2 | Edit the Boox OCR prompt, click Save | Redirects back, prompt preserved |
+| 3 | Requeue a Boox note | OCR uses the custom prompt |
+| 4 | Disable Supernote pipeline (unset UB_NOTES_PATH), restart | Supernote section grayed out with explanation |
+
+### Human Verification: Other New Features
+
+| Feature | Steps |
+|---------|-------|
+| Purge Completed | Complete a task, click "✗ Purge Completed", confirm. Task disappears. |
+| Folder Search | Search for a term, select a folder from dropdown. Results filtered to that folder only. |
+| Scan Now | Click "⟳ Scan Now" on Files tab. Deleted files removed from list after scan. |
