@@ -176,6 +176,26 @@ func (s *Store) FailJob(ctx context.Context, jobID int64, errMsg string) error {
 	return nil
 }
 
+// GetLatestJob returns the most recent job for a note path.
+func (s *Store) GetLatestJob(ctx context.Context, notePath string) (*BooxJob, error) {
+	var job BooxJob
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, note_path, status, skip_reason, ocr_source, api_model,
+		       attempts, last_error, queued_at, started_at, finished_at
+		FROM boox_jobs WHERE note_path = ?
+		ORDER BY id DESC LIMIT 1`,
+		notePath,
+	).Scan(&job.ID, &job.NotePath, &job.Status, &job.SkipReason, &job.OCRSource, &job.APIModel,
+		&job.Attempts, &job.LastError, &job.QueuedAt, &job.StartedAt, &job.FinishedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get latest boox job: %w", err)
+	}
+	return &job, nil
+}
+
 // GetNote retrieves a boox_notes row by path.
 func (s *Store) GetNote(ctx context.Context, path string) (*BooxNote, error) {
 	var note BooxNote

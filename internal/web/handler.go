@@ -62,6 +62,7 @@ type BooxStore interface {
 	GetVersions(ctx context.Context, path string) ([]booxpipeline.BooxVersion, error)
 	GetNoteID(ctx context.Context, path string) (string, error) // returns note_id for cache path resolution
 	EnqueueJob(ctx context.Context, notePath string) error
+	GetLatestJob(ctx context.Context, notePath string) (*booxpipeline.BooxJob, error)
 }
 
 type Handler struct {
@@ -737,12 +738,34 @@ func (h *Handler) handleFilesStatus(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleFilesHistory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	path := r.URL.Query().Get("path")
-	if path == "" || h.proc == nil {
+	if path == "" {
 		w.Write([]byte("null"))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+
+	// Route to Boox job store if path is a Boox note.
+	if h.booxStore != nil && h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) {
+		job, err := h.booxStore.GetLatestJob(ctx, path)
+		if err != nil {
+			h.logger.Error("failed to get boox job history", "path", path, "error", err)
+			w.Write([]byte("null"))
+			return
+		}
+		if job == nil {
+			w.Write([]byte("null"))
+			return
+		}
+		json.NewEncoder(w).Encode(job)
+		return
+	}
+
+	// Supernote job lookup.
+	if h.proc == nil {
+		w.Write([]byte("null"))
+		return
+	}
 	job, err := h.proc.GetJob(ctx, path)
 	if err != nil {
 		h.logger.Error("failed to get job history", "path", path, "error", err)
