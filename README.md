@@ -6,14 +6,14 @@
  <h1>UltraBridge</h1>
 </p>
 
-UltraBridge is a sidecar service for [Supernote Private Cloud](https://support.supernote.com/article/75/set-up-supernote-partner-cloud), adding four capabilities to the self-hosted Supernote stack:
+UltraBridge is a data management application for e-ink tablets including Onyx Boox and Supernote (via a sidecar service for [Supernote Private Cloud](https://support.supernote.com/article/75/set-up-supernote-partner-cloud) ), providing four capabilities:
 
 1. **CalDAV task sync** — synchronise Supernote tasks with any CalDAV client (DAVx5, GNOME Evolution, 2Do, etc.)
 2. **Supernote notes pipeline** — automatically discover `.note` files, extract handwritten text, index it for full-text search, and optionally run vision-API OCR
-3. **Boox notes pipeline** — accept Boox `.note` file uploads via WebDAV, parse the ZIP/protobuf format, render pages, OCR, and index for unified search alongside Supernote notes
+3. **Boox notes pipeline** — accept Boox `.note` file uploads via WebDAV, parse the ZIP/protobuf format, render pages, OCR, extract TODOs via color coding, and index for unified search alongside Supernote notes
 4. **Unified search** — full-text search across both Supernote and Boox notes with source indicators
 
-This software was developed using Claude Code, trained on open source software, and will therefore always be open-source software.
+**This software was developed using Claude Code, trained on open source software, and will therefore always be open-source software.**
 
 ## Prerequisites
 
@@ -21,7 +21,7 @@ This software was developed using Claude Code, trained on open source software, 
 - For Supernote features: **Supernote Private Cloud** running with Docker Compose
 - For Boox integration: a Boox device with WebDAV export support (Tab Ultra C Pro, NoteAir, Note Air5C, etc.)
 - For CalDAV sync: a CalDAV client on your device
-- For OCR: an API key for Anthropic or OpenRouter
+- For OCR: an API key for Anthropic or OpenRouter, or an API endpoint from a local inference API server like vLLM
 
 > **Boox-only users:** UltraBridge works without Supernote Private Cloud. The installer auto-detects whether SPC is present and adjusts accordingly. CalDAV tasks, Boox WebDAV uploads, OCR, and search all work in standalone mode.
 
@@ -81,7 +81,11 @@ When enabled in Settings > Boox, a second OCR pass scans each Boox page for **re
 
 This lets you use red ink on your Boox device as a "to-do" marker: write in red, and UltraBridge picks it up. Duplicate detection prevents the same task from being created twice (checks both incomplete and completed tasks).
 
+This feature is exposed in the Settings tab of the application and can be configured as needed (for example, changing the prompt from "red" to "blue.")
+
 ## CalDAV Client Setup
+
+**(Note for all URLs: 8443 is the internally exposed port; you are expected to run a reverse proxy for TLS termination like Caddy or Nginx Proxy Manager.)**
 
 UltraBridge exposes a single CalDAV collection at `https://your-host:8443/caldav/tasks/`.
 
