@@ -303,6 +303,37 @@ func TestPurgeCompleted_DeletesCompletedTasks(t *testing.T) {
 
 // --- /search with folder filter ---
 
+// --- /files folder filter ---
+
+func TestFilesPage_FolderFilter(t *testing.T) {
+	ns := newMockNoteStore()
+	ns.files[""] = []notestore.NoteFile{
+		{Path: "/notes/Work/meeting.note", RelPath: "Work/meeting.note", Name: "meeting.note"},
+		{Path: "/notes/Personal/diary.note", RelPath: "Personal/diary.note", Name: "diary.note"},
+	}
+
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteStore = ns
+		o.searchIndex = &mockSearchIndex{}
+	})
+
+	// With folder=Work, only the Work file should appear
+	req := httptest.NewRequest("GET", "/files?folder=Work", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /files?folder=Work returned %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "meeting.note") {
+		t.Error("Filtered files should contain meeting.note")
+	}
+	if strings.Contains(body, "diary.note") {
+		t.Error("Filtered files should not contain diary.note")
+	}
+}
+
 func TestSearchPage_FolderFilter(t *testing.T) {
 	searchIdx := &configSearchIndex{
 		results: []search.SearchResult{

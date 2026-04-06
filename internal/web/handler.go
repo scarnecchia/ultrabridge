@@ -629,6 +629,30 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Populate folder filter dropdown (only at root level).
+	folder := strings.TrimSpace(r.URL.Query().Get("folder"))
+	data["filesFolder"] = folder
+	if relPath == "" && h.searchIndex != nil {
+		folders, err := h.searchIndex.ListFolders(ctx)
+		if err != nil {
+			h.logger.Error("handleFiles list folders", "err", err)
+		} else {
+			data["filesFolders"] = folders
+		}
+	}
+
+	// Apply folder filter if set.
+	if folder != "" {
+		needle := "/" + folder + "/"
+		filtered := files[:0]
+		for _, f := range files {
+			if strings.Contains(f.Path, needle) {
+				filtered = append(filtered, f)
+			}
+		}
+		files = filtered
+	}
+
 	data["files"] = files
 	data["relPath"] = relPath
 	data["breadcrumbs"] = buildBreadcrumbs(relPath)
