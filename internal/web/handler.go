@@ -655,8 +655,16 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		files = filtered
 	}
 
-	// Pagination.
+	// Pagination. Query param overrides cookie; cookie persists preference.
 	perPage := 25
+	if c, err := r.Cookie("files_per_page"); err == nil {
+		if pp, err := strconv.Atoi(c.Value); err == nil {
+			switch pp {
+			case 10, 25, 50:
+				perPage = pp
+			}
+		}
+	}
 	if pp, err := strconv.Atoi(r.URL.Query().Get("per_page")); err == nil {
 		switch pp {
 		case 10, 25, 50:

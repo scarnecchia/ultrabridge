@@ -629,6 +629,9 @@
                     params.set(key, overrides[key]);
                 }
             }
+            if (overrides.per_page) {
+                document.cookie = 'files_per_page=' + overrides.per_page + ';path=/;max-age=31536000;SameSite=Lax';
+            }
             window.location = '/files?' + params.toString();
         }
 
