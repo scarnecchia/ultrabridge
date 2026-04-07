@@ -236,11 +236,13 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 }
 
 // renderPDFPageScaled renders a PDF page, scaling down DPI if the resulting
-// image exceeds maxPixels. Tries the requested DPI first, then halves it
-// until the image fits or DPI drops below 72.
+// image exceeds maxPixels. Tries the requested DPI first, then reduces
+// proportionally until the image fits or DPI drops to the minimum.
 func renderPDFPageScaled(pdfPath string, pageIndex, startDPI, maxPixels int) ([]byte, error) {
+	const minDPI = 50
+
 	dpi := startDPI
-	for dpi >= 72 {
+	for {
 		data, err := pdfrender.RenderPage(pdfPath, pageIndex, dpi)
 		if err != nil {
 			return nil, err
@@ -252,23 +254,20 @@ func renderPDFPageScaled(pdfPath string, pageIndex, startDPI, maxPixels int) ([]
 		}
 		bounds := img.Bounds()
 		pixels := bounds.Dx() * bounds.Dy()
-		if pixels <= maxPixels {
+		if pixels <= maxPixels || dpi <= minDPI {
 			return data, nil
 		}
 		// Too large — reduce DPI proportionally.
-		// Scale factor: sqrt(maxPixels / pixels) applied to DPI.
 		ratio := float64(maxPixels) / float64(pixels)
 		newDPI := int(float64(dpi) * math.Sqrt(ratio))
 		if newDPI >= dpi {
 			newDPI = dpi - 10 // ensure progress
 		}
-		if newDPI < 72 {
-			newDPI = 72
+		if newDPI < minDPI {
+			newDPI = minDPI
 		}
 		dpi = newDPI
 	}
-	// Final attempt at minimum DPI.
-	return pdfrender.RenderPage(pdfPath, pageIndex, 72)
 }
 
 // resolveMetadata returns device metadata for a file path. If the file already
