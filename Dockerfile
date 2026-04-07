@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 go build -o /ultrabridge ./cmd/ultrabridge/
 
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata poppler-utils
 COPY --from=builder /ultrabridge /usr/local/bin/ultrabridge
 
 EXPOSE 8443

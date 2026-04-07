@@ -15,6 +15,7 @@ import (
 
 	"github.com/sysop/ultrabridge/internal/booxnote"
 	"github.com/sysop/ultrabridge/internal/booxrender"
+	"github.com/sysop/ultrabridge/internal/pdfrender"
 	"github.com/sysop/ultrabridge/internal/processor"
 	ubwebdav "github.com/sysop/ultrabridge/internal/webdav"
 )
@@ -48,6 +49,18 @@ type WorkerConfig struct {
 }
 
 func (p *Processor) executeJob(ctx context.Context, job *BooxJob) error {
+	ext := strings.ToLower(filepath.Ext(job.NotePath))
+	switch ext {
+	case ".note":
+		return p.executeNoteJob(ctx, job)
+	case ".pdf":
+		return p.executePDFJob(ctx, job)
+	default:
+		return fmt.Errorf("unsupported file type: %s", ext)
+	}
+}
+
+func (p *Processor) executeNoteJob(ctx context.Context, job *BooxJob) error {
 	notePath := job.NotePath
 
 	// 1. Open and parse the .note file.
@@ -86,32 +99,27 @@ func (p *Processor) executeJob(ctx context.Context, job *BooxJob) error {
 	cacheDir := filepath.Join(p.cfg.CachePath, note.NoteID)
 	os.RemoveAll(cacheDir)
 	os.MkdirAll(cacheDir, 0755)
-	// Use ContentDeleter to clear old indexed content (ensures FTS5 triggers fire correctly).
 	if p.cfg.ContentDeleter != nil {
 		p.cfg.ContentDeleter.Delete(ctx, notePath)
 	}
 
 	// 6. Render, OCR, and index each page.
 	for i, page := range note.Pages {
-		// Render to image.
 		img, err := booxrender.RenderPage(page)
 		if err != nil {
 			return fmt.Errorf("render page %d: %w", i, err)
 		}
 
-		// Encode to JPEG.
 		var buf bytes.Buffer
 		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
 			return fmt.Errorf("encode page %d: %w", i, err)
 		}
 
-		// Cache rendered JPEG.
 		cachePath := filepath.Join(cacheDir, fmt.Sprintf("page_%d.jpg", i))
 		if err := os.WriteFile(cachePath, buf.Bytes(), 0644); err != nil {
 			return fmt.Errorf("cache page %d: %w", i, err)
 		}
 
-		// OCR if client available.
 		var ocrText string
 		if p.cfg.OCR != nil {
 			prompt := ""
@@ -125,7 +133,6 @@ func (p *Processor) executeJob(ctx context.Context, job *BooxJob) error {
 			ocrText = text
 		}
 
-		// Index OCR'd text via shared Indexer.
 		titleText := ""
 		keywords := ""
 		if i == 0 {
@@ -137,40 +144,138 @@ func (p *Processor) executeJob(ctx context.Context, job *BooxJob) error {
 	}
 
 	// 7. Second OCR pass: red ink to-do extraction.
-	if p.cfg.OCR != nil && p.cfg.TodoEnabled != nil && p.cfg.TodoEnabled() {
-		var allTodos []TodoItem
-		todoPrompt := ""
-		if p.cfg.TodoPrompt != nil {
-			todoPrompt = p.cfg.TodoPrompt()
+	p.runTodoPass(ctx, notePath, len(note.Pages))
+
+	return nil
+}
+
+func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
+	pdfPath := job.NotePath
+
+	// 1. Compute file hash for dedup.
+	f, err := os.Open(pdfPath)
+	if err != nil {
+		return fmt.Errorf("open pdf: %w", err)
+	}
+	h := sha256.New()
+	io.Copy(h, f)
+	f.Close()
+	fileHash := hex.EncodeToString(h.Sum(nil))
+
+	// 2. Get page count.
+	pageCount, err := pdfrender.PageCount(pdfPath)
+	if err != nil {
+		return fmt.Errorf("pdf page count: %w", err)
+	}
+
+	// 3. Extract path metadata and derive title.
+	relPath, _ := filepath.Rel(p.notesPath, pdfPath)
+	pm := ubwebdav.ExtractPathMetadata(relPath)
+	title := strings.TrimSuffix(filepath.Base(pdfPath), filepath.Ext(pdfPath))
+
+	// 4. Use filename (without extension) as noteID for cache path consistency.
+	noteID := title
+
+	// 5. Upsert note record.
+	if err := p.store.UpsertNote(ctx, pdfPath, noteID, title, pm.DeviceModel, pm.NoteType, pm.Folder, pageCount, fileHash); err != nil {
+		return fmt.Errorf("upsert note: %w", err)
+	}
+
+	// 6. Clear old cached renders and indexed content.
+	cacheDir := filepath.Join(p.cfg.CachePath, noteID)
+	os.RemoveAll(cacheDir)
+	os.MkdirAll(cacheDir, 0755)
+	if p.cfg.ContentDeleter != nil {
+		p.cfg.ContentDeleter.Delete(ctx, pdfPath)
+	}
+
+	// 7. Render all pages, OCR, and index.
+	for i := 0; i < pageCount; i++ {
+		jpegData, err := pdfrender.RenderPage(pdfPath, i, 200)
+		if err != nil {
+			return fmt.Errorf("render pdf page %d: %w", i, err)
 		}
 
-		for i := range note.Pages {
-			cachePath := filepath.Join(cacheDir, fmt.Sprintf("page_%d.jpg", i))
-			jpegData, err := os.ReadFile(cachePath)
-			if err != nil {
-				p.logger.Warn("todo pass: read cached page", "page", i, "error", err)
-				continue
-			}
-
-			resp, err := p.cfg.OCR.Recognize(ctx, jpegData, todoPrompt)
-			if err != nil {
-				p.logger.Warn("todo pass: OCR failed", "page", i, "error", err)
-				continue
-			}
-
-			todos := parseTodoResponse(resp)
-			if len(todos) > 0 {
-				p.logger.Info("todos extracted", "page", i, "count", len(todos), "path", notePath)
-				allTodos = append(allTodos, todos...)
-			}
+		// Cache rendered JPEG.
+		cachePath := filepath.Join(cacheDir, fmt.Sprintf("page_%d.jpg", i))
+		if err := os.WriteFile(cachePath, jpegData, 0644); err != nil {
+			return fmt.Errorf("cache page %d: %w", i, err)
 		}
 
-		if len(allTodos) > 0 && p.cfg.OnTodosFound != nil {
-			p.cfg.OnTodosFound(ctx, notePath, allTodos)
+		// OCR if client available.
+		var ocrText string
+		if p.cfg.OCR != nil {
+			prompt := ""
+			if p.cfg.OCRPrompt != nil {
+				prompt = p.cfg.OCRPrompt()
+			}
+			text, err := p.cfg.OCR.Recognize(ctx, jpegData, prompt)
+			if err != nil {
+				return fmt.Errorf("ocr page %d: %w", i, err)
+			}
+			ocrText = text
+		}
+
+		// Index OCR'd text.
+		titleText := ""
+		if i == 0 {
+			titleText = title
+		}
+		if err := p.cfg.Indexer.IndexPage(ctx, pdfPath, i, "api", ocrText, titleText, ""); err != nil {
+			return fmt.Errorf("index page %d: %w", i, err)
 		}
 	}
 
+	// 8. Second OCR pass: red ink to-do extraction.
+	p.runTodoPass(ctx, pdfPath, pageCount)
+
 	return nil
+}
+
+// runTodoPass performs the second OCR pass for red ink to-do extraction.
+func (p *Processor) runTodoPass(ctx context.Context, filePath string, pageCount int) {
+	if p.cfg.OCR == nil || p.cfg.TodoEnabled == nil || !p.cfg.TodoEnabled() {
+		return
+	}
+
+	var allTodos []TodoItem
+	todoPrompt := ""
+	if p.cfg.TodoPrompt != nil {
+		todoPrompt = p.cfg.TodoPrompt()
+	}
+
+	// Derive cache dir from the note record.
+	note, err := p.store.GetNote(ctx, filePath)
+	if err != nil || note == nil {
+		p.logger.Warn("todo pass: could not look up note", "path", filePath, "error", err)
+		return
+	}
+	cacheDir := filepath.Join(p.cfg.CachePath, note.NoteID)
+
+	for i := 0; i < pageCount; i++ {
+		cachePath := filepath.Join(cacheDir, fmt.Sprintf("page_%d.jpg", i))
+		jpegData, err := os.ReadFile(cachePath)
+		if err != nil {
+			p.logger.Warn("todo pass: read cached page", "page", i, "error", err)
+			continue
+		}
+
+		resp, err := p.cfg.OCR.Recognize(ctx, jpegData, todoPrompt)
+		if err != nil {
+			p.logger.Warn("todo pass: OCR failed", "page", i, "error", err)
+			continue
+		}
+
+		todos := parseTodoResponse(resp)
+		if len(todos) > 0 {
+			p.logger.Info("todos extracted", "page", i, "count", len(todos), "path", filePath)
+			allTodos = append(allTodos, todos...)
+		}
+	}
+
+	if len(allTodos) > 0 && p.cfg.OnTodosFound != nil {
+		p.cfg.OnTodosFound(ctx, filePath, allTodos)
+	}
 }
 
 // parseTodoResponse extracts TodoItem objects from the OCR response.
