@@ -655,8 +655,15 @@
          overflow-y:auto; z-index:100; box-shadow:0 4px 12px rgba(0,0,0,0.15);">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
         <h3 style="margin:0;">Note Details</h3>
-        <button onclick="document.getElementById('history-modal').style.display='none'"
-                class="btn-small">Close</button>
+        <div style="display:flex; gap:0.5rem;">
+          <form id="delete-note-form" method="POST" action="/files/delete-note" style="display:inline;">
+            <input type="hidden" id="delete-note-path" name="path" value="">
+            <button type="submit" class="btn-small" style="color:#842029;"
+              onclick="return confirm('Delete this note, all job records, and cached renders?')">✗ Delete</button>
+          </form>
+          <button onclick="document.getElementById('history-modal').style.display='none'"
+                  class="btn-small">Close</button>
+        </div>
       </div>
       <div id="history-job" style="margin-bottom:1rem;">
         <h4 style="margin:0 0 0.5rem;">Job Info</h4>
@@ -895,6 +902,7 @@
           jobPre.textContent = 'Loading...';
           pagesDiv.innerHTML = '';
           modal.style.display = 'block';
+          document.getElementById('delete-note-path').value = path;
 
           // Fetch job info
           fetch('/files/history?path=' + encodeURIComponent(path))

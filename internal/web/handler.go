@@ -65,6 +65,7 @@ type BooxStore interface {
 	EnqueueJob(ctx context.Context, notePath string) error
 	GetLatestJob(ctx context.Context, notePath string) (*booxpipeline.BooxJob, error)
 	RetryAllFailed(ctx context.Context) (int64, error)
+	DeleteNote(ctx context.Context, path string) error
 }
 
 // BooxImporter can scan an import path and enqueue files for processing.
@@ -222,6 +223,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /files/scan", h.handleFilesScan)
 	h.mux.HandleFunc("POST /files/import", h.handleFilesImport)
 	h.mux.HandleFunc("POST /files/retry-failed", h.handleFilesRetryFailed)
+	h.mux.HandleFunc("POST /files/delete-note", h.handleFilesDeleteNote)
 	h.mux.HandleFunc("POST /files/migrate-imports", h.handleFilesMigrateImports)
 	h.mux.HandleFunc("GET /sync/status", h.handleSyncStatus)
 	h.mux.HandleFunc("POST /sync/trigger", h.handleSyncTrigger)
@@ -1121,6 +1123,40 @@ func (h *Handler) handleFilesRetryFailed(w http.ResponseWriter, r *http.Request)
 		h.logger.Error("retry failed jobs", "error", err)
 	} else {
 		h.logger.Info("retried failed jobs", "count", count)
+	}
+
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesDeleteNote(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	path := r.FormValue("path")
+	if path == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	if h.isBooxPath(ctx, path) && h.booxStore != nil {
+		// Get noteID for cache cleanup before deleting DB records.
+		noteID, _ := h.booxStore.GetNoteID(ctx, path)
+
+		// Delete DB records (jobs, content, note).
+		if err := h.booxStore.DeleteNote(ctx, path); err != nil {
+			h.logger.Error("delete boox note", "path", path, "error", err)
+			http.Error(w, "delete failed", http.StatusInternalServerError)
+			return
+		}
+		// Delete cached renders.
+		if noteID != "" && h.booxCachePath != "" {
+			os.RemoveAll(filepath.Join(h.booxCachePath, noteID))
+		}
+		h.logger.Info("deleted boox note", "path", path)
 	}
 
 	http.Redirect(w, r, "/files", http.StatusSeeOther)

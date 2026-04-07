@@ -285,6 +285,27 @@ func (s *Store) UpdateNotePath(ctx context.Context, oldPath, newPath string) err
 	return tx.Commit()
 }
 
+// DeleteNote removes a boox_notes record and all associated boox_jobs and note_content rows.
+func (s *Store) DeleteNote(ctx context.Context, path string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM boox_jobs WHERE note_path = ?`, path); err != nil {
+		return fmt.Errorf("delete jobs: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM note_content WHERE note_path = ?`, path); err != nil {
+		return fmt.Errorf("delete content: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM boox_notes WHERE path = ?`, path); err != nil {
+		return fmt.Errorf("delete note: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // RetryAllFailed resets all failed jobs back to pending.
 // Returns the number of jobs reset.
 func (s *Store) RetryAllFailed(ctx context.Context) (int64, error) {

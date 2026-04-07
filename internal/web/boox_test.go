@@ -59,6 +59,10 @@ func (m *mockBooxStore) RetryAllFailed(ctx context.Context) (int64, error) {
 	return 0, nil
 }
 
+func (m *mockBooxStore) DeleteNote(ctx context.Context, path string) error {
+	return nil
+}
+
 // TestFilesPage_ShowsBothSources verifies AC5.1: Files list shows both Supernote and Boox notes
 func TestFilesPage_ShowsBothSources(t *testing.T) {
 	// Create mock stores
