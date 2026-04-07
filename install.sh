@@ -352,10 +352,19 @@ else
     enable_boox="${enable_boox:-$boox_default}"
 fi
 
+UB_BOOX_IMPORT_PATH="${UB_BOOX_IMPORT_PATH:-}"
+
 if [[ "${enable_boox,,}" == "y" ]]; then
     UB_BOOX_ENABLED="true"
     prompt UB_BOOX_NOTES_PATH "Boox notes directory (WebDAV root)" "${UB_BOOX_NOTES_PATH:-${SUPERNOTE_DIR}/boox-notes}"
     mkdir -p "$UB_BOOX_NOTES_PATH"
+
+    echo
+    echo "  Bulk Import: import existing .note and .pdf files from a directory."
+    echo "  File types and path structure options are configured in the web Settings tab."
+    echo "  Leave blank to skip."
+    echo
+    prompt UB_BOOX_IMPORT_PATH "Bulk import path (leave blank to skip)" "$UB_BOOX_IMPORT_PATH"
 fi
 
 echo
@@ -446,9 +455,12 @@ UB_SN_PASSWORD=${UB_SN_PASSWORD}
 EOF_SYNC
 fi
 
-# Conditionally append Boox path when enabled
+# Conditionally append Boox paths when enabled
 if [[ "$UB_BOOX_ENABLED" == "true" ]]; then
     echo "UB_BOOX_NOTES_PATH=${UB_BOOX_NOTES_PATH}" >> "$SUPERNOTE_DIR/.ultrabridge.env"
+    if [[ -n "$UB_BOOX_IMPORT_PATH" ]]; then
+        echo "UB_BOOX_IMPORT_PATH=${UB_BOOX_IMPORT_PATH}" >> "$SUPERNOTE_DIR/.ultrabridge.env"
+    fi
 fi
 
 # --- write docker-compose.override.yml ---
@@ -485,6 +497,10 @@ fi
 if [[ -n "$UB_BOOX_NOTES_PATH" ]]; then
     VOLUMES_BLOCK="$VOLUMES_BLOCK
       - ${UB_BOOX_NOTES_PATH}:${UB_BOOX_NOTES_PATH}"
+fi
+if [[ -n "$UB_BOOX_IMPORT_PATH" ]]; then
+    VOLUMES_BLOCK="$VOLUMES_BLOCK
+      - ${UB_BOOX_IMPORT_PATH}:${UB_BOOX_IMPORT_PATH}:ro"
 fi
 
 if [[ "$SPC_AVAILABLE" == true ]]; then
