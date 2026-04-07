@@ -802,7 +802,7 @@ func (h *Handler) handleFilesQueue(w http.ResponseWriter, r *http.Request) {
 	if path != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		if h.booxStore != nil && h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) {
+		if h.isBooxPath(ctx, path) {
 			if err := h.booxStore.EnqueueJob(ctx, path); err != nil {
 				h.logger.Error("failed to enqueue boox file", "path", path, "error", err)
 			}
@@ -882,6 +882,24 @@ func (h *Handler) handleFilesStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(st)
 }
 
+// isBooxPath reports whether a file path belongs to the Boox pipeline
+// (either WebDAV uploads or bulk imports).
+func (h *Handler) isBooxPath(ctx context.Context, path string) bool {
+	if h.booxStore == nil {
+		return false
+	}
+	if h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) {
+		return true
+	}
+	if h.noteDB != nil {
+		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+		if importPath != "" && strings.HasPrefix(path, importPath) {
+			return true
+		}
+	}
+	return false
+}
+
 // handleFilesHistory returns JSON job history for a single file (AC7.6).
 // GET /files/history?path=<absolute_path>
 func (h *Handler) handleFilesHistory(w http.ResponseWriter, r *http.Request) {
@@ -894,8 +912,8 @@ func (h *Handler) handleFilesHistory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	// Route to Boox job store if path is a Boox note.
-	if h.booxStore != nil && h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) {
+	// Route to Boox job store if path is a Boox note (WebDAV uploads or imports).
+	if h.isBooxPath(ctx, path) {
 		job, err := h.booxStore.GetLatestJob(ctx, path)
 		if err != nil {
 			h.logger.Error("failed to get boox job history", "path", path, "error", err)
