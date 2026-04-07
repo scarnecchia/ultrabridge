@@ -86,12 +86,11 @@ func (p *Processor) executeNoteJob(ctx context.Context, job *BooxJob) error {
 	io.Copy(h, f)
 	fileHash := hex.EncodeToString(h.Sum(nil))
 
-	// 3. Extract path metadata.
-	relPath, _ := filepath.Rel(p.notesPath, notePath)
-	pm := ubwebdav.ExtractPathMetadata(relPath)
+	// 3. Extract path metadata. Preserve existing metadata (from importer) if present.
+	deviceModel, noteType, folder := p.resolveMetadata(ctx, notePath)
 
 	// 4. Update boox_notes row (note.NoteID is the top-level directory name from the ZIP).
-	if err := p.store.UpsertNote(ctx, notePath, note.NoteID, note.Title, pm.DeviceModel, pm.NoteType, pm.Folder, len(note.Pages), fileHash); err != nil {
+	if err := p.store.UpsertNote(ctx, notePath, note.NoteID, note.Title, deviceModel, noteType, folder, len(note.Pages), fileHash); err != nil {
 		return fmt.Errorf("upsert note: %w", err)
 	}
 
@@ -168,16 +167,15 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 		return fmt.Errorf("pdf page count: %w", err)
 	}
 
-	// 3. Extract path metadata and derive title.
-	relPath, _ := filepath.Rel(p.notesPath, pdfPath)
-	pm := ubwebdav.ExtractPathMetadata(relPath)
+	// 3. Extract path metadata. Preserve existing metadata (from importer) if present.
+	deviceModel, noteType, folder := p.resolveMetadata(ctx, pdfPath)
 	title := strings.TrimSuffix(filepath.Base(pdfPath), filepath.Ext(pdfPath))
 
 	// 4. Use filename (without extension) as noteID for cache path consistency.
 	noteID := title
 
 	// 5. Upsert note record.
-	if err := p.store.UpsertNote(ctx, pdfPath, noteID, title, pm.DeviceModel, pm.NoteType, pm.Folder, pageCount, fileHash); err != nil {
+	if err := p.store.UpsertNote(ctx, pdfPath, noteID, title, deviceModel, noteType, folder, pageCount, fileHash); err != nil {
 		return fmt.Errorf("upsert note: %w", err)
 	}
 
@@ -230,6 +228,20 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 	p.runTodoPass(ctx, pdfPath, pageCount)
 
 	return nil
+}
+
+// resolveMetadata returns device metadata for a file path. If the file already
+// has metadata in the database (e.g., from the importer), those values are
+// preserved. Otherwise, falls back to ExtractPathMetadata (WebDAV convention).
+func (p *Processor) resolveMetadata(ctx context.Context, filePath string) (deviceModel, noteType, folder string) {
+	existing, err := p.store.GetNote(ctx, filePath)
+	if err == nil && existing != nil && existing.DeviceModel != "" {
+		return existing.DeviceModel, existing.NoteType, existing.Folder
+	}
+	// Fallback: derive from WebDAV path convention.
+	relPath, _ := filepath.Rel(p.notesPath, filePath)
+	pm := ubwebdav.ExtractPathMetadata(relPath)
+	return pm.DeviceModel, pm.NoteType, pm.Folder
 }
 
 // runTodoPass performs the second OCR pass for red ink to-do extraction.
