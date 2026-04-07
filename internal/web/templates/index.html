@@ -431,13 +431,18 @@
                 <a href="/files?path={{.RelPath}}">{{.Label}}</a><span class="sep">/</span>
               {{end}}
             </div>
+            <form id="bulk-delete-form" method="POST" action="/files/delete-bulk">
             <table class="task-table">
               <thead>
-                <tr><th>Name</th><th>Type</th><th>Size</th><th>Modified</th><th>Status</th><th>Actions</th></tr>
+                <tr>
+                  <th style="width:2rem;"><input type="checkbox" id="select-all-files" onclick="toggleAllFiles(this)"></th>
+                  <th>Name</th><th>Type</th><th>Size</th><th>Modified</th><th>Status</th><th>Actions</th>
+                </tr>
               </thead>
               <tbody>
                 {{range .files}}
                 <tr>
+                  <td>{{if not .IsDir}}<input type="checkbox" name="paths" value="{{.Path}}" class="file-checkbox">{{end}}</td>
                   <td>
                     {{if .IsDir}}📁{{else if eq (fileTypeStr .FileType) "note"}}📝{{else if eq (fileTypeStr .FileType) "pdf"}}📄{{else if eq (fileTypeStr .FileType) "epub"}}📚{{else}}📎{{end}}
                     {{if .IsDir}}<a href="/files?path={{.RelPath}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}
@@ -490,6 +495,12 @@
                 {{end}}
               </tbody>
             </table>
+            <div id="bulk-delete-bar" style="display:none; margin-top:0.5rem;">
+              <button type="submit" class="btn-small" style="color:#842029;"
+                onclick="return confirm('Delete ' + document.querySelectorAll('.file-checkbox:checked').length + ' selected notes and all associated data?')">✗ Delete Selected</button>
+              <span id="bulk-delete-count" style="font-size:0.85rem; color:#666; margin-left:0.5rem;"></span>
+            </div>
+            </form>
             {{if gt .filesTotalPages 1}}
             <div style="margin-top:0.75rem; display:flex; align-items:center; gap:0.5rem; font-size:0.9rem;">
               {{if gt .filesPage 1}}
@@ -676,6 +687,25 @@
         // Global Boox notes path for client-side source detection
         var booxNotesPath = "{{.BooxNotesPath}}";
         var booxImportPath = "{{.BooxImportPath}}";
+
+        // Bulk file selection for delete.
+        function toggleAllFiles(master) {
+            var boxes = document.querySelectorAll('.file-checkbox');
+            boxes.forEach(function(cb) { cb.checked = master.checked; });
+            updateBulkDeleteBar();
+        }
+        document.addEventListener('change', function(e) {
+            if (e.target.classList.contains('file-checkbox')) updateBulkDeleteBar();
+        });
+        function updateBulkDeleteBar() {
+            var checked = document.querySelectorAll('.file-checkbox:checked').length;
+            var bar = document.getElementById('bulk-delete-bar');
+            var count = document.getElementById('bulk-delete-count');
+            if (bar) {
+                bar.style.display = checked > 0 ? '' : 'none';
+                count.textContent = checked + ' selected';
+            }
+        }
 
         // Navigate files tab preserving current query params.
         function filesNav(overrides) {

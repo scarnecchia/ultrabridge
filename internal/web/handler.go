@@ -224,6 +224,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /files/import", h.handleFilesImport)
 	h.mux.HandleFunc("POST /files/retry-failed", h.handleFilesRetryFailed)
 	h.mux.HandleFunc("POST /files/delete-note", h.handleFilesDeleteNote)
+	h.mux.HandleFunc("POST /files/delete-bulk", h.handleFilesDeleteBulk)
 	h.mux.HandleFunc("POST /files/migrate-imports", h.handleFilesMigrateImports)
 	h.mux.HandleFunc("GET /sync/status", h.handleSyncStatus)
 	h.mux.HandleFunc("POST /sync/trigger", h.handleSyncTrigger)
@@ -1159,6 +1160,40 @@ func (h *Handler) handleFilesDeleteNote(w http.ResponseWriter, r *http.Request) 
 		h.logger.Info("deleted boox note", "path", path)
 	}
 
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesDeleteBulk(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	paths := r.Form["paths"]
+	if len(paths) == 0 {
+		http.Redirect(w, r, "/files", http.StatusSeeOther)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	var deleted, failed int
+	for _, path := range paths {
+		if h.isBooxPath(ctx, path) && h.booxStore != nil {
+			noteID, _ := h.booxStore.GetNoteID(ctx, path)
+			if err := h.booxStore.DeleteNote(ctx, path); err != nil {
+				h.logger.Error("bulk delete note", "path", path, "error", err)
+				failed++
+				continue
+			}
+			if noteID != "" && h.booxCachePath != "" {
+				os.RemoveAll(filepath.Join(h.booxCachePath, noteID))
+			}
+			deleted++
+		}
+	}
+
+	h.logger.Info("bulk delete complete", "deleted", deleted, "failed", failed)
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
