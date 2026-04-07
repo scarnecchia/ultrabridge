@@ -189,7 +189,7 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 
 	// 7. Render all pages, OCR, and index.
 	for i := 0; i < pageCount; i++ {
-		jpegData, err := pdfrender.RenderPage(pdfPath, i, 200)
+		jpegData, err := pdfrender.RenderPage(pdfPath, i, 150)
 		if err != nil {
 			return fmt.Errorf("render pdf page %d: %w", i, err)
 		}
@@ -200,7 +200,7 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 			return fmt.Errorf("cache page %d: %w", i, err)
 		}
 
-		// OCR if client available.
+		// OCR if client available. Non-fatal — log and continue with empty text.
 		var ocrText string
 		if p.cfg.OCR != nil {
 			prompt := ""
@@ -209,9 +209,10 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 			}
 			text, err := p.cfg.OCR.Recognize(ctx, jpegData, prompt)
 			if err != nil {
-				return fmt.Errorf("ocr page %d: %w", i, err)
+				p.logger.Warn("pdf ocr failed", "page", i, "path", pdfPath, "error", err)
+			} else {
+				ocrText = text
 			}
-			ocrText = text
 		}
 
 		// Index OCR'd text.
