@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"image/jpeg"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,8 +189,12 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 	}
 
 	// 7. Render all pages, OCR, and index.
+	// Start at 150 DPI; scale down if image is too large for the vision model.
+	// Max ~4 megapixels keeps images within typical VLM context limits.
+	const maxPixels = 4_000_000
+
 	for i := 0; i < pageCount; i++ {
-		jpegData, err := pdfrender.RenderPage(pdfPath, i, 150)
+		jpegData, err := renderPDFPageScaled(pdfPath, i, 150, maxPixels)
 		if err != nil {
 			return fmt.Errorf("render pdf page %d: %w", i, err)
 		}
@@ -200,7 +205,7 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 			return fmt.Errorf("cache page %d: %w", i, err)
 		}
 
-		// OCR if client available. Non-fatal — log and continue with empty text.
+		// OCR if client available.
 		var ocrText string
 		if p.cfg.OCR != nil {
 			prompt := ""
@@ -209,10 +214,9 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 			}
 			text, err := p.cfg.OCR.Recognize(ctx, jpegData, prompt)
 			if err != nil {
-				p.logger.Warn("pdf ocr failed", "page", i, "path", pdfPath, "error", err)
-			} else {
-				ocrText = text
+				return fmt.Errorf("ocr page %d: %w", i, err)
 			}
+			ocrText = text
 		}
 
 		// Index OCR'd text.
@@ -229,6 +233,42 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 	p.runTodoPass(ctx, pdfPath, pageCount)
 
 	return nil
+}
+
+// renderPDFPageScaled renders a PDF page, scaling down DPI if the resulting
+// image exceeds maxPixels. Tries the requested DPI first, then halves it
+// until the image fits or DPI drops below 72.
+func renderPDFPageScaled(pdfPath string, pageIndex, startDPI, maxPixels int) ([]byte, error) {
+	dpi := startDPI
+	for dpi >= 72 {
+		data, err := pdfrender.RenderPage(pdfPath, pageIndex, dpi)
+		if err != nil {
+			return nil, err
+		}
+		img, err := pdfrender.DecodeJPEG(data)
+		if err != nil {
+			// Can't decode to check size — return as-is.
+			return data, nil
+		}
+		bounds := img.Bounds()
+		pixels := bounds.Dx() * bounds.Dy()
+		if pixels <= maxPixels {
+			return data, nil
+		}
+		// Too large — reduce DPI proportionally.
+		// Scale factor: sqrt(maxPixels / pixels) applied to DPI.
+		ratio := float64(maxPixels) / float64(pixels)
+		newDPI := int(float64(dpi) * math.Sqrt(ratio))
+		if newDPI >= dpi {
+			newDPI = dpi - 10 // ensure progress
+		}
+		if newDPI < 72 {
+			newDPI = 72
+		}
+		dpi = newDPI
+	}
+	// Final attempt at minimum DPI.
+	return pdfrender.RenderPage(pdfPath, pageIndex, 72)
 }
 
 // resolveMetadata returns device metadata for a file path. If the file already
