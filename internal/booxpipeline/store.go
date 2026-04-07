@@ -229,6 +229,62 @@ func (s *Store) GetNoteID(ctx context.Context, path string) (string, error) {
 	return noteID, nil
 }
 
+// ListNotesWithPrefix returns all boox_notes paths that start with the given prefix.
+func (s *Store) ListNotesWithPrefix(ctx context.Context, prefix string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT path FROM boox_notes WHERE path LIKE ?`, prefix+"%")
+	if err != nil {
+		return nil, fmt.Errorf("list notes with prefix: %w", err)
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	return paths, rows.Err()
+}
+
+// UpdateNotePath atomically updates all references from oldPath to newPath
+// across boox_notes, boox_jobs, and note_content tables.
+func (s *Store) UpdateNotePath(ctx context.Context, oldPath, newPath string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Disable FK checks temporarily since we're updating the PK that the FK references.
+	if _, err := tx.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("disable fk: %w", err)
+	}
+
+	// Update boox_jobs first (FK child).
+	if _, err := tx.ExecContext(ctx, `UPDATE boox_jobs SET note_path = ? WHERE note_path = ?`, newPath, oldPath); err != nil {
+		return fmt.Errorf("update boox_jobs: %w", err)
+	}
+
+	// Update boox_notes (PK).
+	if _, err := tx.ExecContext(ctx, `UPDATE boox_notes SET path = ? WHERE path = ?`, newPath, oldPath); err != nil {
+		return fmt.Errorf("update boox_notes: %w", err)
+	}
+
+	// Update note_content (search index — triggers update FTS5).
+	if _, err := tx.ExecContext(ctx, `UPDATE note_content SET note_path = ? WHERE note_path = ?`, newPath, oldPath); err != nil {
+		return fmt.Errorf("update note_content: %w", err)
+	}
+
+	// Re-enable FK checks.
+	if _, err := tx.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		return fmt.Errorf("enable fk: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // RetryAllFailed resets all failed jobs back to pending.
 // Returns the number of jobs reset.
 func (s *Store) RetryAllFailed(ctx context.Context) (int64, error) {

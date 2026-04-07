@@ -634,6 +634,14 @@
 
                 <button type="submit" style="margin-top:0.5rem; padding:0.3rem 0.8rem;">Save</button>
               </form>
+              {{if .BooxImportPath}}
+              <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+              <form method="POST" action="/files/migrate-imports" style="display:inline;">
+                <button type="submit" class="btn-small"
+                  onclick="return confirm('Copy all imported files to the Boox notes directory and update database references? This may take a while for large imports.')">⬇ Migrate Imports to File Store</button>
+              </form>
+              <p class="device-info" style="margin:0.3rem 0 0 0;">Copies imported files from the import path to the Boox notes directory so the import path can be unmounted.</p>
+              {{end}}
             {{end}}
           </div>
         </div>
@@ -660,6 +668,7 @@
     <script>
         // Global Boox notes path for client-side source detection
         var booxNotesPath = "{{.BooxNotesPath}}";
+        var booxImportPath = "{{.BooxImportPath}}";
 
         // Navigate files tab preserving current query params.
         function filesNav(overrides) {
@@ -889,7 +898,7 @@
               }
 
               // Detect source from path: if path starts with booxNotesPath, it's a Boox note
-              var isBoox = booxNotesPath && path.startsWith(booxNotesPath);
+              var isBoox = (booxNotesPath && path.startsWith(booxNotesPath)) || (booxImportPath && path.startsWith(booxImportPath));
 
               pagesDiv.innerHTML = '<h4 style="margin:0 0 0.5rem;">Pages</h4>';
               pages.forEach(function(pg) {

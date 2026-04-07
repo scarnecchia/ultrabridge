@@ -70,6 +70,7 @@ type BooxStore interface {
 // BooxImporter can scan an import path and enqueue files for processing.
 type BooxImporter interface {
 	ScanAndEnqueue(ctx context.Context, cfg booxpipeline.ImportConfig, logger *slog.Logger) booxpipeline.ImportResult
+	MigrateImportedFiles(ctx context.Context, importPath, notesPath string, logger *slog.Logger) booxpipeline.MigrateResult
 }
 
 type Handler struct {
@@ -221,6 +222,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /files/scan", h.handleFilesScan)
 	h.mux.HandleFunc("POST /files/import", h.handleFilesImport)
 	h.mux.HandleFunc("POST /files/retry-failed", h.handleFilesRetryFailed)
+	h.mux.HandleFunc("POST /files/migrate-imports", h.handleFilesMigrateImports)
 	h.mux.HandleFunc("GET /sync/status", h.handleSyncStatus)
 	h.mux.HandleFunc("POST /sync/trigger", h.handleSyncTrigger)
 	h.registerLogStreamHandler(broadcaster)
@@ -244,6 +246,10 @@ func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
 		data["tasks"] = tasks
 	}
 	data["BooxNotesPath"] = h.booxNotesPath
+	if h.noteDB != nil {
+		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+		data["BooxImportPath"] = importPath
+	}
 	return data
 }
 
@@ -690,11 +696,6 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	// Populate folder filter dropdown (only at root level).
 	folder := strings.TrimSpace(r.URL.Query().Get("folder"))
 	data["filesFolder"] = folder
-	// Load import path for the Import button.
-	if h.noteDB != nil {
-		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
-		data["BooxImportPath"] = importPath
-	}
 	if relPath == "" && h.searchIndex != nil {
 		folders, err := h.searchIndex.ListFolders(ctx)
 		if err != nil {
@@ -1119,6 +1120,36 @@ func (h *Handler) handleFilesRetryFailed(w http.ResponseWriter, r *http.Request)
 	} else {
 		h.logger.Info("retried failed jobs", "count", count)
 	}
+
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesMigrateImports(w http.ResponseWriter, r *http.Request) {
+	if h.booxImporter == nil {
+		http.Error(w, "Boox pipeline not enabled", http.StatusNotFound)
+		return
+	}
+	if h.noteDB == nil {
+		http.Error(w, "database not available", http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+
+	importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+	if importPath == "" || h.booxNotesPath == "" {
+		h.logger.Warn("migrate: import path or notes path not configured")
+		http.Redirect(w, r, "/settings", http.StatusSeeOther)
+		return
+	}
+
+	result := h.booxImporter.MigrateImportedFiles(ctx, importPath, h.booxNotesPath, h.logger)
+	h.logger.Info("migrate complete",
+		"migrated", result.Migrated,
+		"skipped", result.Skipped,
+		"errors", result.Errors,
+	)
 
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
