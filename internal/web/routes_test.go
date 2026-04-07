@@ -170,6 +170,93 @@ func TestSettingsSave_BooxOCRPrompt(t *testing.T) {
 	}
 }
 
+func TestSettingsSave_BooxBulkImport(t *testing.T) {
+	db, err := notedb.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+		o.booxStore = &mockBooxStore{}
+		o.booxNotesPath = "/boox"
+	})
+
+	form := url.Values{
+		"section":      {"boox"},
+		"ocr_prompt":   {""},
+		"import_path":  {"/mnt/storage/boox-exports"},
+		"import_notes": {"true"},
+		"import_pdfs":  {"true"},
+	}
+	req := httptest.NewRequest("POST", "/settings/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("POST /settings/save returned %d, want 303", w.Code)
+	}
+
+	ctx := context.Background()
+	val, _ := notedb.GetSetting(ctx, db, "boox_import_path")
+	if val != "/mnt/storage/boox-exports" {
+		t.Errorf("boox_import_path = %q, want '/mnt/storage/boox-exports'", val)
+	}
+	val, _ = notedb.GetSetting(ctx, db, "boox_import_notes")
+	if val != "true" {
+		t.Errorf("boox_import_notes = %q, want 'true'", val)
+	}
+	val, _ = notedb.GetSetting(ctx, db, "boox_import_pdfs")
+	if val != "true" {
+		t.Errorf("boox_import_pdfs = %q, want 'true'", val)
+	}
+}
+
+func TestSettingsSave_BooxBulkImportUnchecked(t *testing.T) {
+	db, err := notedb.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Pre-set values to true so we can verify they get cleared.
+	ctx := context.Background()
+	notedb.SetSetting(ctx, db, "boox_import_notes", "true")
+	notedb.SetSetting(ctx, db, "boox_import_pdfs", "true")
+
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+		o.booxStore = &mockBooxStore{}
+		o.booxNotesPath = "/boox"
+	})
+
+	// Submit without checkboxes (unchecked = absent from form).
+	form := url.Values{
+		"section":     {"boox"},
+		"ocr_prompt":  {""},
+		"import_path": {"/some/path"},
+	}
+	req := httptest.NewRequest("POST", "/settings/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("POST /settings/save returned %d, want 303", w.Code)
+	}
+
+	val, _ := notedb.GetSetting(ctx, db, "boox_import_notes")
+	if val != "false" {
+		t.Errorf("boox_import_notes = %q, want 'false' (unchecked)", val)
+	}
+	val, _ = notedb.GetSetting(ctx, db, "boox_import_pdfs")
+	if val != "false" {
+		t.Errorf("boox_import_pdfs = %q, want 'false' (unchecked)", val)
+	}
+}
+
 func TestSettingsSave_SupernoteOCRPrompt(t *testing.T) {
 	db, err := notedb.Open(context.Background(), ":memory:")
 	if err != nil {

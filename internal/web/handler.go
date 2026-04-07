@@ -247,6 +247,9 @@ const (
 	SettingKeyBooxOCRPrompt   = "boox_ocr_prompt"
 	SettingKeyBooxTodoEnabled = "boox_todo_enabled"
 	SettingKeyBooxTodoPrompt  = "boox_todo_prompt"
+	SettingKeyBooxImportPath  = "boox_import_path"
+	SettingKeyBooxImportNotes = "boox_import_notes"
+	SettingKeyBooxImportPDFs  = "boox_import_pdfs"
 )
 
 // DefaultBooxTodoPrompt is the default prompt for red ink to-do extraction.
@@ -284,6 +287,13 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 			todoPrompt = DefaultBooxTodoPrompt
 		}
 		data["BooxTodoPrompt"] = todoPrompt
+
+		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+		data["BooxImportPath"] = importPath
+		importNotes, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportNotes)
+		data["BooxImportNotes"] = importNotes == "true"
+		importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPDFs)
+		data["BooxImportPDFs"] = importPDFs == "true"
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -326,6 +336,25 @@ func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 			todoPrompt := r.FormValue("todo_prompt")
 			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxTodoPrompt, todoPrompt); err != nil {
 				h.logger.Error("save setting", "key", SettingKeyBooxTodoPrompt, "error", err)
+			}
+			// Save bulk import settings.
+			importPath := r.FormValue("import_path")
+			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxImportPath, importPath); err != nil {
+				h.logger.Error("save setting", "key", SettingKeyBooxImportPath, "error", err)
+			}
+			importNotes := "false"
+			if r.FormValue("import_notes") == "true" {
+				importNotes = "true"
+			}
+			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxImportNotes, importNotes); err != nil {
+				h.logger.Error("save setting", "key", SettingKeyBooxImportNotes, "error", err)
+			}
+			importPDFs := "false"
+			if r.FormValue("import_pdfs") == "true" {
+				importPDFs = "true"
+			}
+			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxImportPDFs, importPDFs); err != nil {
+				h.logger.Error("save setting", "key", SettingKeyBooxImportPDFs, "error", err)
 			}
 		}
 	}
