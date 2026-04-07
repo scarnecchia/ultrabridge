@@ -612,6 +612,15 @@
                   </label>
                 </div>
 
+                <label style="display:block; margin-bottom:0.3rem;">Path Structure</label>
+                <div style="margin-bottom:0.5rem;">
+                  <label style="display:flex; align-items:center; gap:0.3rem; font-weight:normal;">
+                    <input type="checkbox" name="import_onyx_paths" value="true" {{if .BooxImportOnyxPaths}}checked{{end}}>
+                    Onyx export format
+                  </label>
+                  <p class="device-info" style="margin:0.2rem 0 0 1.5rem;">Path follows {model}/{type}/{folder}/{file} structure for device identification. When unchecked, parent directory is used as folder name.</p>
+                </div>
+
                 <button type="submit" style="margin-top:0.5rem; padding:0.3rem 0.8rem;">Save</button>
               </form>
             {{end}}

@@ -249,7 +249,8 @@ const (
 	SettingKeyBooxTodoPrompt  = "boox_todo_prompt"
 	SettingKeyBooxImportPath  = "boox_import_path"
 	SettingKeyBooxImportNotes = "boox_import_notes"
-	SettingKeyBooxImportPDFs  = "boox_import_pdfs"
+	SettingKeyBooxImportPDFs      = "boox_import_pdfs"
+	SettingKeyBooxImportOnyxPaths = "boox_import_onyx_paths"
 )
 
 // DefaultBooxTodoPrompt is the default prompt for red ink to-do extraction.
@@ -294,6 +295,8 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 		data["BooxImportNotes"] = importNotes == "true"
 		importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPDFs)
 		data["BooxImportPDFs"] = importPDFs == "true"
+		importOnyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportOnyxPaths)
+		data["BooxImportOnyxPaths"] = importOnyxPaths == "true"
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -355,6 +358,13 @@ func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxImportPDFs, importPDFs); err != nil {
 				h.logger.Error("save setting", "key", SettingKeyBooxImportPDFs, "error", err)
+			}
+			importOnyxPaths := "false"
+			if r.FormValue("import_onyx_paths") == "true" {
+				importOnyxPaths = "true"
+			}
+			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxImportOnyxPaths, importOnyxPaths); err != nil {
+				h.logger.Error("save setting", "key", SettingKeyBooxImportOnyxPaths, "error", err)
 			}
 		}
 	}

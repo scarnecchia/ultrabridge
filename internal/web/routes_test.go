@@ -184,11 +184,12 @@ func TestSettingsSave_BooxBulkImport(t *testing.T) {
 	})
 
 	form := url.Values{
-		"section":      {"boox"},
-		"ocr_prompt":   {""},
-		"import_path":  {"/mnt/storage/boox-exports"},
-		"import_notes": {"true"},
-		"import_pdfs":  {"true"},
+		"section":            {"boox"},
+		"ocr_prompt":         {""},
+		"import_path":        {"/mnt/storage/boox-exports"},
+		"import_notes":       {"true"},
+		"import_pdfs":        {"true"},
+		"import_onyx_paths":  {"true"},
 	}
 	req := httptest.NewRequest("POST", "/settings/save", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -212,6 +213,10 @@ func TestSettingsSave_BooxBulkImport(t *testing.T) {
 	if val != "true" {
 		t.Errorf("boox_import_pdfs = %q, want 'true'", val)
 	}
+	val, _ = notedb.GetSetting(ctx, db, "boox_import_onyx_paths")
+	if val != "true" {
+		t.Errorf("boox_import_onyx_paths = %q, want 'true'", val)
+	}
 }
 
 func TestSettingsSave_BooxBulkImportUnchecked(t *testing.T) {
@@ -225,6 +230,7 @@ func TestSettingsSave_BooxBulkImportUnchecked(t *testing.T) {
 	ctx := context.Background()
 	notedb.SetSetting(ctx, db, "boox_import_notes", "true")
 	notedb.SetSetting(ctx, db, "boox_import_pdfs", "true")
+	notedb.SetSetting(ctx, db, "boox_import_onyx_paths", "true")
 
 	handler := testHandler(t, func(o *testHandlerOpts) {
 		o.noteDB = db
@@ -254,6 +260,10 @@ func TestSettingsSave_BooxBulkImportUnchecked(t *testing.T) {
 	val, _ = notedb.GetSetting(ctx, db, "boox_import_pdfs")
 	if val != "false" {
 		t.Errorf("boox_import_pdfs = %q, want 'false' (unchecked)", val)
+	}
+	val, _ = notedb.GetSetting(ctx, db, "boox_import_onyx_paths")
+	if val != "false" {
+		t.Errorf("boox_import_onyx_paths = %q, want 'false' (unchecked)", val)
 	}
 }
 
