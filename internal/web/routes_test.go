@@ -177,6 +177,10 @@ func TestSettingsSave_BooxBulkImport(t *testing.T) {
 	}
 	defer db.Close()
 
+	// Import path is set via env var on startup, not the settings form.
+	ctx := context.Background()
+	notedb.SetSetting(ctx, db, "boox_import_path", "/mnt/storage/boox-exports")
+
 	handler := testHandler(t, func(o *testHandlerOpts) {
 		o.noteDB = db
 		o.booxStore = &mockBooxStore{}
@@ -184,12 +188,11 @@ func TestSettingsSave_BooxBulkImport(t *testing.T) {
 	})
 
 	form := url.Values{
-		"section":            {"boox"},
-		"ocr_prompt":         {""},
-		"import_path":        {"/mnt/storage/boox-exports"},
-		"import_notes":       {"true"},
-		"import_pdfs":        {"true"},
-		"import_onyx_paths":  {"true"},
+		"section":           {"boox"},
+		"ocr_prompt":        {""},
+		"import_notes":      {"true"},
+		"import_pdfs":       {"true"},
+		"import_onyx_paths": {"true"},
 	}
 	req := httptest.NewRequest("POST", "/settings/save", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -200,7 +203,7 @@ func TestSettingsSave_BooxBulkImport(t *testing.T) {
 		t.Errorf("POST /settings/save returned %d, want 303", w.Code)
 	}
 
-	ctx := context.Background()
+	// Import path should be unchanged (not overwritten by form submission).
 	val, _ := notedb.GetSetting(ctx, db, "boox_import_path")
 	if val != "/mnt/storage/boox-exports" {
 		t.Errorf("boox_import_path = %q, want '/mnt/storage/boox-exports'", val)
@@ -240,9 +243,8 @@ func TestSettingsSave_BooxBulkImportUnchecked(t *testing.T) {
 
 	// Submit without checkboxes (unchecked = absent from form).
 	form := url.Values{
-		"section":     {"boox"},
-		"ocr_prompt":  {""},
-		"import_path": {"/some/path"},
+		"section":    {"boox"},
+		"ocr_prompt": {""},
 	}
 	req := httptest.NewRequest("POST", "/settings/save", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

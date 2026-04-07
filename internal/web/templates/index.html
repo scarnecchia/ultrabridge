@@ -600,10 +600,13 @@
                 <label style="font-weight:bold; display:block; margin-bottom:0.3rem;">Bulk Import</label>
                 <p class="device-info" style="margin:0 0 0.5rem 0;">Scan a filesystem path for files to import into the Boox pipeline.</p>
 
-                <label for="boox-import-path" style="display:block; margin-bottom:0.3rem;">Import Path</label>
-                <input type="text" id="boox-import-path" name="import_path" value="{{.BooxImportPath}}"
-                  placeholder="/path/to/files"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-family:inherit; font-size:13px; margin-bottom:0.5rem;">
+                <label style="display:block; margin-bottom:0.3rem;">Import Path</label>
+                {{if .BooxImportPath}}
+                <p style="margin:0 0 0.3rem 0; font-family:monospace; font-size:13px; padding:0.4rem; background:#f8f8f8; border:1px solid #e5e7eb; border-radius:3px;">{{.BooxImportPath}}</p>
+                <p class="device-info" style="margin:0 0 0.5rem 0;">To change, re-run install.sh (Docker volume mount required).</p>
+                {{else}}
+                <p class="device-info" style="margin:0 0 0.5rem 0;">Not configured. Run install.sh to set an import path (Docker volume mount required).</p>
+                {{end}}
 
                 <label style="display:block; margin-bottom:0.3rem;">File Types</label>
                 <div style="display:flex; gap:1.5rem; margin-bottom:0.5rem;">

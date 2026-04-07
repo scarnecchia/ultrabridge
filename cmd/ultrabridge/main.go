@@ -230,6 +230,10 @@ func main() {
 		} else {
 			defer booxProc.Stop()
 		}
+		// Sync import path from env var to settings DB so the web handler can read it.
+		if cfg.BooxImportPath != "" {
+			notedb.SetSetting(context.Background(), noteDB, "boox_import_path", cfg.BooxImportPath)
+		}
 	}
 
 	// Start sync engine if enabled

@@ -348,11 +348,7 @@ func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxTodoPrompt, todoPrompt); err != nil {
 				h.logger.Error("save setting", "key", SettingKeyBooxTodoPrompt, "error", err)
 			}
-			// Save bulk import settings.
-			importPath := r.FormValue("import_path")
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxImportPath, importPath); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxImportPath, "error", err)
-			}
+			// Save bulk import settings (path is read-only, set via env var).
 			importNotes := "false"
 			if r.FormValue("import_notes") == "true" {
 				importNotes = "true"
