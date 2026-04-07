@@ -103,6 +103,23 @@ func (p *Processor) ScanAndEnqueue(ctx context.Context, cfg ImportConfig, logger
 		default:
 		}
 
+		// Extract metadata and pre-populate the note record.
+		// Done before the skip check so metadata is always refreshed.
+		relPath, _ := filepath.Rel(cfg.ImportPath, path)
+		model, nType, fldr := ExtractImportMetadata(relPath, cfg.OnyxPaths)
+		title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+
+		noteID := ""
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == ".pdf" {
+			noteID = title
+		}
+		if err := p.store.UpsertNote(ctx, path, noteID, title, model, nType, fldr, 0, ""); err != nil {
+			logger.Error("import: upsert note", "path", path, "error", err)
+			result.Errors++
+			continue
+		}
+
 		// Check if already processed.
 		job, err := p.store.GetLatestJob(ctx, path)
 		if err != nil {
@@ -112,26 +129,6 @@ func (p *Processor) ScanAndEnqueue(ctx context.Context, cfg ImportConfig, logger
 		}
 		if job != nil && job.Status == "done" {
 			result.Skipped++
-			continue
-		}
-
-		// Extract metadata and pre-populate the note record.
-		relPath, _ := filepath.Rel(cfg.ImportPath, path)
-		model, nType, fldr := ExtractImportMetadata(relPath, cfg.OnyxPaths)
-		title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-
-		// Upsert a note record with import metadata so the worker doesn't
-		// need to re-derive it. Use title as noteID for PDFs, or leave
-		// empty for .note files (the worker will overwrite with the real
-		// noteID from the ZIP).
-		noteID := ""
-		ext := strings.ToLower(filepath.Ext(path))
-		if ext == ".pdf" {
-			noteID = title
-		}
-		if err := p.store.UpsertNote(ctx, path, noteID, title, model, nType, fldr, 0, ""); err != nil {
-			logger.Error("import: upsert note", "path", path, "error", err)
-			result.Errors++
 			continue
 		}
 

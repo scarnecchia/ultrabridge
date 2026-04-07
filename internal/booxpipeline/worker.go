@@ -275,13 +275,22 @@ func renderPDFPageScaled(pdfPath string, pageIndex, startDPI, maxPixels int) ([]
 // preserved. Otherwise, falls back to ExtractPathMetadata (WebDAV convention).
 func (p *Processor) resolveMetadata(ctx context.Context, filePath string) (deviceModel, noteType, folder string) {
 	existing, err := p.store.GetNote(ctx, filePath)
-	if err == nil && existing != nil && existing.DeviceModel != "" {
+	if err == nil && existing != nil && existing.DeviceModel != "" && existing.DeviceModel != ".." {
 		return existing.DeviceModel, existing.NoteType, existing.Folder
 	}
 	// Fallback: derive from WebDAV path convention.
-	relPath, _ := filepath.Rel(p.notesPath, filePath)
-	pm := ubwebdav.ExtractPathMetadata(relPath)
-	return pm.DeviceModel, pm.NoteType, pm.Folder
+	// Only valid when the file is under the WebDAV notes root.
+	if p.notesPath != "" && strings.HasPrefix(filePath, p.notesPath) {
+		relPath, _ := filepath.Rel(p.notesPath, filePath)
+		pm := ubwebdav.ExtractPathMetadata(relPath)
+		return pm.DeviceModel, pm.NoteType, pm.Folder
+	}
+	// File is not under WebDAV root (e.g., bulk import) — return whatever
+	// the importer pre-populated, or empty strings.
+	if existing != nil {
+		return existing.DeviceModel, existing.NoteType, existing.Folder
+	}
+	return "", "", ""
 }
 
 // runTodoPass performs the second OCR pass for red ink to-do extraction.
