@@ -126,7 +126,7 @@ _load_existing_config() {
         value="${value%"${value##*[! ]}"}"  # strip trailing whitespace
         export "$key=$value" 2>/dev/null || true
     done < "$envfile"
-    # Extract host port from compose file (format: "PORT:8443").
+    # Extract host port and backup path from compose file.
     local compose
     for compose in "$1/docker-compose.override.yml" "$1/docker-compose.yml"; do
         if [[ -f "$compose" ]]; then
@@ -134,6 +134,12 @@ _load_existing_config() {
             port_line=$(grep -oP '"\K[0-9]+(?=:8443")' "$compose" 2>/dev/null || true)
             if [[ -n "$port_line" ]]; then
                 export UB_PORT="$port_line"
+            fi
+            # Backup path is stored as "host_path:/backup" volume mount.
+            local backup_line
+            backup_line=$(grep -oP '[^- ]+(?=:/backup\b)' "$compose" 2>/dev/null || true)
+            if [[ -n "$backup_line" ]]; then
+                export UB_BACKUP_PATH="$backup_line"
             fi
             break
         fi
