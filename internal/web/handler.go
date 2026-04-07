@@ -64,6 +64,7 @@ type BooxStore interface {
 	GetNoteID(ctx context.Context, path string) (string, error) // returns note_id for cache path resolution
 	EnqueueJob(ctx context.Context, notePath string) error
 	GetLatestJob(ctx context.Context, notePath string) (*booxpipeline.BooxJob, error)
+	RetryAllFailed(ctx context.Context) (int64, error)
 }
 
 // BooxImporter can scan an import path and enqueue files for processing.
@@ -208,6 +209,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /processor/stop", h.handleProcessorStop)
 	h.mux.HandleFunc("POST /files/scan", h.handleFilesScan)
 	h.mux.HandleFunc("POST /files/import", h.handleFilesImport)
+	h.mux.HandleFunc("POST /files/retry-failed", h.handleFilesRetryFailed)
 	h.mux.HandleFunc("GET /sync/status", h.handleSyncStatus)
 	h.mux.HandleFunc("POST /sync/trigger", h.handleSyncTrigger)
 	h.registerLogStreamHandler(broadcaster)
@@ -1069,6 +1071,25 @@ func (h *Handler) handleFilesImport(w http.ResponseWriter, r *http.Request) {
 		"skipped", result.Skipped,
 		"errors", result.Errors,
 	)
+
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesRetryFailed(w http.ResponseWriter, r *http.Request) {
+	if h.booxStore == nil {
+		http.Error(w, "Boox pipeline not enabled", http.StatusNotFound)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	count, err := h.booxStore.RetryAllFailed(ctx)
+	if err != nil {
+		h.logger.Error("retry failed jobs", "error", err)
+	} else {
+		h.logger.Info("retried failed jobs", "count", count)
+	}
 
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }

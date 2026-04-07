@@ -408,6 +408,9 @@
                 <button type="submit" class="btn-small" onclick="return confirm('Scan import path and enqueue new files?')">⬇ Import</button>
               </form>
               {{end}}
+              <form method="POST" action="/files/retry-failed" style="display:inline;">
+                <button type="submit" class="btn-small">↻ Retry Failed</button>
+              </form>
               {{if .filesFolders}}
               <select onchange="filesNav({folder:this.value,page:1})" style="padding:0.3rem; border:1px solid #ccc; border-radius:3px;">
                 <option value="">All folders</option>

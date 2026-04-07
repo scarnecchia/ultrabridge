@@ -229,6 +229,21 @@ func (s *Store) GetNoteID(ctx context.Context, path string) (string, error) {
 	return noteID, nil
 }
 
+// RetryAllFailed resets all failed jobs back to pending.
+// Returns the number of jobs reset.
+func (s *Store) RetryAllFailed(ctx context.Context) (int64, error) {
+	now := time.Now().Unix()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE boox_jobs SET status = 'pending', last_error = '', queued_at = ?
+		WHERE status = 'failed'`,
+		now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("retry failed jobs: %w", err)
+	}
+	return result.RowsAffected()
+}
+
 // ReclaimStuckJobs reclaims jobs that have been in_progress for longer than the timeout.
 // Sets status back to pending and increments the attempts counter.
 func (s *Store) ReclaimStuckJobs(ctx context.Context, timeout time.Duration) error {
