@@ -186,6 +186,91 @@ Once Phase 1 is working and we understand retrieval gaps:
   stays current with no extra work (FTS5 triggers handle it). Embeddings
   would need a similar auto-index hook.
 
+## Decision: Embedding Model
+
+**Choice: `nomic-embed-text-v1.5`** via Ollama on the UltraBridge host CPU.
+
+### Why This Model
+
+| Model | Params | Dims | MTEB Score | CPU Speed |
+|-------|--------|------|------------|-----------|
+| all-MiniLM-L6-v2 | 22M | 384 | 56.3 | ~30ms |
+| bge-small-en-v1.5 | 33M | 384 | 62.2 | ~50ms |
+| gte-small | 33M | 384 | 61.4 | ~50ms |
+| **nomic-embed-text-v1.5** | **137M** | **768** | **65.5** | **~150ms** |
+
+Nomic wins on quality while staying CPU-feasible. 768 dims is more expressive
+than 384 at the cost of 2x storage per vector — still only ~3KB per page.
+
+Matryoshka representation support means we can truncate to 256 dims later
+if needed, with minimal quality loss.
+
+### Storage Math
+
+- 768 floats * 4 bytes = 3,072 bytes per page embedding
+- 12,000 pages = ~36 MB in memory for brute-force search
+- Brute-force cosine similarity over all vectors: <5ms per query
+- No vector index needed at this scale (ANN indices help at 100K+ docs)
+
+Store as BLOBs in a `note_embeddings` SQLite table alongside existing data.
+Load into memory on startup. No CGO, no extensions, no external vector DB.
+
+### Pipeline Integration
+
+Add embedding generation after OCR indexing in the worker:
+
+```
+OCR -> index body_text in note_content -> embed body_text -> store in note_embeddings
+```
+
+At 150ms/chunk on CPU, this adds ~2% to a 7s/page pipeline. Negligible.
+Runs on CPU so it doesn't compete with the GPU VLM.
+
+### Reindexing Cost
+
+If the model changes: 12K pages * 150ms = 30 minutes of background CPU work.
+Non-event at this scale. Would need millions of documents before model
+migration becomes painful.
+
+### Hosting
+
+Ollama on the UltraBridge host (192.168.9.52):
+- `ollama pull nomic-embed-text`
+- Ollama exposes an embedding API at `http://localhost:11434/api/embeddings`
+- No GPU needed, runs on CPU
+- Same Docker network, container can reach host via `host.docker.internal`
+  or the host IP
+
+### Why Not Wait
+
+The system's purpose is patching executive function for an ADHD brain.
+RAG over notes is core to that mission, not a nice-to-have. Embeddings
+meaningfully improve retrieval when the user asks conceptual questions
+("what were the key decisions?") rather than keyword queries. The
+infrastructure cost is minimal, so there's no reason to defer.
+
+### Future-Proofing
+
+Small embedding models have plateaued. Gains in the last 2 years came from
+training techniques (contrastive learning, hard negatives), not architecture.
+A 33-137M model is near the ceiling for its parameter budget. Dramatic leaps
+require 7B+ models (GPU-only). Incremental improvements (MTEB 65 -> 68)
+won't invalidate the approach — and reindexing is cheap at our scale anyway.
+
+## Decision: Retrieval Strategy
+
+**Hybrid: FTS5 keyword search + vector similarity, merged results.**
+
+Both retrieval paths run in parallel at query time:
+1. FTS5 keyword search (existing) — catches exact matches, handles topic names
+2. Vector cosine similarity (new) — catches semantic matches, tolerates OCR noise
+
+Results are merged by reciprocal rank fusion (RRF) or simple interleaving,
+deduplicated by (note_path, page), and fed to the synthesis LLM.
+
+This avoids the "query expansion" step from Option A (saving an LLM round-trip)
+while covering both lexical and semantic retrieval.
+
 ## Data Quality Considerations
 
 - OCR of handwriting is inherently noisy. Expect 80-95% accuracy depending
