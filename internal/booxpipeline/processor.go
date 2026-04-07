@@ -39,7 +39,11 @@ func (p *Processor) Enqueue(ctx context.Context, absPath string) error {
 }
 
 // Start begins the worker loop and watchdog.
+// Reclaims any orphaned in_progress jobs from a previous crash/restart.
 func (p *Processor) Start(ctx context.Context) error {
+	if err := p.store.ReclaimAllInProgress(ctx); err != nil {
+		p.logger.Warn("reclaim orphaned jobs on startup", "error", err)
+	}
 	ctx, p.cancel = context.WithCancel(ctx)
 	go p.run(ctx)
 	go p.watchdog(ctx)

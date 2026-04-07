@@ -244,6 +244,19 @@ func (s *Store) RetryAllFailed(ctx context.Context) (int64, error) {
 	return result.RowsAffected()
 }
 
+// ReclaimAllInProgress resets all in_progress jobs back to pending.
+// Called on startup to recover from crashes/restarts that left orphaned jobs.
+func (s *Store) ReclaimAllInProgress(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE boox_jobs SET status = 'pending', attempts = attempts + 1
+		WHERE status = 'in_progress'`,
+	)
+	if err != nil {
+		return fmt.Errorf("reclaim in_progress jobs: %w", err)
+	}
+	return nil
+}
+
 // ReclaimStuckJobs reclaims jobs that have been in_progress for longer than the timeout.
 // Sets status back to pending and increments the attempts counter.
 func (s *Store) ReclaimStuckJobs(ctx context.Context, timeout time.Duration) error {
