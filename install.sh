@@ -111,6 +111,35 @@ for arg in "$@"; do
     esac
 done
 
+# --- load existing configuration ---
+
+# If a previous install exists, source .ultrabridge.env to use as defaults.
+# Variables from the env file become the "press Enter to accept" values.
+_load_existing_config() {
+    local envfile="$1/.ultrabridge.env"
+    [[ -f "$envfile" ]] || return
+    info "Found existing configuration at $envfile"
+    # Source only KEY=VALUE lines (skip comments, empty lines, shell-unsafe content).
+    while IFS='=' read -r key value; do
+        [[ -z "$key" || "$key" =~ ^# ]] && continue
+        value="${value%%#*}"        # strip inline comments
+        value="${value%"${value##*[! ]}"}"  # strip trailing whitespace
+        export "$key=$value" 2>/dev/null || true
+    done < "$envfile"
+    # Extract host port from compose file (format: "PORT:8443").
+    local compose
+    for compose in "$1/docker-compose.override.yml" "$1/docker-compose.yml"; do
+        if [[ -f "$compose" ]]; then
+            local port_line
+            port_line=$(grep -oP '"\K[0-9]+(?=:8443")' "$compose" 2>/dev/null || true)
+            if [[ -n "$port_line" ]]; then
+                export UB_PORT="$port_line"
+            fi
+            break
+        fi
+    done
+}
+
 # --- pre-flight checks ---
 
 info "UltraBridge Installer"
@@ -130,6 +159,9 @@ ok "Docker Compose found"
 
 # Detect Supernote Private Cloud
 prompt SUPERNOTE_DIR "Install directory" "$DEFAULT_SUPERNOTE_DIR"
+
+# Load existing config (if any) to pre-fill defaults for prompts.
+_load_existing_config "$SUPERNOTE_DIR"
 
 SPC_AVAILABLE=false
 if [[ -f "$SUPERNOTE_DIR/docker-compose.yml" ]] && [[ -f "$SUPERNOTE_DIR/.dbenv" ]]; then
@@ -189,23 +221,24 @@ echo "  UltraBridge needs a username and password for CalDAV/web access."
 echo "  Your password will be hashed with bcrypt — the plaintext is never stored."
 echo
 
-prompt UB_USERNAME "Username" "$DEFAULT_USERNAME"
+prompt UB_USERNAME "Username" "${UB_USERNAME:-$DEFAULT_USERNAME}"
 prompt_password UB_PASSWORD "Password"
-prompt UB_PORT "Port to expose on host" "$DEFAULT_PORT"
-prompt UB_COLLECTION_NAME "CalDAV collection name" "Supernote Tasks"
+prompt UB_PORT "Port to expose on host" "${UB_PORT:-$DEFAULT_PORT}"
+prompt UB_COLLECTION_NAME "CalDAV collection name" "${UB_CALDAV_COLLECTION_NAME:-Supernote Tasks}"
 
-UB_NOTES_PATH=""
-UB_BACKUP_PATH=""
-UB_OCR_ENABLED=false
-UB_OCR_FORMAT=""
-UB_OCR_API_URL=""
-UB_OCR_API_KEY=""
-UB_OCR_MODEL=""
-UB_SN_SYNC_ENABLED="false"
-UB_SN_ACCOUNT=""
-UB_SN_SYNC_INTERVAL="300"
-UB_SN_API_URL=""
-UB_SN_PASSWORD=""
+# Preserve existing values (from loaded config) or set defaults.
+UB_NOTES_PATH="${UB_NOTES_PATH:-}"
+UB_BACKUP_PATH="${UB_BACKUP_PATH:-}"
+UB_OCR_ENABLED="${UB_OCR_ENABLED:-false}"
+UB_OCR_FORMAT="${UB_OCR_FORMAT:-}"
+UB_OCR_API_URL="${UB_OCR_API_URL:-}"
+UB_OCR_API_KEY="${UB_OCR_API_KEY:-}"
+UB_OCR_MODEL="${UB_OCR_MODEL:-}"
+UB_SN_SYNC_ENABLED="${UB_SN_SYNC_ENABLED:-false}"
+UB_SN_ACCOUNT="${UB_SN_ACCOUNT:-}"
+UB_SN_SYNC_INTERVAL="${UB_SN_SYNC_INTERVAL:-300}"
+UB_SN_API_URL="${UB_SN_API_URL:-}"
+UB_SN_PASSWORD="${UB_SN_PASSWORD:-}"
 
 if [[ "$SPC_AVAILABLE" == true ]]; then
 
@@ -227,16 +260,19 @@ echo "  Leave the path blank now to skip the Supernote pipeline — you can re-r
 echo "  install.sh at any time to enable it later."
 echo
 
-prompt UB_NOTES_PATH "Path to your Supernote .note files (leave blank to skip)" ""
+prompt UB_NOTES_PATH "Path to your Supernote .note files (leave blank to skip)" "$UB_NOTES_PATH"
 
 if [[ -n "$UB_NOTES_PATH" ]]; then
-    prompt UB_BACKUP_PATH "Backup directory (copy originals here before OCR writes; leave blank to skip)" ""
+    prompt UB_BACKUP_PATH "Backup directory (copy originals here before OCR writes; leave blank to skip)" "$UB_BACKUP_PATH"
 
     if [[ "$UNATTENDED" == true ]]; then
         yn=$([[ "${UB_OCR_ENABLED:-false}" == "true" ]] && echo "y" || echo "n")
     else
-        printf 'Enable OCR via vision API? [y/N]: '
+        ocr_default="N"
+        [[ "$UB_OCR_ENABLED" == "true" ]] && ocr_default="Y" || true
+        printf 'Enable OCR via vision API? [%s]: ' "$([[ "$ocr_default" == "Y" ]] && echo "Y/n" || echo "y/N")"
         read -r yn
+        yn="${yn:-$ocr_default}"
     fi
     if [[ "$yn" =~ ^[Yy] ]]; then
         UB_OCR_ENABLED=true
@@ -245,10 +281,10 @@ if [[ -n "$UB_NOTES_PATH" ]]; then
         echo "    anthropic — Anthropic Messages API (direct Anthropic or OpenRouter)"
         echo "    openai    — OpenAI Chat Completions API (vLLM, Ollama, or compatible)"
         echo
-        prompt UB_OCR_FORMAT "API format" "anthropic"
-        prompt UB_OCR_API_URL "API base URL" "https://openrouter.ai/api"
-        prompt UB_OCR_API_KEY "API key (leave blank for unauthenticated local endpoints)" ""
-        prompt UB_OCR_MODEL "Model name" "anthropic/claude-opus-4-6"
+        prompt UB_OCR_FORMAT "API format" "${UB_OCR_FORMAT:-anthropic}"
+        prompt UB_OCR_API_URL "API base URL" "${UB_OCR_API_URL:-https://openrouter.ai/api}"
+        prompt UB_OCR_API_KEY "API key (leave blank for unauthenticated local endpoints)" "${UB_OCR_API_KEY:-}"
+        prompt UB_OCR_MODEL "Model name" "${UB_OCR_MODEL:-anthropic/claude-opus-4-6}"
     else
         UB_OCR_ENABLED=false
         UB_OCR_FORMAT=""
@@ -274,13 +310,17 @@ echo ""
 if [[ "$UNATTENDED" == true ]]; then
     enable_sync=$([[ "${UB_SN_SYNC_ENABLED:-false}" == "true" ]] && echo "y" || echo "n")
 else
-    read -rp "Enable Supernote task sync? (y/N): " enable_sync
+    sync_default="N"
+    [[ "$UB_SN_SYNC_ENABLED" == "true" ]] && sync_default="Y" || true
+    printf 'Enable Supernote task sync? [%s]: ' "$([[ "$sync_default" == "Y" ]] && echo "Y/n" || echo "y/N")"
+    read -r enable_sync
+    enable_sync="${enable_sync:-$sync_default}"
 fi
 if [[ "${enable_sync,,}" == "y" ]]; then
     UB_SN_SYNC_ENABLED="true"
-    prompt UB_SN_ACCOUNT "Supernote account (email)" ""
-    prompt UB_SN_API_URL "SPC API URL" "http://supernote-service:8080"
-    prompt UB_SN_SYNC_INTERVAL "Sync interval (seconds)" "300"
+    prompt UB_SN_ACCOUNT "Supernote account (email)" "$UB_SN_ACCOUNT"
+    prompt UB_SN_API_URL "SPC API URL" "${UB_SN_API_URL:-http://supernote-service:8080}"
+    prompt UB_SN_SYNC_INTERVAL "Sync interval (seconds)" "$UB_SN_SYNC_INTERVAL"
     prompt_password UB_SN_PASSWORD "Supernote Private Cloud password"
 fi
 
@@ -299,12 +339,16 @@ UB_BOOX_NOTES_PATH="${UB_BOOX_NOTES_PATH:-}"
 if [[ "$UNATTENDED" == true ]]; then
     enable_boox=$([[ "${UB_BOOX_ENABLED:-false}" == "true" ]] && echo "y" || echo "n")
 else
-    read -rp "Enable Boox device uploads via WebDAV? (y/N): " enable_boox
+    boox_default="N"
+    [[ "$UB_BOOX_ENABLED" == "true" ]] && boox_default="Y" || true
+    printf 'Enable Boox device uploads via WebDAV? [%s]: ' "$([[ "$boox_default" == "Y" ]] && echo "Y/n" || echo "y/N")"
+    read -r enable_boox
+    enable_boox="${enable_boox:-$boox_default}"
 fi
 
 if [[ "${enable_boox,,}" == "y" ]]; then
     UB_BOOX_ENABLED="true"
-    prompt UB_BOOX_NOTES_PATH "Boox notes directory (WebDAV root)" "${SUPERNOTE_DIR}/boox-notes"
+    prompt UB_BOOX_NOTES_PATH "Boox notes directory (WebDAV root)" "${UB_BOOX_NOTES_PATH:-${SUPERNOTE_DIR}/boox-notes}"
     mkdir -p "$UB_BOOX_NOTES_PATH"
 fi
 
