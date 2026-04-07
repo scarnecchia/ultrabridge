@@ -271,6 +271,104 @@ deduplicated by (note_path, page), and fed to the synthesis LLM.
 This avoids the "query expansion" step from Option A (saving an LLM round-trip)
 while covering both lexical and semantic retrieval.
 
+## Decision: Generation Interface
+
+Two generation models, each suited to different query types:
+
+### 1. Local Qwen3-VL-8B (existing infrastructure)
+
+- Already running on RTX 5060 Ti for OCR
+- 16K context window — fits ~15-20 retrieved pages + prompt
+- Good for: quick factual lookups, single-topic queries
+  - "When was my last meeting with Deepak?"
+  - "What did I write about the Box renewal?"
+- Free, fast, fully private
+- Interface: chat tab in UltraBridge web UI
+
+### 2. Claude via MCP (Model Context Protocol)
+
+The more powerful option. UltraBridge exposes an MCP server that Claude
+can call to search and retrieve notes. Claude drives the retrieval
+iteratively and reasons across results.
+
+**MCP Tools exposed by UltraBridge:**
+
+```
+search_notes(query, folder?, device?, date_range?)
+  -> returns matching pages: text, metadata (date, device, folder, title, page)
+
+get_note_pages(note_path)
+  -> returns all pages of a specific note with full OCR text
+
+get_note_image(note_path, page)
+  -> returns rendered JPEG of the handwritten page
+```
+
+**Example conversation:**
+
+> User: "Did I ever commit to a timeline for the CCC migration?"
+>
+> Claude calls search_notes("CCC migration timeline commit")
+> -> gets 5 matching pages across 3 notes
+>
+> Claude: "Yes, in three places:
+> - 2025-03-14, Deepak Change Mgmt (Palma2, Moffitt): Q3 target for phase 1
+> - 2025-12-05, Demand Notes (Palma2, Moffitt): Q3 slipped to Q4
+> - 2026-03-30, CCC Legal (Palma2, Moffitt): confirmed completion, under budget
+>
+> Want me to pull up the actual pages?"
+>
+> User: "Yeah, show me the legal one"
+>
+> Claude calls get_note_image(".../20260330 CCC Legal.pdf", 0)
+> -> renders the handwritten page inline
+
+**Why MCP over a simple API:**
+
+- **Iterative retrieval**: Claude can refine searches based on what it finds.
+  "That's not quite right, let me also search for budget discussions" — without
+  the user manually re-querying.
+- **Conversation context**: Claude remembers prior searches within a session.
+  Can cross-reference findings, spot patterns, build narrative across months
+  of meeting notes.
+- **Multimodal verification**: Claude can view the actual handwritten page
+  image to catch details the OCR missed or misread.
+- **No prompt engineering on the user's part**: The user asks natural questions.
+  Claude decides what to search for, how many results to pull, whether to
+  drill deeper.
+
+This is the real executive function patch — not "find this note" but "help me
+understand the arc of what happened across 6 months of scattered meeting notes."
+
+### MCP Server Implementation
+
+The MCP server would be a lightweight addition to UltraBridge:
+
+- New `internal/mcp/` package implementing the MCP protocol (JSON-RPC over stdio or SSE)
+- Tools call into existing infrastructure:
+  - `search_notes` -> hybrid FTS5 + vector retrieval (same as chat tab)
+  - `get_note_pages` -> `search.GetContent()` (already exists)
+  - `get_note_image` -> `/files/boox/render` endpoint (already exists, just needs
+    to return bytes instead of serving HTTP)
+- Registered in Claude Desktop / claude.ai via MCP config
+- Runs as a sidecar process or exposed as HTTP SSE endpoint
+
+No new database work — the MCP tools are a thin interface over retrieval
+and rendering capabilities that already exist.
+
+### Which to build first
+
+Build the retrieval pipeline (embeddings + hybrid search) first — both
+interfaces use it. Then:
+
+1. **MCP server** — higher impact, more natural UX, leverages Claude's
+   reasoning for complex queries
+2. **Chat tab** — simpler to build, works offline/fully local, good for
+   quick lookups when you don't need Claude's reasoning depth
+
+Both can coexist. Quick factual lookups in the web UI, deep synthesis
+via Claude.
+
 ## Data Quality Considerations
 
 - OCR of handwriting is inherently noisy. Expect 80-95% accuracy depending
