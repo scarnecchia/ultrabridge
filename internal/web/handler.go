@@ -131,14 +131,25 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		broadcaster:   broadcaster,
 	}
 
+	// Cache the import path for the noteSource template function.
+	var booxImportPath string
+	if noteDB != nil {
+		booxImportPath, _ = notedb.GetSetting(context.Background(), noteDB, SettingKeyBooxImportPath)
+	}
+
 	// Parse the embedded templates with custom function map
 	funcMap := template.FuncMap{
 		"formatDueTime": formatDueTime,
 		"formatCreated": formatCreated,
 		"fileTypeStr":   func(ft notestore.FileType) string { return string(ft) },
 		"noteSource": func(path string) string {
-			if h.booxStore != nil && strings.HasPrefix(path, h.booxNotesPath) {
-				return "Boox"
+			if h.booxStore != nil {
+				if h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) {
+					return "Boox"
+				}
+				if booxImportPath != "" && strings.HasPrefix(path, booxImportPath) {
+					return "Boox"
+				}
 			}
 			return "Supernote"
 		},
