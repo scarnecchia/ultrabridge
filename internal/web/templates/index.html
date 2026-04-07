@@ -405,7 +405,7 @@
               </form>
               {{if .BooxImportPath}}
               <form method="POST" action="/files/import" style="display:inline;">
-                <button type="submit" class="btn-small" onclick="return confirm('Scan import path and enqueue new files?')">⬇ Import</button>
+                <button type="submit" class="btn-small" onclick="return confirmImport()">⬇ Import</button>
               </form>
               {{end}}
               <form method="POST" action="/files/retry-failed" style="display:inline;">
@@ -684,6 +684,22 @@
                 document.cookie = 'files_per_page=' + overrides.per_page + ';path=/;max-age=31536000;SameSite=Lax';
             }
             window.location = '/files?' + params.toString();
+        }
+
+        // Confirm import with todo extraction warning.
+        function confirmImport() {
+            {{if .BooxTodoEnabled}}
+            return confirm(
+                'WARNING: Red Ink To-Do Extraction is enabled.\n\n' +
+                'Importing old notes will create CalDAV tasks from any red ' +
+                'handwriting found in them. This could generate hundreds of ' +
+                'unwanted tasks.\n\n' +
+                'To avoid this, cancel and disable it in Settings first.\n\n' +
+                'Scan import path and enqueue new files?'
+            );
+            {{else}}
+            return confirm('Scan import path and enqueue new files?');
+            {{end}}
         }
 
         // Hide completed tasks by default on page load

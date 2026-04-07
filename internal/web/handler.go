@@ -249,6 +249,8 @@ func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
 	if h.noteDB != nil {
 		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
 		data["BooxImportPath"] = importPath
+		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxTodoEnabled)
+		data["BooxTodoEnabled"] = todoEnabled == "true"
 	}
 	return data
 }
