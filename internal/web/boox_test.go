@@ -114,7 +114,7 @@ func TestFilesPage_ShowsBothSources(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, booxStore, "/boox/notes", "", nil, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, booxStore, nil, "/boox/notes", "", nil, logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files", nil)
 	w := httptest.NewRecorder()
@@ -172,7 +172,7 @@ func TestBooxRender_ServesCache(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, tmpDir, "", nil, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, nil, tmpDir, "", nil, logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files/boox/render?path=%2Fboox%2Fnotes%2Ftest.note&page=0", nil)
 	w := httptest.NewRecorder()
@@ -205,7 +205,7 @@ func TestBooxRender_MissingNote(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, tmpDir, "", nil, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, nil, tmpDir, "", nil, logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files/boox/render?path=%2Fboox%2Fnotes%2Ftest.note&page=0", nil)
 	w := httptest.NewRecorder()
@@ -234,7 +234,7 @@ func TestBooxRender_MissingPage(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, tmpDir, "", nil, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, nil, tmpDir, "", nil, logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files/boox/render?path=%2Fboox%2Fnotes%2Ftest.note&page=0", nil)
 	w := httptest.NewRecorder()
@@ -269,7 +269,7 @@ func TestBooxVersions_ReturnsList(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, "/boox/notes", "", nil, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, nil, "/boox/notes", "", nil, logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files/boox/versions?path=%2Fboox%2Fnotes%2Ftest.note", nil)
 	w := httptest.NewRecorder()
@@ -313,7 +313,7 @@ func TestBooxVersions_EmptyList(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, "/boox/notes", "", nil, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, nil, "/boox/notes", "", nil, logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files/boox/versions?path=%2Fboox%2Fnotes%2Ftest.note", nil)
 	w := httptest.NewRecorder()
@@ -338,7 +338,7 @@ func TestBooxVersions_EmptyList(t *testing.T) {
 func TestBooxVersions_NoBooxStore(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files/boox/versions?path=%2Fboox%2Fnotes%2Ftest.note", nil)
 	w := httptest.NewRecorder()
@@ -381,7 +381,7 @@ func TestFilesPage_NoBooxNotes(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, booxStore, "/boox/notes", "", nil, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, booxStore, nil, "/boox/notes", "", nil, logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files", nil)
 	w := httptest.NewRecorder()
@@ -420,7 +420,7 @@ func TestFilesPage_NoBooxStore(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler2 := NewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster)
+	handler2 := NewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files", nil)
 	w := httptest.NewRecorder()
@@ -465,7 +465,7 @@ func TestNoteSourceFunction(t *testing.T) {
 		},
 	}
 
-	handler := NewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, booxStore, "/boox/notes", "", nil, logger, broadcaster)
+	handler := NewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, booxStore, nil, "/boox/notes", "", nil, logger, broadcaster)
 	req := httptest.NewRequest("GET", "/files", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)

@@ -66,6 +66,11 @@ type BooxStore interface {
 	GetLatestJob(ctx context.Context, notePath string) (*booxpipeline.BooxJob, error)
 }
 
+// BooxImporter can scan an import path and enqueue files for processing.
+type BooxImporter interface {
+	ScanAndEnqueue(ctx context.Context, cfg booxpipeline.ImportConfig, logger *slog.Logger) booxpipeline.ImportResult
+}
+
 type Handler struct {
 	store           ubcaldav.TaskStore
 	notifier        ubcaldav.SyncNotifier
@@ -75,6 +80,7 @@ type Handler struct {
 	scanner         FileScanner
 	syncProvider    SyncStatusProvider
 	booxStore       BooxStore
+	booxImporter    BooxImporter
 	snNotesPath     string // UB_NOTES_PATH for Supernote device path mapping
 	booxNotesPath   string
 	booxCachePath   string
@@ -104,7 +110,7 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
 	h := &Handler{
 		store:         store,
 		notifier:      notifier,
@@ -115,6 +121,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		syncProvider:  syncProvider,
 		snNotesPath:   snNotesPath,
 		booxStore:     booxStore,
+		booxImporter:  booxImporter,
 		booxNotesPath: booxNotesPath,
 		booxCachePath: filepath.Join(booxNotesPath, ".cache"),
 		noteDB:        noteDB,
@@ -200,6 +207,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /processor/start", h.handleProcessorStart)
 	h.mux.HandleFunc("POST /processor/stop", h.handleProcessorStop)
 	h.mux.HandleFunc("POST /files/scan", h.handleFilesScan)
+	h.mux.HandleFunc("POST /files/import", h.handleFilesImport)
 	h.mux.HandleFunc("GET /sync/status", h.handleSyncStatus)
 	h.mux.HandleFunc("POST /sync/trigger", h.handleSyncTrigger)
 	h.registerLogStreamHandler(broadcaster)
@@ -673,6 +681,11 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	// Populate folder filter dropdown (only at root level).
 	folder := strings.TrimSpace(r.URL.Query().Get("folder"))
 	data["filesFolder"] = folder
+	// Load import path for the Import button.
+	if h.noteDB != nil {
+		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+		data["BooxImportPath"] = importPath
+	}
 	if relPath == "" && h.searchIndex != nil {
 		folders, err := h.searchIndex.ListFolders(ctx)
 		if err != nil {
@@ -1019,6 +1032,48 @@ func (h *Handler) handleFilesScan(w http.ResponseWriter, r *http.Request) {
 	if h.scanner != nil {
 		h.scanner.ScanNow(r.Context())
 	}
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesImport(w http.ResponseWriter, r *http.Request) {
+	if h.booxImporter == nil {
+		http.Error(w, "Boox pipeline not enabled", http.StatusNotFound)
+		return
+	}
+	if h.noteDB == nil {
+		http.Error(w, "database not available", http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+
+	// Read import settings from DB.
+	importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+	if importPath == "" {
+		h.logger.Warn("import: no import path configured")
+		http.Redirect(w, r, "/settings", http.StatusSeeOther)
+		return
+	}
+	importNotes, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportNotes)
+	importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPDFs)
+	onyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportOnyxPaths)
+
+	cfg := booxpipeline.ImportConfig{
+		ImportPath:  importPath,
+		ImportNotes: importNotes == "true",
+		ImportPDFs:  importPDFs == "true",
+		OnyxPaths:   onyxPaths == "true",
+	}
+
+	result := h.booxImporter.ScanAndEnqueue(ctx, cfg, h.logger)
+	h.logger.Info("import complete",
+		"scanned", result.Scanned,
+		"enqueued", result.Enqueued,
+		"skipped", result.Skipped,
+		"errors", result.Errors,
+	)
+
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 

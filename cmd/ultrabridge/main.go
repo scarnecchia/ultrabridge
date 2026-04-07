@@ -296,12 +296,14 @@ func main() {
 		if cfg.SNSyncEnabled && syncEngine != nil {
 			syncProvider = &syncProviderAdapter{engine: syncEngine}
 		}
-		// If Boox is enabled, pass the store from the processor; otherwise nil
+		// If Boox is enabled, pass the store and processor; otherwise nil
 		var booxStore web.BooxStore
+		var booxImporter web.BooxImporter
 		if booxProc != nil {
 			booxStore = booxProc.Store()
+			booxImporter = booxProc
 		}
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster)
+		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster)
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 
