@@ -75,6 +75,8 @@ func TestSearchPage_SourceBadges(t *testing.T) {
 		nil, // embedStore
 		"",  // embedModel
 		nil, // retriever
+		nil, // chatHandler
+		nil, // chatStore
 	)
 
 	// Execute GET /search?q=test

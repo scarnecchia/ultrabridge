@@ -1,3 +1,4 @@
+// FCIS: Imperative Shell
 package chat
 
 import (
@@ -88,11 +89,14 @@ func (h *Handler) HandleAsk(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	// Send session_id as first event so client knows which session to display
-	fmt.Fprintf(w, "data: %s\n\n", mustJSON(map[string]interface{}{
+	// Send session_id and retrieved context as first event so client knows which session to display
+	// and can use search results for citation linkification
+	sessionEvent := map[string]interface{}{
 		"type":       "session",
 		"session_id": req.SessionID,
-	}))
+		"context":    results,
+	}
+	fmt.Fprintf(w, "data: %s\n\n", mustJSON(sessionEvent))
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}

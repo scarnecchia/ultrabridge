@@ -1,3 +1,4 @@
+// FCIS: Imperative Shell
 package chat
 
 import (
@@ -36,7 +37,7 @@ func NewStore(db *sql.DB) *Store {
 
 // CreateSession creates a new chat session with the given title.
 func (s *Store) CreateSession(ctx context.Context, title string) (*Session, error) {
-	now := time.Now().Unix()
+	now := time.Now().UnixMilli()
 	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO chat_sessions (title, created_at, updated_at) VALUES (?, ?, ?)`,
 		title, now, now,
@@ -45,7 +46,7 @@ func (s *Store) CreateSession(ctx context.Context, title string) (*Session, erro
 		return nil, fmt.Errorf("create session: %w", err)
 	}
 	id, _ := result.LastInsertId()
-	return &Session{ID: id, Title: title, CreatedAt: time.Unix(now, 0), UpdatedAt: time.Unix(now, 0)}, nil
+	return &Session{ID: id, Title: title, CreatedAt: time.UnixMilli(now), UpdatedAt: time.UnixMilli(now)}, nil
 }
 
 // ListSessions returns all chat sessions ordered by updated_at descending.
@@ -64,8 +65,8 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 		if err := rows.Scan(&sess.ID, &sess.Title, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
-		sess.CreatedAt = time.Unix(createdAt, 0)
-		sess.UpdatedAt = time.Unix(updatedAt, 0)
+		sess.CreatedAt = time.UnixMilli(createdAt)
+		sess.UpdatedAt = time.UnixMilli(updatedAt)
 		sessions = append(sessions, sess)
 	}
 	return sessions, rows.Err()
@@ -73,7 +74,7 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 
 // AddMessage adds a new message to a session and updates the session's updated_at timestamp.
 func (s *Store) AddMessage(ctx context.Context, sessionID int64, role, content string) (*Message, error) {
-	now := time.Now().Unix()
+	now := time.Now().UnixMilli()
 	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO chat_messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)`,
 		sessionID, role, content, now,
@@ -82,10 +83,12 @@ func (s *Store) AddMessage(ctx context.Context, sessionID int64, role, content s
 		return nil, fmt.Errorf("add message: %w", err)
 	}
 	// Update session's updated_at
-	s.db.ExecContext(ctx, `UPDATE chat_sessions SET updated_at = ? WHERE id = ?`, now, sessionID)
+	if _, err := s.db.ExecContext(ctx, `UPDATE chat_sessions SET updated_at = ? WHERE id = ?`, now, sessionID); err != nil {
+		return nil, fmt.Errorf("update session updated_at: %w", err)
+	}
 
 	id, _ := result.LastInsertId()
-	return &Message{ID: id, SessionID: sessionID, Role: role, Content: content, CreatedAt: time.Unix(now, 0)}, nil
+	return &Message{ID: id, SessionID: sessionID, Role: role, Content: content, CreatedAt: time.UnixMilli(now)}, nil
 }
 
 // GetMessages returns all messages in a session ordered by created_at ascending.
@@ -106,7 +109,7 @@ func (s *Store) GetMessages(ctx context.Context, sessionID int64) ([]Message, er
 		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &createdAt); err != nil {
 			return nil, err
 		}
-		m.CreatedAt = time.Unix(createdAt, 0)
+		m.CreatedAt = time.UnixMilli(createdAt)
 		msgs = append(msgs, m)
 	}
 	return msgs, rows.Err()
@@ -114,10 +117,25 @@ func (s *Store) GetMessages(ctx context.Context, sessionID int64) ([]Message, er
 
 // DeleteSession deletes a session and all its messages.
 func (s *Store) DeleteSession(ctx context.Context, sessionID int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM chat_messages WHERE session_id = ?`, sessionID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin tx: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM chat_sessions WHERE id = ?`, sessionID)
-	return err
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `DELETE FROM chat_messages WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return fmt.Errorf("delete messages: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE id = ?`, sessionID)
+	if err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	return nil
 }

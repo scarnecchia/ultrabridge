@@ -49,7 +49,7 @@ func testHandler(t *testing.T, opts ...func(*testHandlerOpts)) *Handler {
 	return NewHandler(
 		newMockTaskStore(), nil, ns, si,
 		proc, nil, nil, bs, nil, o.booxNotesPath, "",
-		o.noteDB, logger, broadcaster, nil, nil, "", nil,
+		o.noteDB, logger, broadcaster, nil, nil, "", nil, nil, nil,
 	)
 }
 
@@ -389,7 +389,7 @@ func TestPurgeCompleted_DeletesCompletedTasks(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil)
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/tasks/purge-completed", nil)
 	w := httptest.NewRecorder()
