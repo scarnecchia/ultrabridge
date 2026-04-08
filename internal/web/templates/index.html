@@ -632,26 +632,24 @@
                 <p class="device-info" style="margin:0 0 0.5rem 0;">Not configured. Run install.sh to set an import path (Docker volume mount required).</p>
                 {{end}}
 
-                <label style="display:block; margin-bottom:0.3rem;">File Types</label>
-                <div style="margin-bottom:0.5rem;">
-                  <label style="font-weight:normal; margin-right:1.5rem; cursor:pointer;">
-                    <input type="checkbox" name="import_notes" value="true" {{if .BooxImportNotes}}checked{{end}} style="vertical-align:middle; margin-right:0.2rem;">
-                    <span style="vertical-align:middle;">Notes (.note)</span>
-                  </label>
-                  <label style="font-weight:normal; cursor:pointer;">
-                    <input type="checkbox" name="import_pdfs" value="true" {{if .BooxImportPDFs}}checked{{end}} style="vertical-align:middle; margin-right:0.2rem;">
-                    <span style="vertical-align:middle;">PDFs (.pdf)</span>
-                  </label>
-                </div>
+                <label for="boox-import-notes" style="display:block; margin-bottom:0.3rem;">Import Notes (.note)</label>
+                <select id="boox-import-notes" name="import_notes" style="padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                  <option value="false" {{if not .BooxImportNotes}}selected{{end}}>Disabled</option>
+                  <option value="true" {{if .BooxImportNotes}}selected{{end}}>Enabled</option>
+                </select>
 
-                <label style="display:block; margin-bottom:0.3rem;">Path Structure</label>
-                <div style="margin-bottom:0.5rem;">
-                  <label style="font-weight:normal; cursor:pointer;">
-                    <input type="checkbox" name="import_onyx_paths" value="true" {{if .BooxImportOnyxPaths}}checked{{end}} style="vertical-align:middle; margin-right:0.2rem;">
-                    <span style="vertical-align:middle;">Onyx export format</span>
-                  </label>
-                  <p class="device-info" style="margin:0.2rem 0 0 1.5rem;">Path follows {model}/{type}/{folder}/{file} structure for device identification. When unchecked, parent directory is used as folder name.</p>
-                </div>
+                <label for="boox-import-pdfs" style="display:block; margin-bottom:0.3rem;">Import PDFs (.pdf)</label>
+                <select id="boox-import-pdfs" name="import_pdfs" style="padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                  <option value="false" {{if not .BooxImportPDFs}}selected{{end}}>Disabled</option>
+                  <option value="true" {{if .BooxImportPDFs}}selected{{end}}>Enabled</option>
+                </select>
+
+                <label for="boox-import-onyx-paths" style="display:block; margin-bottom:0.3rem;">Onyx Export Path Structure</label>
+                <select id="boox-import-onyx-paths" name="import_onyx_paths" style="padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.3rem;">
+                  <option value="false" {{if not .BooxImportOnyxPaths}}selected{{end}}>Disabled</option>
+                  <option value="true" {{if .BooxImportOnyxPaths}}selected{{end}}>Enabled</option>
+                </select>
+                <p class="device-info" style="margin:0 0 0.5rem 0;">When enabled, path is parsed as {model}/{type}/{folder}/{file} for device identification. When disabled, parent directory is used as folder name.</p>
 
                 <button type="submit" style="margin-top:0.5rem; padding:0.3rem 0.8rem;">Save</button>
               </form>
