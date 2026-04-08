@@ -6,12 +6,14 @@
  <h1>UltraBridge</h1>
 </p>
 
-UltraBridge is a data management application for e-ink tablets including Onyx Boox and Supernote (via a sidecar service for [Supernote Private Cloud](https://support.supernote.com/article/75/set-up-supernote-partner-cloud) ), providing four capabilities:
+UltraBridge is a data management application for e-ink tablets including Onyx Boox and Supernote (via a sidecar service for [Supernote Private Cloud](https://support.supernote.com/article/75/set-up-supernote-partner-cloud) ), providing six capabilities:
 
 1. **CalDAV task sync** — synchronise Supernote tasks with any CalDAV client (DAVx5, GNOME Evolution, 2Do, etc.)
 2. **Supernote notes pipeline** — automatically discover `.note` files, extract handwritten text, index it for full-text search, and optionally run vision-API OCR
 3. **Boox notes pipeline** — accept Boox `.note` file uploads via WebDAV or bulk import from filesystem (including PDFs), parse ZIP/protobuf format, render pages, OCR, extract TODOs via color coding, and index for unified search alongside Supernote notes
-4. **Unified search** — full-text search across both Supernote and Boox notes with source indicators
+4. **RAG search** — generate vector embeddings via Ollama, then combine them with FTS5 keyword search using reciprocal rank fusion for hybrid retrieval. Exposed as a JSON API and an MCP server for Claude integration
+5. **Local chat** — ask questions about your notes in a browser-based chat tab, powered by a local text generation model (vLLM) with streaming responses and clickable citations back to source pages
+6. **Unified search** — full-text search across both Supernote and Boox notes with source indicators
 
 **This software was developed using Claude Code, which was trained on open source software, and will therefore always be open-source software.**
 
@@ -22,6 +24,8 @@ UltraBridge is a data management application for e-ink tablets including Onyx Bo
 - For Boox integration: a Boox device with WebDAV export support (Tab Ultra C Pro, NoteAir, Note Air5C, etc.)
 - For CalDAV sync: a CalDAV client on your device
 - For OCR: an API key for Anthropic or OpenRouter, or an API endpoint from a local inference API server like vLLM
+- For RAG search *(optional)*: **Ollama** with the `nomic-embed-text:v1.5` model
+- For local chat *(optional)*: **vLLM** (or any OpenAI-compatible API) with a text generation model
 
 > **Boox-only users:** UltraBridge works without Supernote Private Cloud. The installer auto-detects whether SPC is present and adjusts accordingly. CalDAV tasks, Boox WebDAV uploads, OCR, and search all work in standalone mode.
 
@@ -73,8 +77,9 @@ Navigate to `http://<host>:<port>/` after starting the service.
 | **Tasks** | View, create, and complete tasks; bulk actions; purge all completed tasks |
 | **Files** | Browse `.note` files from both Supernote and Boox with source badges; view rendered pages, OCR text, and version history; queue/skip/force processing; scan now |
 | **Search** | Full-text keyword search across all indexed notes with source badges and folder filter |
+| **Chat** | Ask questions about your notes with streaming AI responses and clickable `[filename, p.N]` citations *(requires `UB_CHAT_ENABLED=true`)* |
 | **Logs** | Live WebSocket log stream with level filtering |
-| **Settings** | Per-pipeline OCR prompts (Supernote / Boox); red ink to-do extraction toggle and prompt |
+| **Settings** | Per-pipeline OCR prompts (Supernote / Boox); red ink to-do extraction toggle and prompt; RAG embedding status and backfill trigger |
 
 ### Red Ink To-Do Extraction
 
@@ -162,6 +167,110 @@ On the Boox device, configure WebDAV sync under Settings > Cloud Storage with `h
 
 Re-uploaded notes are versioned automatically — the previous version is archived under `.versions/` before the new file is written.
 
+### RAG search (embedding pipeline)
+
+When enabled, UltraBridge generates vector embeddings for each OCR'd page using Ollama. These embeddings power hybrid search — combining FTS5 keyword matching with vector cosine similarity via reciprocal rank fusion (RRF). The result is search that finds both exact keyword matches and semantically related content.
+
+Embeddings are stored in SQLite and loaded into an in-memory cache on startup. A background backfill runs at startup to embed any pages that were indexed before the feature was enabled. You can also trigger a backfill manually from the Settings page.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UB_EMBED_ENABLED` | `false` | Enable embedding pipeline |
+| `UB_OLLAMA_URL` | `http://localhost:11434` | Ollama API base URL |
+| `UB_OLLAMA_EMBED_MODEL` | `nomic-embed-text:v1.5` | Embedding model name |
+
+**Setup:** Install [Ollama](https://ollama.com), pull the model, and enable the feature:
+
+```bash
+ollama pull nomic-embed-text:v1.5
+# Then set UB_EMBED_ENABLED=true in .ultrabridge.env and restart
+```
+
+If Ollama is unreachable, embedding silently skips — OCR indexing continues normally. You won't lose data, just vector search capability until Ollama comes back.
+
+### JSON API
+
+Three JSON endpoints are available when the embedding pipeline is enabled (or in FTS-only mode when it isn't). All require Basic Auth.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/search?q=...&folder=...&device=...&from=...&to=...&limit=...` | Hybrid search (vector + FTS5), returns JSON array with note paths, page text, scores, and metadata |
+| `GET /api/notes/pages?path=...` | All indexed page content for a note, ordered by page number |
+| `GET /api/notes/pages/image?path=...&page=...` | Rendered JPEG image of a note page |
+
+Date parameters use `YYYY-MM-DD` format. `limit` defaults to 20.
+
+### MCP server (Claude integration)
+
+`ub-mcp` is a standalone binary that exposes UltraBridge's search and content as MCP tools for Claude. It connects to the JSON API endpoints above — no internal imports, just HTTP.
+
+**Tools:**
+
+| Tool | Description |
+|------|-------------|
+| `search_notes` | Search notes by keyword with optional folder/device/date filters |
+| `get_note_pages` | Get all page text for a specific note |
+| `get_note_image` | Get a rendered page image (JPEG) |
+
+**Build and run:**
+
+```bash
+go build ./cmd/ub-mcp/
+
+# stdio transport (Claude Desktop / Claude Code)
+UB_MCP_API_URL=http://localhost:8443 \
+UB_MCP_API_USER=admin \
+UB_MCP_API_PASS=yourpassword \
+./ub-mcp
+
+# HTTP SSE transport (claude.ai web)
+./ub-mcp --http :8081
+```
+
+**Claude Desktop configuration** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "ultrabridge": {
+      "command": "/path/to/ub-mcp",
+      "env": {
+        "UB_MCP_API_URL": "http://192.168.9.52:8443",
+        "UB_MCP_API_USER": "admin",
+        "UB_MCP_API_PASS": "yourpassword"
+      }
+    }
+  }
+}
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UB_MCP_API_URL` | `http://localhost:8443` | UltraBridge API base URL |
+| `UB_MCP_API_USER` | (empty) | Basic Auth username |
+| `UB_MCP_API_PASS` | (empty) | Basic Auth password |
+
+### Local chat
+
+When enabled, a Chat tab appears in the web UI. Type a question, and UltraBridge retrieves relevant note pages via hybrid search, assembles a prompt with the retrieved context, and streams the response from a local text generation model via vLLM's OpenAI-compatible API.
+
+The model is instructed to cite sources using `[filename, p.N]` format. These citations render as clickable links back to the source note page. Chat history is persisted in SQLite — conversations survive page refreshes and restarts.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UB_CHAT_ENABLED` | `false` | Enable chat tab |
+| `UB_CHAT_API_URL` | `http://localhost:8000` | vLLM API base URL (OpenAI-compatible `/v1/chat/completions`) |
+| `UB_CHAT_MODEL` | `Qwen/Qwen3-8B` | Model name passed to the API |
+
+**Setup:** Run vLLM (or any OpenAI-compatible API) with your model of choice:
+
+```bash
+vllm serve Qwen/Qwen3-8B
+# Then set UB_CHAT_ENABLED=true in .ultrabridge.env and restart
+```
+
+If vLLM is unreachable when you send a message, the chat UI shows an error instead of crashing. Previous conversations remain accessible.
+
 ### Task Store
 
 | Variable | Default | Description |
@@ -218,11 +327,13 @@ When sync is enabled, tasks are bidirectionally synced between UltraBridge and t
 │  │  ┌──────────────────────┐  ┌───────────────────────────────┐  │  │
 │  │  │  Boox notes pipeline │  │  Shared services              │  │  │
 │  │  │  WebDAV server ←─────│──│  SearchIndex (FTS5)           │  │  │
-│  │  │   ↓ .note parser    │  │  Web UI (Tasks/Files/Search)  │  │  │
-│  │  │   ↓ page renderer   │  │  Auth middleware               │  │  │
-│  │  │   ↓ OCR + indexer ──│─▶│                                │  │  │
-│  │  │  Version archive     │  │                                │  │  │
-│  │  └──────────────────────┘  └───────────────────────────────┘  │  │
+│  │  │   ↓ .note parser    │  │  Embedding cache (Ollama)     │  │  │
+│  │  │   ↓ page renderer   │  │  Hybrid retriever (RRF)       │  │  │
+│  │  │   ↓ OCR + indexer ──│─▶│  JSON API + MCP server        │  │  │
+│  │  │  Version archive     │  │  Chat (vLLM SSE proxy)        │  │  │
+│  │  └──────────────────────┘  │  Web UI (Tasks/Files/Search)  │  │  │
+│  │                            │  Auth middleware               │  │  │
+│  │                            └───────────────────────────────┘  │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -245,10 +356,11 @@ When sync is enabled, tasks are bidirectionally synced between UltraBridge and t
          ├─ if OCR enabled:
          │    render page → JPEG → vision API → inject RECOGNTEXT
          │    index as "api"
+         │    if embedding enabled: text → Ollama → vector stored
          └─ job marked done
                   │
                   ▼
-           FTS5 search index
+           FTS5 search index + vector cache
 ```
 
 ### Boox notes pipeline flow
@@ -271,10 +383,11 @@ Boox device syncs via WebDAV
          ├─ render each page → JPEG cache
          ├─ if OCR enabled: vision API → text
          ├─ index page text → FTS5
+         ├─ if embedding enabled: text → Ollama → vector stored
          └─ job marked done
                   │
                   ▼
-   Unified FTS5 search index (shared with Supernote)
+   Unified FTS5 search index + vector cache (shared with Supernote)
 ```
 
 ## Development
@@ -283,6 +396,7 @@ Boox device syncs via WebDAV
 
 ```bash
 go build -C /home/sysop/src/ultrabridge ./cmd/ultrabridge/
+go build -C /home/sysop/src/ultrabridge ./cmd/ub-mcp/
 ```
 
 ### Test
