@@ -104,6 +104,10 @@ type Handler struct {
 	retriever       rag.SearchRetriever // nil = API endpoints disabled
 	chatHandler     *chat.Handler
 	chatStore       *chat.Store
+	ollamaURL       string
+	ollamaModel     string
+	chatAPIURL      string
+	chatModel       string
 }
 
 // formatDueTime converts a millisecond Unix timestamp to a formatted date string.
@@ -149,6 +153,10 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		retriever:     retriever,
 		chatHandler:   chatHandler,
 		chatStore:     chatStore,
+		ollamaURL:     os.Getenv("UB_OLLAMA_URL"),
+		ollamaModel:   embedModel,
+		chatAPIURL:    os.Getenv("UB_CHAT_API_URL"),
+		chatModel:     os.Getenv("UB_CHAT_MODEL"),
 	}
 
 	// Cache the import path for the noteSource template function.
@@ -367,6 +375,17 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 		importOnyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportOnyxPaths)
 		data["BooxImportOnyxPaths"] = importOnyxPaths == "true"
 	}
+
+	// RAG Pipeline settings
+	data["EmbedEnabled"] = h.embedder != nil
+	if h.embedStore != nil {
+		data["EmbeddingCount"] = len(h.embedStore.AllEmbeddings())
+	}
+	data["OllamaURL"] = h.ollamaURL
+	data["OllamaModel"] = h.ollamaModel
+	data["ChatEnabled"] = h.chatHandler != nil
+	data["ChatModel"] = h.chatModel
+	data["ChatAPIURL"] = h.chatAPIURL
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
