@@ -11,10 +11,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sysop/ultrabridge/internal/chat"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/notedb"
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/processor"
+	"github.com/sysop/ultrabridge/internal/rag"
 	"github.com/sysop/ultrabridge/internal/search"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
@@ -50,6 +52,7 @@ func testHandler(t *testing.T, opts ...func(*testHandlerOpts)) *Handler {
 		newMockTaskStore(), nil, ns, si,
 		proc, nil, nil, bs, nil, o.booxNotesPath, "",
 		o.noteDB, logger, broadcaster, nil, nil, "", nil, nil, nil,
+		RAGDisplayConfig{},
 	)
 }
 
@@ -112,15 +115,72 @@ func TestSettingsPage_ActiveSections(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	body := w.Body.String()
-	if strings.Contains(body, "not configured") {
-		t.Error("Supernote section should not show 'not configured' when noteStore is set")
+	// Check for specific inactive messages (note: RAG may still say "not configured" when disabled)
+	if strings.Contains(body, "pipeline is not configured") {
+		t.Error("Supernote section should not show 'pipeline is not configured' when noteStore is set")
 	}
-	if strings.Contains(body, "not enabled") {
-		t.Error("Boox section should not show 'not enabled' when booxStore is set")
+	if strings.Contains(body, "integration is not enabled") {
+		t.Error("Boox section should not show 'integration is not enabled' when booxStore is set")
 	}
 	// Should contain OCR prompt textareas
 	if !strings.Contains(body, "OCR Prompt") {
 		t.Error("Active sections should show OCR Prompt fields")
+	}
+}
+
+func TestSettingsPage_RAGDisabled(t *testing.T) {
+	// No embedder or chatHandler → both should show inactive
+	handler := testHandler(t)
+	req := httptest.NewRequest("GET", "/settings", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	// RAG Search card should show "not configured" when embedder is nil
+	if !strings.Contains(body, "Embedding pipeline not configured") {
+		t.Error("RAG Search section should show 'Embedding pipeline not configured' when embedder is nil")
+	}
+	// Chat card should not appear when chatHandler is nil
+	if strings.Contains(body, "<h2>Chat</h2>") {
+		t.Error("Chat card should not appear when chatHandler is nil")
+	}
+}
+
+func TestSettingsPage_RAGEnabled(t *testing.T) {
+	// With embedder and chatHandler → both should show active
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteStore = newMockNoteStore()
+	})
+	// Manually set embedder and chatHandler on the handler to simulate enabled state
+	handler.embedder = newMockEmbedder()
+	handler.embedStore = &rag.Store{}
+	handler.ollamaURL = "http://localhost:11434"
+	handler.ollamaModel = "nomic-embed-text"
+	handler.chatHandler = &chat.Handler{} // non-nil
+	handler.chatAPIURL = "http://localhost:8000"
+	handler.chatModel = "Qwen/Qwen3-8B"
+
+	req := httptest.NewRequest("GET", "/settings", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	// RAG Search card should show Ollama info when embedder is not nil
+	if !strings.Contains(body, "Embedding Status") {
+		t.Error("RAG Search section should show 'Embedding Status' when embedder is enabled")
+	}
+	if !strings.Contains(body, "http://localhost:11434") {
+		t.Error("RAG Search section should display Ollama URL")
+	}
+	if !strings.Contains(body, "Backfill Embeddings") {
+		t.Error("RAG Search section should show 'Backfill Embeddings' button when enabled")
+	}
+	// Chat card should appear when chatHandler is not nil
+	if !strings.Contains(body, "<h2>Chat</h2>") {
+		t.Error("Chat card should appear when chatHandler is not nil")
+	}
+	if !strings.Contains(body, "http://localhost:8000") {
+		t.Error("Chat card should display API URL")
 	}
 }
 
@@ -389,7 +449,7 @@ func TestPurgeCompleted_DeletesCompletedTasks(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil)
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("POST", "/tasks/purge-completed", nil)
 	w := httptest.NewRecorder()
@@ -471,4 +531,17 @@ func TestSearchPage_FolderDropdown(t *testing.T) {
 		t.Errorf("GET /search returned %d, want 200", w.Code)
 	}
 	// Page should render without error even with no folders
+}
+
+// --- Test Helpers ---
+
+// mockEmbedder is a simple embedder for testing.
+type mockEmbedder struct{}
+
+func (m *mockEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	return []float32{0.1, 0.2, 0.3}, nil
+}
+
+func newMockEmbedder() *mockEmbedder {
+	return &mockEmbedder{}
 }

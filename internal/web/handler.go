@@ -80,6 +80,14 @@ type BooxImporter interface {
 	MigrateImportedFiles(ctx context.Context, importPath, notesPath string, logger *slog.Logger) booxpipeline.MigrateResult
 }
 
+// RAGDisplayConfig holds display configuration for RAG features in the settings UI.
+type RAGDisplayConfig struct {
+	OllamaURL   string
+	OllamaModel string
+	ChatAPIURL  string
+	ChatModel   string
+}
+
 type Handler struct {
 	store           ubcaldav.TaskStore
 	notifier        ubcaldav.SyncNotifier
@@ -129,7 +137,7 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string, retriever rag.SearchRetriever, chatHandler *chat.Handler, chatStore *chat.Store) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string, retriever rag.SearchRetriever, chatHandler *chat.Handler, chatStore *chat.Store, ragDisplay RAGDisplayConfig) *Handler {
 	h := &Handler{
 		store:         store,
 		notifier:      notifier,
@@ -153,10 +161,10 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		retriever:     retriever,
 		chatHandler:   chatHandler,
 		chatStore:     chatStore,
-		ollamaURL:     os.Getenv("UB_OLLAMA_URL"),
-		ollamaModel:   embedModel,
-		chatAPIURL:    os.Getenv("UB_CHAT_API_URL"),
-		chatModel:     os.Getenv("UB_CHAT_MODEL"),
+		ollamaURL:     ragDisplay.OllamaURL,
+		ollamaModel:   ragDisplay.OllamaModel,
+		chatAPIURL:    ragDisplay.ChatAPIURL,
+		chatModel:     ragDisplay.ChatModel,
 	}
 
 	// Cache the import path for the noteSource template function.

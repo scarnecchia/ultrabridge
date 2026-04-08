@@ -365,7 +365,12 @@ func main() {
 			chatHandler = chat.NewHandler(chatStore, retriever, cfg.ChatAPIURL, cfg.ChatModel, logger)
 		}
 
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel, retriever, chatHandler, chatStore)
+		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel, retriever, chatHandler, chatStore, web.RAGDisplayConfig{
+			OllamaURL:   cfg.OllamaURL,
+			OllamaModel: cfg.OllamaEmbedModel,
+			ChatAPIURL:  cfg.ChatAPIURL,
+			ChatModel:   cfg.ChatModel,
+		})
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 

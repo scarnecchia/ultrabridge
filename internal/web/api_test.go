@@ -81,7 +81,7 @@ func TestAPISearchSuccess(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/search?q=test", nil)
 	w := httptest.NewRecorder()
@@ -123,7 +123,7 @@ func TestAPISearchMissingQ(t *testing.T) {
 	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/search", nil)
 	w := httptest.NewRecorder()
@@ -147,7 +147,7 @@ func TestAPISearchInvalidFromDate(t *testing.T) {
 	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/search?q=test&from=invalid-date", nil)
 	w := httptest.NewRecorder()
@@ -171,7 +171,7 @@ func TestAPISearchInvalidLimit(t *testing.T) {
 	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/search?q=test&limit=invalid", nil)
 	w := httptest.NewRecorder()
@@ -190,7 +190,7 @@ func TestAPISearchWithParameters(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", mockRetr, nil, nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", mockRetr, nil, nil, RAGDisplayConfig{})
 
 	// Test with all parameters
 	req := httptest.NewRequest("GET", "/api/search?q=test&folder=docs&device=Supernote&limit=50", nil)
@@ -225,7 +225,7 @@ func TestAPIGetPagesSuccess(t *testing.T) {
 	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/notes/pages?path=/home/user/test.note", nil)
 	w := httptest.NewRecorder()
@@ -262,7 +262,7 @@ func TestAPIGetPagesNotFound(t *testing.T) {
 	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/notes/pages?path=/nonexistent/path", nil)
 	w := httptest.NewRecorder()
@@ -286,7 +286,7 @@ func TestAPIGetImageInvalidPageNumber(t *testing.T) {
 	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/notes/pages/image?path=/home/user/test.note&page=invalid", nil)
 	w := httptest.NewRecorder()
@@ -311,7 +311,7 @@ func TestAPIGetImageNotAvailable(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
 	// Handler with no snNotesPath and no booxStore, so images aren't available
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/notes/pages/image?path=/home/user/test.note&page=0", nil)
 	w := httptest.NewRecorder()
@@ -336,7 +336,7 @@ func TestAPIGetPagesMissingPath(t *testing.T) {
 	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/notes/pages", nil)
 	w := httptest.NewRecorder()
@@ -360,7 +360,7 @@ func TestAPIGetImageMissingPath(t *testing.T) {
 	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/notes/pages/image?page=0", nil)
 	w := httptest.NewRecorder()
@@ -384,7 +384,7 @@ func TestAPIGetImageMissingPage(t *testing.T) {
 	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/notes/pages/image?path=/home/user/test.note", nil)
 	w := httptest.NewRecorder()
@@ -408,7 +408,7 @@ func TestAPISearchDisabledWhenRetrieverNil(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
 	// Create handler with retriever = nil
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/search?q=test", nil)
 	w := httptest.NewRecorder()
@@ -428,7 +428,7 @@ func TestAPIResponseContentType(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{})
 
 	req := httptest.NewRequest("GET", "/api/search?q=test", nil)
 	w := httptest.NewRecorder()

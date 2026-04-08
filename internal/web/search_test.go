@@ -77,6 +77,7 @@ func TestSearchPage_SourceBadges(t *testing.T) {
 		nil, // retriever
 		nil, // chatHandler
 		nil, // chatStore
+		RAGDisplayConfig{},
 	)
 
 	// Execute GET /search?q=test
