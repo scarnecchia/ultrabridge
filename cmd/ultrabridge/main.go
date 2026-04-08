@@ -194,6 +194,15 @@ func main() {
 		}()
 	}
 
+	// Create retriever if embedding is available (also works FTS-only when embedStore is nil)
+	var retriever *rag.Retriever
+	if embedStore != nil {
+		retriever = rag.NewRetriever(noteDB, si, embedStore, embedder, logger)
+	} else {
+		// FTS-only mode: retriever works without embeddings
+		retriever = rag.NewRetriever(noteDB, si, nil, nil, logger)
+	}
+
 	workerCfg := processor.WorkerConfig{
 		OCREnabled: cfg.OCREnabled,
 		BackupPath: cfg.BackupPath,
@@ -346,7 +355,7 @@ func main() {
 			booxStore = booxProc.Store()
 			booxImporter = booxProc
 		}
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel)
+		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel, retriever)
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 
