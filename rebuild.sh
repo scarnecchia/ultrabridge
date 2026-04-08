@@ -114,8 +114,14 @@ elif [[ "$NUKE" == true ]]; then
 fi
 
 info "Building and restarting UltraBridge..."
-$COMPOSE up -d --build --force-recreate ultrabridge || fail "Build/restart failed"
-ok "Container running"
+SERVICES="ultrabridge"
+# Include ub-mcp if it's defined in the compose file
+if grep -q 'ub-mcp:' "$SUPERNOTE_DIR/docker-compose.override.yml" 2>/dev/null || \
+   grep -q 'ub-mcp:' "$SUPERNOTE_DIR/docker-compose.yml" 2>/dev/null; then
+    SERVICES="ultrabridge ub-mcp"
+fi
+$COMPOSE up -d --build --force-recreate $SERVICES || fail "Build/restart failed"
+ok "Container(s) running"
 
 PORT=$(grep -oP '"\K\d+(?=:8443")' "$SUPERNOTE_DIR/docker-compose.override.yml" 2>/dev/null \
     || grep -oP '"\K\d+(?=:8443")' "$SUPERNOTE_DIR/docker-compose.yml" 2>/dev/null \
@@ -139,16 +145,6 @@ if [[ "$HEALTH_OK" == true ]]; then
     ok "Health check passed (${i}s)"
 else
     fail "Health check failed after ${HEALTH_TIMEOUT}s. Run: sudo docker logs ultrabridge"
-fi
-
-# --- rebuild ub-mcp (MCP server runs on host, not in container) ---
-
-if command -v go &>/dev/null; then
-    info "Building ub-mcp (MCP server)..."
-    go build -C "$SCRIPT_DIR" -o "$SCRIPT_DIR/ub-mcp" ./cmd/ub-mcp/ || warn "ub-mcp build failed (optional)"
-    if [[ -f "$SCRIPT_DIR/ub-mcp" ]]; then
-        ok "ub-mcp built at $SCRIPT_DIR/ub-mcp"
-    fi
 fi
 
 info "Done!"

@@ -385,6 +385,11 @@ if [[ "$UB_CHAT_ENABLED" == "true" ]]; then
     prompt UB_CHAT_MODEL "Chat model name" "${UB_CHAT_MODEL:-Qwen/Qwen3-8B}"
 fi
 
+prompt UB_MCP_ENABLED "Enable MCP server for Claude integration? (true/false)" "${UB_MCP_ENABLED:-false}"
+if [[ "$UB_MCP_ENABLED" == "true" ]]; then
+    prompt UB_MCP_PORT "MCP server port (HTTP SSE)" "${UB_MCP_PORT:-8081}"
+fi
+
 echo
 
 # --- build image first (needed for password hashing) ---
@@ -394,18 +399,6 @@ info "Building UltraBridge Docker image..."
 docker build -t ultrabridge:dev "$SCRIPT_DIR" || fail "Docker build failed"
 
 ok "Image built"
-
-# --- build ub-mcp (MCP server runs on host, not in container) ---
-
-if command -v go &>/dev/null; then
-    info "Building ub-mcp (MCP server)..."
-    go build -C "$SCRIPT_DIR" -o "$SCRIPT_DIR/ub-mcp" ./cmd/ub-mcp/ || warn "ub-mcp build failed (optional — MCP integration won't be available)"
-    if [[ -f "$SCRIPT_DIR/ub-mcp" ]]; then
-        ok "ub-mcp built at $SCRIPT_DIR/ub-mcp"
-    fi
-else
-    warn "Go not installed — skipping ub-mcp build (MCP integration won't be available)"
-fi
 
 # --- generate bcrypt hash using the binary we just built ---
 
@@ -509,6 +502,8 @@ if [[ "$UB_CHAT_ENABLED" == "true" ]]; then
     echo "UB_CHAT_MODEL=${UB_CHAT_MODEL}" >> "$SUPERNOTE_DIR/.ultrabridge.env"
 fi
 
+echo "UB_MCP_ENABLED=${UB_MCP_ENABLED:-false}" >> "$SUPERNOTE_DIR/.ultrabridge.env"
+
 # --- write docker-compose.override.yml ---
 
 info "Writing $SUPERNOTE_DIR/docker-compose.override.yml"
@@ -558,6 +553,7 @@ services:
     build:
       context: $SCRIPT_DIR
       dockerfile: Dockerfile
+      target: ultrabridge
     container_name: ultrabridge
     ports:
       - "${UB_PORT}:8443"
@@ -569,6 +565,27 @@ $VOLUMES_BLOCK
       - mariadb
     restart: unless-stopped
 EOF
+    if [[ "${UB_MCP_ENABLED:-false}" == "true" ]]; then
+        cat >> "$SUPERNOTE_DIR/docker-compose.override.yml" <<EOF
+  ub-mcp:
+    image: ub-mcp:dev
+    build:
+      context: $SCRIPT_DIR
+      dockerfile: Dockerfile
+      target: ub-mcp
+    container_name: ub-mcp
+    ports:
+      - "${UB_MCP_PORT:-8081}:8081"
+    environment:
+      - UB_MCP_API_URL=http://ultrabridge:8443
+      - UB_MCP_API_USER=${UB_USERNAME}
+      - UB_MCP_API_PASS=${UB_PASSWORD}
+    command: ["ub-mcp", "--http", ":8081"]
+    depends_on:
+      - ultrabridge
+    restart: unless-stopped
+EOF
+    fi
 else
     # Standalone mode — no MariaDB, no .dbenv
     cat > "$SUPERNOTE_DIR/docker-compose.yml" <<EOF
@@ -578,6 +595,7 @@ services:
     build:
       context: $SCRIPT_DIR
       dockerfile: Dockerfile
+      target: ultrabridge
     container_name: ultrabridge
     ports:
       - "${UB_PORT}:8443"
@@ -586,6 +604,27 @@ services:
 $VOLUMES_BLOCK
     restart: unless-stopped
 EOF
+    if [[ "${UB_MCP_ENABLED:-false}" == "true" ]]; then
+        cat >> "$SUPERNOTE_DIR/docker-compose.yml" <<EOF
+  ub-mcp:
+    image: ub-mcp:dev
+    build:
+      context: $SCRIPT_DIR
+      dockerfile: Dockerfile
+      target: ub-mcp
+    container_name: ub-mcp
+    ports:
+      - "${UB_MCP_PORT:-8081}:8081"
+    environment:
+      - UB_MCP_API_URL=http://ultrabridge:8443
+      - UB_MCP_API_USER=${UB_USERNAME}
+      - UB_MCP_API_PASS=${UB_PASSWORD}
+    command: ["ub-mcp", "--http", ":8081"]
+    depends_on:
+      - ultrabridge
+    restart: unless-stopped
+EOF
+    fi
 fi
 
 ok "Docker Compose override written"
