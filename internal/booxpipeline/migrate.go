@@ -79,12 +79,6 @@ func (p *Processor) MigrateImportedFiles(ctx context.Context, importPath, notesP
 			continue
 		}
 
-		// Remove the original file now that DB points to the new location.
-		if err := os.Remove(oldPath); err != nil {
-			logger.Warn("migrate: remove original", "path", oldPath, "error", err)
-			// Non-fatal — the migration succeeded, just leaves a stale copy.
-		}
-
 		result.Migrated++
 		logger.Info("migrate: moved", "from", oldPath, "to", newPath)
 	}
