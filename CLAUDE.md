@@ -35,6 +35,7 @@ Instead: `git -C /path`, `go -C /path build`, or absolute paths.
 - `internal/booxnote/testutil/` -- Exported test helper: builds synthetic .note ZIP files for tests
 - `internal/booxrender/` -- Stroke renderer: pressure-sensitive scribbles, geometric shapes via fogleman/gg (see domain CLAUDE.md)
 - `internal/booxpipeline/` -- Boox processing pipeline: store, worker, processor (parse/render/OCR/index) (see domain CLAUDE.md)
+- `internal/pdfrender/` -- PDF page rendering via pdftoppm (poppler-utils) for bulk import pipeline
 - `internal/webdav/` -- WebDAV server for Boox file uploads with versioning (see domain CLAUDE.md)
 - `internal/notedb/` -- SQLite DB opener + schema migrations for notes pipeline + Boox pipeline (see domain CLAUDE.md)
 - `internal/notestore/` -- file inventory (scan, list, get), content hashing, job transfer against SQLite notes table (see domain CLAUDE.md)
@@ -124,4 +125,6 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 - Shares OCR client: same processor.Indexer and processor.OCRClient interfaces
 - File versioning: overwritten .note files archived to `.versions/` directory tree
 - Rendered page cache: JPEG images at `{UB_BOOX_NOTES_PATH}/.cache/{noteID}/page_{N}.jpg`
-- Config: UB_BOOX_ENABLED (feature flag), UB_BOOX_NOTES_PATH (filesystem root for uploads + cache)
+- Bulk import: filesystem paths can be imported in bulk via the web UI; importer scans for .note and .pdf files, enqueues each, and optionally migrates files to the Boox notes directory
+- PDF support: .pdf files accepted alongside .note files; pages rendered via pdftoppm (pdfrender package), then OCR'd and indexed identically to .note files
+- Config: UB_BOOX_ENABLED (feature flag), UB_BOOX_NOTES_PATH (filesystem root for uploads + cache), UB_BOOX_IMPORT_PATH (source directory for bulk imports)

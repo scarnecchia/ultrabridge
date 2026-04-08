@@ -2,6 +2,7 @@ package booxpipeline
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -236,6 +237,347 @@ func TestFailJob(t *testing.T) {
 	}
 	if lastError != errMsg {
 		t.Errorf("last_error = %q, want %q", lastError, errMsg)
+	}
+}
+
+// TestRetryAllFailed verifies that only failed jobs are reset to pending.
+func TestRetryAllFailed(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	// Enqueue three jobs: one done, one failed, one pending.
+	paths := []string{"/tmp/done.note", "/tmp/failed.note", "/tmp/pending.note"}
+	for _, p := range paths {
+		if err := s.EnqueueJob(ctx, p); err != nil {
+			t.Fatalf("EnqueueJob %s: %v", p, err)
+		}
+	}
+
+	// Claim and complete the "done" job.
+	jobDone, err := s.ClaimNextJob(ctx)
+	if err != nil || jobDone == nil {
+		t.Fatalf("ClaimNextJob for done: %v", err)
+	}
+	if err := s.CompleteJob(ctx, jobDone.ID, "api", "test-model"); err != nil {
+		t.Fatalf("CompleteJob: %v", err)
+	}
+
+	// Claim and fail the "failed" job.
+	jobFailed, err := s.ClaimNextJob(ctx)
+	if err != nil || jobFailed == nil {
+		t.Fatalf("ClaimNextJob for failed: %v", err)
+	}
+	if err := s.FailJob(ctx, jobFailed.ID, "some parse error"); err != nil {
+		t.Fatalf("FailJob: %v", err)
+	}
+
+	// "pending" job remains unclaimed (third in queue).
+
+	n, err := s.RetryAllFailed(ctx)
+	if err != nil {
+		t.Fatalf("RetryAllFailed: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("RetryAllFailed returned %d rows affected, want 1", n)
+	}
+
+	// The failed job should now be pending.
+	var statusFailed string
+	if err := s.db.QueryRowContext(ctx, "SELECT status FROM boox_jobs WHERE id = ?", jobFailed.ID).Scan(&statusFailed); err != nil {
+		t.Fatalf("query failed job status: %v", err)
+	}
+	if statusFailed != "pending" {
+		t.Errorf("failed job status after RetryAllFailed = %q, want pending", statusFailed)
+	}
+
+	// The done job should remain done.
+	var statusDone string
+	if err := s.db.QueryRowContext(ctx, "SELECT status FROM boox_jobs WHERE id = ?", jobDone.ID).Scan(&statusDone); err != nil {
+		t.Fatalf("query done job status: %v", err)
+	}
+	if statusDone != "done" {
+		t.Errorf("done job status after RetryAllFailed = %q, want done", statusDone)
+	}
+}
+
+// TestDeleteNote verifies that DeleteNote removes the note, its jobs, and any note_content rows.
+func TestDeleteNote(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	notePath := "/tmp/todelete.note"
+
+	// Create a note and a job.
+	if err := s.EnqueueJob(ctx, notePath); err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+
+	// Insert a note_content row for this note (simulating indexed content).
+	now := time.Now().UnixMilli()
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO note_content (note_path, page, title_text, body_text, keywords, source, model, indexed_at)
+		 VALUES (?, 1, 'Title', 'Body', 'kw', 'api', 'test-model', ?)`,
+		notePath, now,
+	)
+	if err != nil {
+		t.Fatalf("insert note_content: %v", err)
+	}
+
+	// Verify rows exist before deletion.
+	var noteCount, jobCount, contentCount int
+	s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM boox_notes WHERE path = ?", notePath).Scan(&noteCount)
+	s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM boox_jobs WHERE note_path = ?", notePath).Scan(&jobCount)
+	s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM note_content WHERE note_path = ?", notePath).Scan(&contentCount)
+	if noteCount != 1 || jobCount != 1 || contentCount != 1 {
+		t.Fatalf("pre-delete counts: notes=%d jobs=%d content=%d, want all 1", noteCount, jobCount, contentCount)
+	}
+
+	if err := s.DeleteNote(ctx, notePath); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+
+	// All three tables should now have zero rows for this path.
+	s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM boox_notes WHERE path = ?", notePath).Scan(&noteCount)
+	s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM boox_jobs WHERE note_path = ?", notePath).Scan(&jobCount)
+	s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM note_content WHERE note_path = ?", notePath).Scan(&contentCount)
+	if noteCount != 0 {
+		t.Errorf("boox_notes count after delete = %d, want 0", noteCount)
+	}
+	if jobCount != 0 {
+		t.Errorf("boox_jobs count after delete = %d, want 0", jobCount)
+	}
+	if contentCount != 0 {
+		t.Errorf("note_content count after delete = %d, want 0", contentCount)
+	}
+}
+
+// TestSkipNote verifies that SkipNote marks the latest job as skipped with a reason.
+func TestSkipNote(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	notePath := "/tmp/toskip.note"
+	if err := s.EnqueueJob(ctx, notePath); err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+
+	skipReason := "file too large"
+	if err := s.SkipNote(ctx, notePath, skipReason); err != nil {
+		t.Fatalf("SkipNote: %v", err)
+	}
+
+	job, err := s.GetLatestJob(ctx, notePath)
+	if err != nil {
+		t.Fatalf("GetLatestJob: %v", err)
+	}
+	if job == nil {
+		t.Fatal("expected a job, got nil")
+	}
+	if job.Status != "skipped" {
+		t.Errorf("job.Status = %q, want skipped", job.Status)
+	}
+	if job.SkipReason != skipReason {
+		t.Errorf("job.SkipReason = %q, want %q", job.SkipReason, skipReason)
+	}
+}
+
+// TestSkipNote_LatestJobOnly verifies SkipNote affects only the most recent job, not earlier ones.
+func TestSkipNote_LatestJobOnly(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	notePath := "/tmp/toskip2.note"
+
+	// Enqueue and complete a first job.
+	if err := s.EnqueueJob(ctx, notePath); err != nil {
+		t.Fatalf("EnqueueJob first: %v", err)
+	}
+	job1, err := s.ClaimNextJob(ctx)
+	if err != nil || job1 == nil {
+		t.Fatalf("ClaimNextJob first: %v", err)
+	}
+	if err := s.CompleteJob(ctx, job1.ID, "", ""); err != nil {
+		t.Fatalf("CompleteJob first: %v", err)
+	}
+
+	// Enqueue a second (pending) job.
+	if err := s.EnqueueJob(ctx, notePath); err != nil {
+		t.Fatalf("EnqueueJob second: %v", err)
+	}
+
+	if err := s.SkipNote(ctx, notePath, "intentional skip"); err != nil {
+		t.Fatalf("SkipNote: %v", err)
+	}
+
+	// The first job should still be done.
+	var statusFirst string
+	if err := s.db.QueryRowContext(ctx, "SELECT status FROM boox_jobs WHERE id = ?", job1.ID).Scan(&statusFirst); err != nil {
+		t.Fatalf("query first job: %v", err)
+	}
+	if statusFirst != "done" {
+		t.Errorf("first job status = %q, want done", statusFirst)
+	}
+
+	// The latest job should be skipped.
+	latest, err := s.GetLatestJob(ctx, notePath)
+	if err != nil || latest == nil {
+		t.Fatalf("GetLatestJob: %v", err)
+	}
+	if latest.Status != "skipped" {
+		t.Errorf("latest job status = %q, want skipped", latest.Status)
+	}
+}
+
+// TestUnskipNote verifies that UnskipNote resets a skipped job back to pending.
+func TestUnskipNote(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	notePath := "/tmp/tounskip.note"
+	if err := s.EnqueueJob(ctx, notePath); err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+
+	// Skip it first.
+	if err := s.SkipNote(ctx, notePath, "skipped for testing"); err != nil {
+		t.Fatalf("SkipNote: %v", err)
+	}
+
+	// Confirm it is skipped.
+	job, err := s.GetLatestJob(ctx, notePath)
+	if err != nil || job == nil {
+		t.Fatalf("GetLatestJob after skip: %v", err)
+	}
+	if job.Status != "skipped" {
+		t.Fatalf("job status before unskip = %q, want skipped", job.Status)
+	}
+
+	// Unskip.
+	if err := s.UnskipNote(ctx, notePath); err != nil {
+		t.Fatalf("UnskipNote: %v", err)
+	}
+
+	job, err = s.GetLatestJob(ctx, notePath)
+	if err != nil || job == nil {
+		t.Fatalf("GetLatestJob after unskip: %v", err)
+	}
+	if job.Status != "pending" {
+		t.Errorf("job.Status after UnskipNote = %q, want pending", job.Status)
+	}
+	if job.SkipReason != "" {
+		t.Errorf("job.SkipReason after UnskipNote = %q, want empty", job.SkipReason)
+	}
+}
+
+// TestUnskipNote_NonSkipped verifies that UnskipNote does not affect non-skipped jobs.
+func TestUnskipNote_NonSkipped(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	notePath := "/tmp/notskipped.note"
+	if err := s.EnqueueJob(ctx, notePath); err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+
+	// UnskipNote on a pending job should be a no-op (no error, status unchanged).
+	if err := s.UnskipNote(ctx, notePath); err != nil {
+		t.Fatalf("UnskipNote on pending job: %v", err)
+	}
+
+	job, err := s.GetLatestJob(ctx, notePath)
+	if err != nil || job == nil {
+		t.Fatalf("GetLatestJob: %v", err)
+	}
+	if job.Status != "pending" {
+		t.Errorf("job.Status = %q, want pending (should be unchanged)", job.Status)
+	}
+}
+
+// TestGetQueueStatus verifies aggregate counts match the actual jobs in the queue.
+func TestGetQueueStatus(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	// Start with an empty queue.
+	qs, err := s.GetQueueStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetQueueStatus on empty queue: %v", err)
+	}
+	if qs.Pending != 0 || qs.InProgress != 0 || qs.Done != 0 || qs.Failed != 0 {
+		t.Errorf("empty queue counts = {%d %d %d %d}, want all 0", qs.Pending, qs.InProgress, qs.Done, qs.Failed)
+	}
+
+	// Create: 2 pending, 1 in_progress, 1 done, 1 failed.
+	for i := 0; i < 5; i++ {
+		p := fmt.Sprintf("/tmp/qs%d.note", i)
+		if err := s.EnqueueJob(ctx, p); err != nil {
+			t.Fatalf("EnqueueJob %d: %v", i, err)
+		}
+	}
+	// 5 pending; claim three of them.
+	job1, _ := s.ClaimNextJob(ctx) // in_progress → will stay in_progress
+	job2, _ := s.ClaimNextJob(ctx) // in_progress → will be completed (done)
+	job3, _ := s.ClaimNextJob(ctx) // in_progress → will be failed
+	if job1 == nil || job2 == nil || job3 == nil {
+		t.Fatal("expected three jobs to be claimed")
+	}
+	if err := s.CompleteJob(ctx, job2.ID, "api", "test-model"); err != nil {
+		t.Fatalf("CompleteJob: %v", err)
+	}
+	if err := s.FailJob(ctx, job3.ID, "test error"); err != nil {
+		t.Fatalf("FailJob: %v", err)
+	}
+	// job1 remains in_progress; 2 jobs remain pending.
+
+	qs, err = s.GetQueueStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetQueueStatus: %v", err)
+	}
+	if qs.Pending != 2 {
+		t.Errorf("Pending = %d, want 2", qs.Pending)
+	}
+	if qs.InProgress != 1 {
+		t.Errorf("InProgress = %d, want 1", qs.InProgress)
+	}
+	if qs.Done != 1 {
+		t.Errorf("Done = %d, want 1", qs.Done)
+	}
+	if qs.Failed != 1 {
+		t.Errorf("Failed = %d, want 1", qs.Failed)
+	}
+}
+
+// TestGetQueueStatus_ActiveDetails verifies ActiveTitle and ActivePages are populated when a job is in_progress.
+func TestGetQueueStatus_ActiveDetails(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	notePath := "/tmp/active.note"
+	// Upsert a note with known metadata so the JOIN can find title/page_count.
+	if err := s.UpsertNote(ctx, notePath, "note-active", "My Active Note", "Tab X", "Notebooks", "folder", 7, "hash"); err != nil {
+		t.Fatalf("UpsertNote: %v", err)
+	}
+	if err := s.EnqueueJob(ctx, notePath); err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+
+	job, err := s.ClaimNextJob(ctx)
+	if err != nil || job == nil {
+		t.Fatalf("ClaimNextJob: %v", err)
+	}
+
+	qs, err := s.GetQueueStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetQueueStatus: %v", err)
+	}
+	if qs.InProgress != 1 {
+		t.Fatalf("InProgress = %d, want 1", qs.InProgress)
+	}
+	if qs.ActiveTitle != "My Active Note" {
+		t.Errorf("ActiveTitle = %q, want My Active Note", qs.ActiveTitle)
+	}
+	if qs.ActivePages != 7 {
+		t.Errorf("ActivePages = %d, want 7", qs.ActivePages)
 	}
 }
 

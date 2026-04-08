@@ -6,10 +6,11 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 
 ## Handler contract
 
-`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, syncProvider, booxStore, booxNotesPath, logger, broadcaster) *Handler`
+`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, syncProvider, booxStore, booxImporter, booxNotesPath, logger, broadcaster) *Handler`
 
 - All domain dependencies (`noteStore`, `searchIndex`, `proc`, `scanner`, `notifier`, `syncProvider`) are **nil-safe** — passing nil disables the corresponding feature gracefully (no crash, renders an informative state).
 - `booxStore` is **nil-safe** — when nil, Boox-specific routes return empty lists and the UI shows only Supernote notes.
+- `booxImporter` is **nil-safe** — when nil, bulk import routes return an error response.
 - `booxNotesPath` is a string path (may be empty if Boox is disabled).
 - `Handler` implements `http.Handler` via an internal `*http.ServeMux`.
 
@@ -31,12 +32,36 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 | GET | `/files/history` | `handleFilesHistory` | JSON: Job record for a path |
 | GET | `/files/boox/render` | `handleBooxRender` | JPEG page image for Boox note |
 | GET | `/files/boox/versions` | `handleBooxVersions` | JSON: []BooxVersion for archived versions |
+| POST | `/files/import` | `handleFilesImport` | Bulk import from configured import path |
+| POST | `/files/retry-failed` | `handleFilesRetryFailed` | Reset all failed Boox jobs to pending |
+| POST | `/files/delete-note` | `handleFilesDeleteNote` | Delete single Boox note + jobs + content + cache |
+| POST | `/files/delete-bulk` | `handleFilesDeleteBulk` | Delete multiple Boox notes |
+| POST | `/files/migrate-imports` | `handleFilesMigrateImports` | Copy imported files to Boox notes directory |
 | POST | `/files/scan` | `handleFilesScan` | Trigger immediate filesystem scan |
 | POST | `/processor/start` | `handleProcessorStart` | |
 | POST | `/processor/stop` | `handleProcessorStop` | |
 | GET | `/search` | `handleSearch` | FTS5 keyword search |
 | GET | `/sync/status` | `handleSyncStatus` | JSON: SyncStatus (adapter state, timestamps) |
 | POST | `/sync/trigger` | `handleSyncTrigger` | Trigger immediate sync cycle |
+
+## Interfaces
+
+### BooxImporter
+```go
+type BooxImporter interface {
+    ScanAndEnqueue(ctx context.Context, cfg ImportConfig) (ImportResult, error)
+    MigrateImportedFiles(ctx context.Context) error
+}
+```
+Implemented by `booxpipeline.Importer`. Handles bulk import of .note and .pdf files from a configured import path.
+
+### BooxStore (extended)
+In addition to previously documented methods, `BooxStore` now includes:
+- `RetryAllFailed(ctx) (int64, error)` — reset all failed jobs to pending; returns count reset
+- `DeleteNote(ctx, path) error` — delete note row, associated jobs, content index entries, and rendered cache
+- `SkipNote(ctx, path) error` — mark note's pending job as skipped
+- `UnskipNote(ctx, path) error` — reset a skipped job to pending
+- `GetQueueStatus(ctx) (QueueStatus, error)` — return counts of jobs by status
 
 ## Path traversal guard
 
@@ -72,4 +97,4 @@ All POST handlers to processor methods (`Enqueue`, `Skip`, `Unskip`, `Start`, `S
 - `mockProcessor` — in-memory job map; tracks running state
 - `mockScanner` — counts ScanNow calls
 - `mockSyncProvider` — configurable SyncStatus; tracks TriggerSync call count
-- `mockBooxStore` — implements BooxStore interface; returns configurable notes and versions; nil-safe (can be passed as nil to test non-Boox configuration)
+- `mockBooxStore` — implements BooxStore interface; returns configurable notes and versions; nil-safe (can be passed as nil to test non-Boox configuration); includes stub implementations of RetryAllFailed, DeleteNote, SkipNote, UnskipNote, GetQueueStatus
