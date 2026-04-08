@@ -1,3 +1,4 @@
+// Pattern: Imperative Shell -- coordinates FTS5 search, vector similarity, and DB enrichment
 package rag
 
 import (
@@ -159,7 +160,10 @@ func (r *Retriever) Search(ctx context.Context, req SearchRequest) ([]SearchResu
 			r.logger.Warn("enrich result failed", "path", entry.key.notePath, "page", entry.key.page, "err", err)
 			continue
 		}
-		// Apply post-merge filters (device, date range)
+		// Apply post-merge filters (folder, device, date range)
+		if req.Folder != "" && result.Folder != req.Folder {
+			continue
+		}
 		if req.Device != "" && result.Device != req.Device {
 			continue
 		}

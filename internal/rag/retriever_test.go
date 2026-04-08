@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestRetrieverHybridFusion(t *testing.T) {
 	insertTestNote(t, db, "boox1.note", 0, "deep learning", "Deep learning and neural networks in practice")
 
 	// Create embeddings for some pages
-	mockEmbedder := &MockEmbedder{
+	mockEmbedder := &mockRetrieverEmbedder{
 		vectors: map[string][]float32{
 			"machine learning algorithms":          {0.8, 0.2, 0.1},
 			"neural networks":                      {0.75, 0.25, 0.05},
@@ -76,9 +77,9 @@ func TestRetrieverHybridFusion(t *testing.T) {
 	if !hasFTSMatch {
 		t.Errorf("Expected FTS match for 'machine learning' query")
 	}
-	// Note: Vector match may not always appear depending on RRF scoring
-	// Just verify it's included if enough candidates
-	_ = hasVectorMatch
+	if !hasVectorMatch {
+		t.Errorf("expected vector match for 'deep learning' page in hybrid results")
+	}
 
 	// Verify results are sorted by RRF score descending
 	if len(results) > 1 {
@@ -88,7 +89,7 @@ func TestRetrieverHybridFusion(t *testing.T) {
 	}
 }
 
-// TestRetrieverFolderFilter verifies AC2.2: Folder filter works
+// TestRetrieverFolderFilter verifies AC2.2: Folder filter works for both FTS5 and vector results
 func TestRetrieverFolderFilter(t *testing.T) {
 	ctx := context.Background()
 	db, _ := notedb.Open(ctx, ":memory:")
@@ -102,7 +103,24 @@ func TestRetrieverFolderFilter(t *testing.T) {
 	searchIndex := search.New(db)
 	embedStore := NewStore(db, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	retriever := NewRetriever(db, searchIndex, embedStore, nil, logger)
+
+	// Create a mock embedder for vector search
+	mockEmbedder := &mockRetrieverEmbedder{
+		vectors: map[string][]float32{
+			"project details": {0.9, 0.1, 0.0},
+			"Project management details": {0.85, 0.15, 0.0},
+			"Another project details": {0.85, 0.15, 0.0},
+			"personal thoughts": {0.2, 0.8, 0.0},
+			"Personal diary entry": {0.1, 0.9, 0.0},
+		},
+	}
+
+	// Save embeddings for all pages to enable vector search
+	embedStore.Save(ctx, "/notes/Work/proj1.note", 0, mockEmbedder.vectors["project details"], "test-model")
+	embedStore.Save(ctx, "/notes/Personal/diary.note", 0, mockEmbedder.vectors["personal thoughts"], "test-model")
+	embedStore.Save(ctx, "/notes/Work/proj2.note", 0, mockEmbedder.vectors["project details"], "test-model")
+
+	retriever := NewRetriever(db, searchIndex, embedStore, mockEmbedder, logger)
 
 	// Search with folder filter
 	results, err := retriever.Search(ctx, SearchRequest{
@@ -120,8 +138,8 @@ func TestRetrieverFolderFilter(t *testing.T) {
 	}
 
 	for _, r := range results {
-		if !containsFolder(r.NotePath, "Work") {
-			t.Errorf("Result path %s should contain Work folder", r.NotePath)
+		if r.Folder != "Work" {
+			t.Errorf("Result folder %s should be Work", r.Folder)
 		}
 	}
 }
@@ -341,7 +359,7 @@ func TestRetrieverFTS5Fallback(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	// Create retriever with empty embedding store (no embeddings loaded)
-	retriever := NewRetriever(db, searchIndex, embedStore, &MockEmbedder{vectors: map[string][]float32{}}, logger)
+	retriever := NewRetriever(db, searchIndex, embedStore, &mockRetrieverEmbedder{vectors: map[string][]float32{}}, logger)
 
 	// Search should still return FTS5 results
 	results, err := retriever.Search(ctx, SearchRequest{
@@ -395,12 +413,12 @@ func TestRetrieverNoEmbedder(t *testing.T) {
 	}
 }
 
-// MockEmbedder for testing — returns deterministic vectors
-type MockEmbedder struct {
+// mockRetrieverEmbedder for testing — returns deterministic vectors
+type mockRetrieverEmbedder struct {
 	vectors map[string][]float32
 }
 
-func (m *MockEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+func (m *mockRetrieverEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
 	if vec, ok := m.vectors[text]; ok {
 		return vec, nil
 	}
@@ -500,14 +518,5 @@ func containsFolder(path, folder string) bool {
 	// Check if path matches the LIKE pattern "%/{folder}/%"
 	// Simulate SQL LIKE: replace % with any chars
 	target := "/" + folder + "/"
-	return contains(path, target)
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(path, target)
 }
