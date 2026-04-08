@@ -574,7 +574,44 @@
         <div id="settings" class="tab-content">
           <div class="card">
             <h2>General</h2>
-            <p style="color:#666;">Placeholder.</p>
+
+            <div style="margin-bottom:1.25rem;">
+              <h3 style="margin-bottom:0.5rem;">RAG Search</h3>
+              {{if not .EmbedEnabled}}
+                <p class="settings-inactive-note">Embedding pipeline not configured. Set UB_EMBED_ENABLED=true to enable.</p>
+              {{else}}
+                <div style="margin-bottom:0.75rem;">
+                  <label style="font-weight:bold;">Embedding Status</label>
+                  <p style="padding:0.4rem; background:#f8f8f8; border-radius:3px;">
+                    {{.EmbeddingCount}} embeddings loaded
+                  </p>
+                </div>
+                <div style="margin-bottom:0.75rem;">
+                  <label style="font-weight:bold;">Ollama</label>
+                  <p style="padding:0.4rem; background:#f8f8f8; border-radius:3px;">
+                    {{.OllamaURL}} ({{.OllamaModel}})
+                  </p>
+                </div>
+                <form method="POST" action="/settings/backfill-embeddings" style="margin:0;">
+                  <button type="submit" onclick="return confirm('Recompute embeddings for all indexed notes? This may take several minutes.')">
+                    ⟳ Backfill Embeddings
+                  </button>
+                </form>
+              {{end}}
+            </div>
+
+            {{if .ChatEnabled}}
+            <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+            <div>
+              <h3 style="margin-bottom:0.5rem;">Chat</h3>
+              <div style="margin-bottom:0.75rem;">
+                <label style="font-weight:bold;">Model</label>
+                <p style="padding:0.4rem; background:#f8f8f8; border-radius:3px;">
+                  {{.ChatModel}} @ {{.ChatAPIURL}}
+                </p>
+              </div>
+            </div>
+            {{end}}
           </div>
 
           <div class="card{{if not .SNPipelineActive}} settings-inactive{{end}}">
@@ -665,44 +702,6 @@
             {{end}}
           </div>
 
-          <!-- RAG Pipeline Card -->
-          <div class="card{{if not .EmbedEnabled}} settings-inactive{{end}}">
-            <h2>RAG Search</h2>
-            {{if not .EmbedEnabled}}
-              <p class="settings-inactive-note">Embedding pipeline not configured. Set UB_EMBED_ENABLED=true to enable.</p>
-            {{else}}
-              <div style="margin-bottom:0.75rem;">
-                <label style="font-weight:bold;">Embedding Status</label>
-                <p style="padding:0.4rem; background:#f8f8f8; border-radius:3px;">
-                  {{.EmbeddingCount}} embeddings loaded
-                </p>
-              </div>
-              <div style="margin-bottom:0.75rem;">
-                <label style="font-weight:bold;">Ollama</label>
-                <p style="padding:0.4rem; background:#f8f8f8; border-radius:3px;">
-                  {{.OllamaURL}} ({{.OllamaModel}})
-                </p>
-              </div>
-              <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
-              <form method="POST" action="/settings/backfill-embeddings" style="margin:0;">
-                <button type="submit" onclick="return confirm('Recompute embeddings for all indexed notes? This may take several minutes.')">
-                  ⟳ Backfill Embeddings
-                </button>
-              </form>
-            {{end}}
-          </div>
-
-          {{if .ChatEnabled}}
-          <div class="card">
-            <h2>Chat</h2>
-            <div style="margin-bottom:0.75rem;">
-              <label style="font-weight:bold;">Model</label>
-              <p style="padding:0.4rem; background:#f8f8f8; border-radius:3px;">
-                {{.ChatModel}} @ {{.ChatAPIURL}}
-              </p>
-            </div>
-          </div>
-          {{end}}
         </div>
 
         <!-- Chat Tab -->

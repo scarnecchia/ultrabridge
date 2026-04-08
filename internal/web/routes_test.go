@@ -140,9 +140,9 @@ func TestSettingsPage_RAGDisabled(t *testing.T) {
 	if !strings.Contains(body, "Embedding pipeline not configured") {
 		t.Error("RAG Search section should show 'Embedding pipeline not configured' when embedder is nil")
 	}
-	// Chat card should not appear when chatHandler is nil
-	if strings.Contains(body, "<h2>Chat</h2>") {
-		t.Error("Chat card should not appear when chatHandler is nil")
+	// Chat section should not appear when chatHandler is nil
+	if strings.Contains(body, "<h3") && strings.Contains(body, "Chat</h3>") {
+		t.Error("Chat section should not appear when chatHandler is nil")
 	}
 }
 
@@ -175,9 +175,9 @@ func TestSettingsPage_RAGEnabled(t *testing.T) {
 	if !strings.Contains(body, "Backfill Embeddings") {
 		t.Error("RAG Search section should show 'Backfill Embeddings' button when enabled")
 	}
-	// Chat card should appear when chatHandler is not nil
-	if !strings.Contains(body, "<h2>Chat</h2>") {
-		t.Error("Chat card should appear when chatHandler is not nil")
+	// Chat section should appear when chatHandler is not nil
+	if !strings.Contains(body, "Chat</h3>") {
+		t.Error("Chat section should appear when chatHandler is not nil")
 	}
 	if !strings.Contains(body, "http://localhost:8000") {
 		t.Error("Chat card should display API URL")
