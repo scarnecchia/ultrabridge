@@ -71,6 +71,10 @@ func TestSearchPage_SourceBadges(t *testing.T) {
 		nil, // noteDB
 		logger,
 		broadcaster,
+		nil, // embedder
+		nil, // embedStore
+		"",  // embedModel
+		nil, // retriever
 	)
 
 	// Execute GET /search?q=test
