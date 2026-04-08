@@ -23,6 +23,7 @@ import (
 
 	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
+	"github.com/sysop/ultrabridge/internal/chat"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/notedb"
 	"github.com/sysop/ultrabridge/internal/notestore"
@@ -101,6 +102,8 @@ type Handler struct {
 	embedStore      *rag.Store
 	embedModel      string
 	retriever       rag.SearchRetriever // nil = API endpoints disabled
+	chatHandler     *chat.Handler
+	chatStore       *chat.Store
 }
 
 // formatDueTime converts a millisecond Unix timestamp to a formatted date string.
@@ -122,7 +125,7 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string, retriever rag.SearchRetriever) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string, retriever rag.SearchRetriever, chatHandler *chat.Handler, chatStore *chat.Store) *Handler {
 	h := &Handler{
 		store:         store,
 		notifier:      notifier,
@@ -144,6 +147,8 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		embedStore:    embedStore,
 		embedModel:    embedModel,
 		retriever:     retriever,
+		chatHandler:   chatHandler,
+		chatStore:     chatStore,
 	}
 
 	// Cache the import path for the noteSource template function.
@@ -253,6 +258,14 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		h.mux.HandleFunc("GET /api/notes/{path...}/pages/{page}/image", h.handleAPIGetImage)
 	}
 
+	// Chat routes (requires chatHandler)
+	if h.chatHandler != nil {
+		h.mux.HandleFunc("GET /chat", h.handleChat)
+		h.mux.HandleFunc("POST /chat/ask", h.chatHandler.HandleAsk)
+		h.mux.HandleFunc("GET /chat/sessions", h.handleChatSessions)
+		h.mux.HandleFunc("GET /chat/messages", h.handleChatMessages)
+	}
+
 	return h
 }
 
@@ -272,6 +285,7 @@ func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
 		data["tasks"] = tasks
 	}
 	data["BooxNotesPath"] = h.booxNotesPath
+	data["chatEnabled"] = h.chatHandler != nil
 	if h.noteDB != nil {
 		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
 		data["BooxImportPath"] = importPath
@@ -844,6 +858,76 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
 		h.logger.Error("failed to render template", "error", err)
 	}
+}
+
+// handleChat renders the chat page
+func (h *Handler) handleChat(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	data := h.baseTemplateData(ctx)
+	data["activeTab"] = "chat"
+	data["chatEnabled"] = h.chatHandler != nil
+	if h.chatStore != nil {
+		sessions, _ := h.chatStore.ListSessions(ctx)
+		data["chatSessions"] = sessions
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
+		h.logger.Error("failed to render template", "error", err)
+	}
+}
+
+// handleChatSessions returns JSON list of chat sessions
+func (h *Handler) handleChatSessions(w http.ResponseWriter, r *http.Request) {
+	if h.chatStore == nil {
+		http.Error(w, "chat not enabled", http.StatusNotFound)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	sessions, err := h.chatStore.ListSessions(ctx)
+	if err != nil {
+		h.logger.Error("list sessions", "err", err)
+		http.Error(w, "failed to list sessions", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sessions)
+}
+
+// handleChatMessages returns JSON list of messages for a session
+func (h *Handler) handleChatMessages(w http.ResponseWriter, r *http.Request) {
+	if h.chatStore == nil {
+		http.Error(w, "chat not enabled", http.StatusNotFound)
+		return
+	}
+
+	sessionIDStr := r.URL.Query().Get("session_id")
+	sessionID := int64(0)
+	fmt.Sscanf(sessionIDStr, "%d", &sessionID)
+
+	if sessionID == 0 {
+		http.Error(w, "session_id required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	messages, err := h.chatStore.GetMessages(ctx, sessionID)
+	if err != nil {
+		h.logger.Error("get messages", "err", err)
+		http.Error(w, "failed to get messages", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(messages)
 }
 
 func (h *Handler) handleFilesQueue(w http.ResponseWriter, r *http.Request) {

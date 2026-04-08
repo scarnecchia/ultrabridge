@@ -17,6 +17,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/auth"
 	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
+	"github.com/sysop/ultrabridge/internal/chat"
 	ubwebdav "github.com/sysop/ultrabridge/internal/webdav"
 	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
@@ -355,7 +356,16 @@ func main() {
 			booxStore = booxProc.Store()
 			booxImporter = booxProc
 		}
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel, retriever)
+
+		// Wire chat handler if enabled
+		var chatHandler *chat.Handler
+		var chatStore *chat.Store
+		if cfg.ChatEnabled {
+			chatStore = chat.NewStore(noteDB)
+			chatHandler = chat.NewHandler(chatStore, retriever, cfg.ChatAPIURL, cfg.ChatModel, logger)
+		}
+
+		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel, retriever, chatHandler, chatStore)
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 
