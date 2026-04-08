@@ -502,13 +502,12 @@ func containsFolder(path, folder string) bool {
 
 func indexOfFolder(path string) string {
 	// Extract the parent directory name from the path
-	dir := path
-	if lastSlash := len(path) - 1; lastSlash >= 0 {
-		if idx := lastSlash - 1; idx >= 0 {
-			for ; idx >= 0; idx-- {
-				if path[idx] == '/' {
-					return path[idx+1 : lastSlash]
-				}
+	lastSlash := len(path) - 1
+	if lastSlash >= 0 {
+		idx := lastSlash - 1
+		for ; idx >= 0; idx-- {
+			if path[idx] == '/' {
+				return path[idx+1 : lastSlash]
 			}
 		}
 	}

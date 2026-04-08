@@ -2,11 +2,8 @@ package rag
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
 	"testing"
-
-	"github.com/sysop/ultrabridge/internal/notedb"
 )
 
 // mockEmbedder is a test double that can be configured to fail on specific inputs.
