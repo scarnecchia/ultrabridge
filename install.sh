@@ -395,6 +395,18 @@ docker build -t ultrabridge:dev "$SCRIPT_DIR" || fail "Docker build failed"
 
 ok "Image built"
 
+# --- build ub-mcp (MCP server runs on host, not in container) ---
+
+if command -v go &>/dev/null; then
+    info "Building ub-mcp (MCP server)..."
+    go build -C "$SCRIPT_DIR" -o "$SCRIPT_DIR/ub-mcp" ./cmd/ub-mcp/ || warn "ub-mcp build failed (optional — MCP integration won't be available)"
+    if [[ -f "$SCRIPT_DIR/ub-mcp" ]]; then
+        ok "ub-mcp built at $SCRIPT_DIR/ub-mcp"
+    fi
+else
+    warn "Go not installed — skipping ub-mcp build (MCP integration won't be available)"
+fi
+
 # --- generate bcrypt hash using the binary we just built ---
 
 info "Generating password hash..."

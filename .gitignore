@@ -1,5 +1,6 @@
 .worktrees/
 /ultrabridge
+/ub-mcp
 .ultrabridge.env
 # rendered output from snrender (root-level only, not go-sn/examples/)
 /*.jpg

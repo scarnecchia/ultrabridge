@@ -141,4 +141,14 @@ else
     fail "Health check failed after ${HEALTH_TIMEOUT}s. Run: sudo docker logs ultrabridge"
 fi
 
+# --- rebuild ub-mcp (MCP server runs on host, not in container) ---
+
+if command -v go &>/dev/null; then
+    info "Building ub-mcp (MCP server)..."
+    go build -C "$SCRIPT_DIR" -o "$SCRIPT_DIR/ub-mcp" ./cmd/ub-mcp/ || warn "ub-mcp build failed (optional)"
+    if [[ -f "$SCRIPT_DIR/ub-mcp" ]]; then
+        ok "ub-mcp built at $SCRIPT_DIR/ub-mcp"
+    fi
+fi
+
 info "Done!"

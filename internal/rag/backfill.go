@@ -16,6 +16,7 @@ func Backfill(ctx context.Context, store *Store, embedder Embedder, model string
 	}
 
 	if len(pages) == 0 {
+		logger.Info("embedding backfill: all pages already embedded")
 		return 0, nil
 	}
 
