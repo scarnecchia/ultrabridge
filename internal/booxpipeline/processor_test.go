@@ -826,8 +826,8 @@ func TestEmbed_PDFFileWithEmbedder(t *testing.T) {
 
 	// Create a simple single-page PDF
 	pdfPath := filepath.Join(tmpDir, "test.pdf")
-	if err := createTestPDF(pdfPath); err != nil {
-		t.Fatalf("createTestPDF: %v", err)
+	if err := createMinimalPDF(pdfPath); err != nil {
+		t.Fatalf("createMinimalPDF: %v", err)
 	}
 
 	// Create mock indexer and embedder
@@ -927,9 +927,9 @@ func (s *testEmbedStore) UnembeddedPages(ctx context.Context) ([]struct {
 	return nil, nil
 }
 
-// createTestPDF creates a minimal PDF file for testing.
+// createMinimalPDF creates a minimal PDF file for testing.
 // This is a very basic PDF structure that can be parsed by pdfrender.
-func createTestPDF(path string) error {
+func createMinimalPDF(path string) error {
 	// Minimal PDF with one page
 	pdfContent := `%PDF-1.4
 1 0 obj

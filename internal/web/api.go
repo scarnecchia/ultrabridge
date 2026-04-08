@@ -178,6 +178,7 @@ func (h *Handler) handleAPIGetImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try Supernote note rendering
+	notePath = filepath.Clean(notePath)
 	if h.snNotesPath != "" && strings.HasPrefix(notePath, h.snNotesPath) {
 		f, err := os.Open(notePath)
 		if err != nil {

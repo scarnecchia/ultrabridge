@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"testing"
+	"time"
 )
 
 // mockEmbedder is a test double that can be configured to fail on specific inputs.
@@ -32,11 +33,12 @@ func TestBackfill_AllPagesEmbedded(t *testing.T) {
 	embedder := &mockEmbedder{}
 
 	// Insert test note_content rows (no embeddings)
+	now := time.Now().UnixMilli()
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO note_content (note_path, page, body_text) VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)`,
-		"note1.note", 0, "page 0 text",
-		"note1.note", 1, "page 1 text",
-		"note2.note", 0, "another note",
+		`INSERT INTO note_content (note_path, page, body_text, indexed_at) VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)`,
+		"note1.note", 0, "page 0 text", now,
+		"note1.note", 1, "page 1 text", now,
+		"note2.note", 0, "another note", now,
 	)
 	if err != nil {
 		t.Fatalf("insert note_content: %v", err)

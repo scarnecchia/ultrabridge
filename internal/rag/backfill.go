@@ -1,5 +1,7 @@
 package rag
 
+// FCIS: Imperative Shell
+
 import (
 	"context"
 	"log/slog"

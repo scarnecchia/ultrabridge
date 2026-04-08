@@ -294,11 +294,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // This ensures the task list is always available regardless of which tab is active.
 func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
 	data := map[string]interface{}{}
-	tasks, err := h.store.List(ctx)
-	if err != nil {
-		h.logger.Error("failed to list tasks for template", "error", err)
-	} else {
-		data["tasks"] = tasks
+	if h.store != nil {
+		tasks, err := h.store.List(ctx)
+		if err != nil {
+			h.logger.Error("failed to list tasks for template", "error", err)
+		} else {
+			data["tasks"] = tasks
+		}
 	}
 	data["BooxNotesPath"] = h.booxNotesPath
 	data["chatEnabled"] = h.chatHandler != nil
