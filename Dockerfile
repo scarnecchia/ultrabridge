@@ -4,8 +4,8 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /ultrabridge ./cmd/ultrabridge/
-RUN CGO_ENABLED=0 go build -o /ub-mcp ./cmd/ub-mcp/
+RUN CGO_ENABLED=0 go build -o /ultrabridge ./cmd/ultrabridge/ && \
+    CGO_ENABLED=0 go build -o /ub-mcp ./cmd/ub-mcp/
 
 FROM alpine:3.20 AS ub-mcp
 
