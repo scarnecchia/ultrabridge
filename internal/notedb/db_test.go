@@ -15,7 +15,7 @@ func TestOpen_CreatesSchema(t *testing.T) {
 	defer db.Close()
 
 	// Verify all expected tables and virtual tables exist
-	for _, tbl := range []string{"notes", "jobs", "note_content", "note_fts"} {
+	for _, tbl := range []string{"notes", "jobs", "note_content", "note_fts", "note_embeddings"} {
 		var name string
 		err := db.QueryRowContext(context.Background(),
 			"SELECT name FROM sqlite_master WHERE name=?", tbl).Scan(&name)
@@ -73,5 +73,78 @@ func TestOpen_ForeignKeysEnabled(t *testing.T) {
 	}
 	if fk != 1 {
 		t.Errorf("foreign_keys = %d, want 1", fk)
+	}
+}
+
+func TestOpen_NoteEmbeddingsSchema(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Open(context.Background(), filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	// Verify table exists
+	var name string
+	err = db.QueryRowContext(context.Background(),
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='note_embeddings'").Scan(&name)
+	if err != nil {
+		t.Fatalf("note_embeddings table not found: %v", err)
+	}
+
+	// Verify columns exist
+	requiredCols := map[string]bool{
+		"note_path":  false,
+		"page":       false,
+		"embedding":  false,
+		"model":      false,
+		"created_at": false,
+	}
+	rows, err := db.QueryContext(context.Background(),
+		"SELECT name FROM pragma_table_info('note_embeddings')")
+	if err != nil {
+		t.Fatalf("pragma_table_info: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err != nil {
+			t.Fatalf("scanning column: %v", err)
+		}
+		if _, exists := requiredCols[col]; exists {
+			requiredCols[col] = true
+		}
+	}
+
+	for col, found := range requiredCols {
+		if !found {
+			t.Errorf("column %q not found in note_embeddings", col)
+		}
+	}
+
+	// Verify UNIQUE constraint on (note_path, page)
+	// Insert a row
+	_, err = db.ExecContext(context.Background(),
+		"INSERT INTO note_embeddings (note_path, page, embedding, model, created_at) VALUES (?, ?, ?, ?, ?)",
+		"/test/note.pdf", 1, []byte{1, 2, 3}, "test-model", 1000)
+	if err != nil {
+		t.Fatalf("insert first row: %v", err)
+	}
+
+	// Try to insert a duplicate (same note_path, page)
+	_, err = db.ExecContext(context.Background(),
+		"INSERT INTO note_embeddings (note_path, page, embedding, model, created_at) VALUES (?, ?, ?, ?, ?)",
+		"/test/note.pdf", 1, []byte{4, 5, 6}, "test-model", 2000)
+	if err == nil {
+		t.Error("expected UNIQUE constraint violation, but insert succeeded")
+	}
+
+	// Insert with different page should succeed
+	_, err = db.ExecContext(context.Background(),
+		"INSERT INTO note_embeddings (note_path, page, embedding, model, created_at) VALUES (?, ?, ?, ?, ?)",
+		"/test/note.pdf", 2, []byte{4, 5, 6}, "test-model", 2000)
+	if err != nil {
+		t.Errorf("insert second row (different page): %v", err)
 	}
 }
