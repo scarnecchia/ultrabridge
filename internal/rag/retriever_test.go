@@ -498,7 +498,6 @@ func insertSupernoteNote(t *testing.T, db *sql.DB, path, relPath, bodyText strin
 
 func containsFolder(path, folder string) bool {
 	// Check if path matches the LIKE pattern "%/{folder}/%"
-	pattern := "%/" + folder + "/%"
 	// Simulate SQL LIKE: replace % with any chars
 	target := "/" + folder + "/"
 	return contains(path, target)
