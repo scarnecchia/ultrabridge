@@ -497,19 +497,18 @@ func insertSupernoteNote(t *testing.T, db *sql.DB, path, relPath, bodyText strin
 }
 
 func containsFolder(path, folder string) bool {
-	return indexOfFolder(path) == folder
+	// Check if path matches the LIKE pattern "%/{folder}/%"
+	pattern := "%/" + folder + "/%"
+	// Simulate SQL LIKE: replace % with any chars
+	target := "/" + folder + "/"
+	return contains(path, target)
 }
 
-func indexOfFolder(path string) string {
-	// Extract the parent directory name from the path
-	lastSlash := len(path) - 1
-	if lastSlash >= 0 {
-		idx := lastSlash - 1
-		for ; idx >= 0; idx-- {
-			if path[idx] == '/' {
-				return path[idx+1 : lastSlash]
-			}
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
 		}
 	}
-	return ""
+	return false
 }
