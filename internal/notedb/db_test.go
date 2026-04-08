@@ -148,3 +148,81 @@ func TestOpen_NoteEmbeddingsSchema(t *testing.T) {
 		t.Errorf("insert second row (different page): %v", err)
 	}
 }
+
+func TestOpen_ChatSchema(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Open(context.Background(), filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	// Verify chat_sessions table exists with expected columns
+	requiredSessionCols := map[string]bool{
+		"id":         false,
+		"title":      false,
+		"created_at": false,
+		"updated_at": false,
+	}
+	rows, err := db.QueryContext(context.Background(),
+		"SELECT name FROM pragma_table_info('chat_sessions')")
+	if err != nil {
+		t.Fatalf("pragma_table_info for chat_sessions: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err != nil {
+			t.Fatalf("scanning column: %v", err)
+		}
+		if _, exists := requiredSessionCols[col]; exists {
+			requiredSessionCols[col] = true
+		}
+	}
+
+	for col, found := range requiredSessionCols {
+		if !found {
+			t.Errorf("column %q not found in chat_sessions", col)
+		}
+	}
+
+	// Verify chat_messages table exists with expected columns
+	requiredMessageCols := map[string]bool{
+		"id":         false,
+		"session_id": false,
+		"role":       false,
+		"content":    false,
+		"created_at": false,
+	}
+	rows, err = db.QueryContext(context.Background(),
+		"SELECT name FROM pragma_table_info('chat_messages')")
+	if err != nil {
+		t.Fatalf("pragma_table_info for chat_messages: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err != nil {
+			t.Fatalf("scanning column: %v", err)
+		}
+		if _, exists := requiredMessageCols[col]; exists {
+			requiredMessageCols[col] = true
+		}
+	}
+
+	for col, found := range requiredMessageCols {
+		if !found {
+			t.Errorf("column %q not found in chat_messages", col)
+		}
+	}
+
+	// Verify index exists
+	var indexName string
+	err = db.QueryRowContext(context.Background(),
+		"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_chat_messages_session'").Scan(&indexName)
+	if err != nil {
+		t.Errorf("index idx_chat_messages_session not found: %v", err)
+	}
+}

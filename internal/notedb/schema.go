@@ -110,6 +110,20 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			created_at INTEGER NOT NULL,
 			UNIQUE(note_path, page)
 		)`,
+		`CREATE TABLE IF NOT EXISTS chat_sessions (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			title      TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS chat_messages (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id INTEGER NOT NULL REFERENCES chat_sessions(id),
+			role       TEXT NOT NULL,
+			content    TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)`,
 	}
 	for i, stmt := range stmts {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

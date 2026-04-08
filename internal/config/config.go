@@ -76,6 +76,11 @@ type Config struct {
 	EmbedEnabled   bool
 	OllamaURL      string
 	OllamaEmbedModel string
+
+	// Chat
+	ChatEnabled bool
+	ChatAPIURL  string
+	ChatModel   string
 }
 
 func Load() (*Config, error) {
@@ -125,6 +130,10 @@ func Load() (*Config, error) {
 	cfg.EmbedEnabled     = envBoolOrDefault("UB_EMBED_ENABLED", false)
 	cfg.OllamaURL        = envOrDefault("UB_OLLAMA_URL", "http://localhost:11434")
 	cfg.OllamaEmbedModel = envOrDefault("UB_OLLAMA_EMBED_MODEL", "nomic-embed-text:v1.5")
+
+	cfg.ChatEnabled = envBoolOrDefault("UB_CHAT_ENABLED", false)
+	cfg.ChatAPIURL  = envOrDefault("UB_CHAT_API_URL", "http://localhost:8000")
+	cfg.ChatModel   = envOrDefault("UB_CHAT_MODEL", "Qwen/Qwen3-8B")
 
 	// Load password hash from secrets file if not set via env var.
 	// This avoids the $$ escaping issue with Docker Compose env_file.
