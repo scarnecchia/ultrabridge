@@ -392,8 +392,11 @@
           {{if .filesError}}
             <p style="color:#842029; padding:1rem;">{{.filesError}}</p>
           {{else if .files}}
-            <div style="margin-bottom:1rem; display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
-              <span id="proc-status" style="font-size:0.9rem; color:#555;">Loading...</span>
+            <div id="proc-status" style="font-size:0.9rem; color:#555; padding:0.4rem 0;">Loading...</div>
+
+            <hr style="margin:0.5rem 0; border:none; border-top:1px solid #e5e7eb;">
+
+            <div style="margin-bottom:0.5rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
               <form method="POST" action="/processor/start" style="display:inline;">
                 <button type="submit" class="btn-small">▶ Start</button>
               </form>
@@ -411,6 +414,11 @@
               <form method="POST" action="/files/retry-failed" style="display:inline;">
                 <button type="submit" class="btn-small">↻ Retry Failed</button>
               </form>
+            </div>
+
+            <hr style="margin:0.5rem 0; border:none; border-top:1px solid #e5e7eb;">
+
+            <div style="margin-bottom:0.5rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
               {{if .filesFolders}}
               <select onchange="filesNav({folder:this.value,page:1})" style="padding:0.3rem; border:1px solid #ccc; border-radius:3px;">
                 <option value="">All folders</option>
