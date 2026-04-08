@@ -113,11 +113,12 @@ func TestBackfill_PartialFailure(t *testing.T) {
 	store := NewStore(db, logger)
 
 	// Insert test note_content rows
+	now := time.Now().UnixMilli()
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO note_content (note_path, page, body_text) VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)`,
-		"note1.note", 0, "page 0 text",
-		"note1.note", 1, "page 1 text",
-		"note2.note", 0, "another note",
+		`INSERT INTO note_content (note_path, page, body_text, indexed_at) VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)`,
+		"note1.note", 0, "page 0 text", now,
+		"note1.note", 1, "page 1 text", now,
+		"note2.note", 0, "another note", now,
 	)
 	if err != nil {
 		t.Fatalf("insert note_content: %v", err)
@@ -168,10 +169,11 @@ func TestBackfill_ContextCancellation(t *testing.T) {
 	store := NewStore(db, logger)
 
 	// Insert many test note_content rows
+	now := time.Now().UnixMilli()
 	for i := 0; i < 10; i++ {
 		_, err := db.ExecContext(context.Background(),
-			`INSERT INTO note_content (note_path, page, body_text) VALUES (?, ?, ?)`,
-			"note1.note", i, "page text",
+			`INSERT INTO note_content (note_path, page, body_text, indexed_at) VALUES (?, ?, ?, ?)`,
+			"note1.note", i, "page text", now,
 		)
 		if err != nil {
 			t.Fatalf("insert note_content: %v", err)

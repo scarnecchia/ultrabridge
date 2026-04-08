@@ -163,6 +163,9 @@ func (h *Handler) handleAPIGetImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sanitize path to prevent traversal attacks
+	notePath = filepath.Clean(notePath)
+
 	// Try Boox cache first
 	if h.booxStore != nil {
 		noteID, err := h.booxStore.GetNoteID(r.Context(), notePath)
@@ -178,7 +181,6 @@ func (h *Handler) handleAPIGetImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try Supernote note rendering
-	notePath = filepath.Clean(notePath)
 	if h.snNotesPath != "" && strings.HasPrefix(notePath, h.snNotesPath) {
 		f, err := os.Open(notePath)
 		if err != nil {
