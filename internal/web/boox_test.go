@@ -59,6 +59,14 @@ func (m *mockBooxStore) RetryAllFailed(ctx context.Context) (int64, error) {
 	return 0, nil
 }
 
+func (m *mockBooxStore) SkipNote(ctx context.Context, path, reason string) error {
+	return nil
+}
+
+func (m *mockBooxStore) UnskipNote(ctx context.Context, path string) error {
+	return nil
+}
+
 func (m *mockBooxStore) DeleteNote(ctx context.Context, path string) error {
 	return nil
 }

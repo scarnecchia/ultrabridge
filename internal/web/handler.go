@@ -66,6 +66,8 @@ type BooxStore interface {
 	GetLatestJob(ctx context.Context, notePath string) (*booxpipeline.BooxJob, error)
 	RetryAllFailed(ctx context.Context) (int64, error)
 	DeleteNote(ctx context.Context, path string) error
+	SkipNote(ctx context.Context, path, reason string) error
+	UnskipNote(ctx context.Context, path string) error
 	GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error)
 }
 
@@ -841,11 +843,17 @@ func (h *Handler) handleFilesSkip(w http.ResponseWriter, r *http.Request) {
 	}
 	path := r.FormValue("path")
 	back := r.FormValue("back")
-	if path != "" && h.proc != nil {
+	if path != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		if err := h.proc.Skip(ctx, path, processor.SkipReasonManual); err != nil {
-			h.logger.Error("failed to skip file", "path", path, "error", err)
+		if h.isBooxPath(ctx, path) && h.booxStore != nil {
+			if err := h.booxStore.SkipNote(ctx, path, "manual"); err != nil {
+				h.logger.Error("failed to skip boox file", "path", path, "error", err)
+			}
+		} else if h.proc != nil {
+			if err := h.proc.Skip(ctx, path, processor.SkipReasonManual); err != nil {
+				h.logger.Error("failed to skip file", "path", path, "error", err)
+			}
 		}
 	}
 	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
@@ -859,11 +867,17 @@ func (h *Handler) handleFilesUnskip(w http.ResponseWriter, r *http.Request) {
 	}
 	path := r.FormValue("path")
 	back := r.FormValue("back")
-	if path != "" && h.proc != nil {
+	if path != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		if err := h.proc.Unskip(ctx, path); err != nil {
-			h.logger.Error("failed to unskip file", "path", path, "error", err)
+		if h.isBooxPath(ctx, path) && h.booxStore != nil {
+			if err := h.booxStore.UnskipNote(ctx, path); err != nil {
+				h.logger.Error("failed to unskip boox file", "path", path, "error", err)
+			}
+		} else if h.proc != nil {
+			if err := h.proc.Unskip(ctx, path); err != nil {
+				h.logger.Error("failed to unskip file", "path", path, "error", err)
+			}
 		}
 	}
 	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)

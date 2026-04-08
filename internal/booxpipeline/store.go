@@ -285,6 +285,33 @@ func (s *Store) UpdateNotePath(ctx context.Context, oldPath, newPath string) err
 	return tx.Commit()
 }
 
+// SkipNote marks a note's latest job as skipped with a reason.
+func (s *Store) SkipNote(ctx context.Context, path, reason string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE boox_jobs SET status = 'skipped', skip_reason = ?
+		WHERE note_path = ? AND id = (SELECT id FROM boox_jobs WHERE note_path = ? ORDER BY id DESC LIMIT 1)`,
+		reason, path, path,
+	)
+	if err != nil {
+		return fmt.Errorf("skip note: %w", err)
+	}
+	return nil
+}
+
+// UnskipNote resets a skipped job back to pending.
+func (s *Store) UnskipNote(ctx context.Context, path string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE boox_jobs SET status = 'pending', skip_reason = '', queued_at = ?
+		WHERE note_path = ? AND status = 'skipped'
+		AND id = (SELECT id FROM boox_jobs WHERE note_path = ? ORDER BY id DESC LIMIT 1)`,
+		time.Now().Unix(), path, path,
+	)
+	if err != nil {
+		return fmt.Errorf("unskip note: %w", err)
+	}
+	return nil
+}
+
 // DeleteNote removes a boox_notes record and all associated boox_jobs and note_content rows.
 func (s *Store) DeleteNote(ctx context.Context, path string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
