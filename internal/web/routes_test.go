@@ -152,7 +152,7 @@ func TestSettingsPage_RAGEnabled(t *testing.T) {
 		o.noteStore = newMockNoteStore()
 	})
 	// Manually set embedder and chatHandler on the handler to simulate enabled state
-	handler.embedder = newMockEmbedder()
+	handler.embedder = &mockEmbedder{}
 	handler.embedStore = &rag.Store{}
 	handler.ollamaURL = "http://localhost:11434"
 	handler.ollamaModel = "nomic-embed-text"
@@ -533,15 +533,3 @@ func TestSearchPage_FolderDropdown(t *testing.T) {
 	// Page should render without error even with no folders
 }
 
-// --- Test Helpers ---
-
-// mockEmbedder is a simple embedder for testing.
-type mockEmbedder struct{}
-
-func (m *mockEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
-	return []float32{0.1, 0.2, 0.3}, nil
-}
-
-func newMockEmbedder() *mockEmbedder {
-	return &mockEmbedder{}
-}
