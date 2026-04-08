@@ -184,12 +184,6 @@ func TestAPISearchInvalidLimit(t *testing.T) {
 
 // TestAPISearchWithParameters verifies query parameter parsing
 func TestAPISearchWithParameters(t *testing.T) {
-	queryRefs := make([]rag.SearchRequest, 0)
-	retriever := &mockRetriever{
-		results: []rag.SearchResult{},
-	}
-
-	// Mock retriever that captures the request
 	mockRetr := &mockRetriever{
 		results: []rag.SearchResult{},
 	}
@@ -206,8 +200,6 @@ func TestAPISearchWithParameters(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected 200, got %d", w.Code)
 	}
-
-	_ = queryRefs // silence unused variable warning
 }
 
 // TestAPIGetPagesSuccess verifies AC3.2: GET /api/notes/{path}/pages returns JSON array
@@ -230,9 +222,10 @@ func TestAPIGetPagesSuccess(t *testing.T) {
 		},
 	}
 
+	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil)
+	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever)
 
 	req := httptest.NewRequest("GET", "/api/notes/home/user/test.note/pages", nil)
 	w := httptest.NewRecorder()
@@ -266,9 +259,10 @@ func TestAPIGetPagesSuccess(t *testing.T) {
 func TestAPIGetPagesNotFound(t *testing.T) {
 	searchIndex := newMockSearchIndexWithContent()
 
+	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil)
+	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever)
 
 	req := httptest.NewRequest("GET", "/api/notes/nonexistent/path/pages", nil)
 	w := httptest.NewRecorder()
@@ -289,9 +283,10 @@ func TestAPIGetPagesNotFound(t *testing.T) {
 
 // TestAPIGetImageInvalidPageNumber verifies AC3.5: invalid page number returns 400
 func TestAPIGetImageInvalidPageNumber(t *testing.T) {
+	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever)
 
 	req := httptest.NewRequest("GET", "/api/notes/home/user/test.note/pages/invalid/image", nil)
 	w := httptest.NewRecorder()
@@ -312,10 +307,11 @@ func TestAPIGetImageInvalidPageNumber(t *testing.T) {
 
 // TestAPIGetImageNotAvailable verifies AC3.3: page image not available returns 404
 func TestAPIGetImageNotAvailable(t *testing.T) {
+	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
 	// Handler with no snNotesPath and no booxStore, so images aren't available
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil)
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever)
 
 	req := httptest.NewRequest("GET", "/api/notes/home/user/test.note/pages/0/image", nil)
 	w := httptest.NewRecorder()

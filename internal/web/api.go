@@ -1,5 +1,7 @@
 package web
 
+// Imperative Shell: HTTP API handlers with JSON serialization and filesystem I/O.
+
 import (
 	"encoding/json"
 	"fmt"
