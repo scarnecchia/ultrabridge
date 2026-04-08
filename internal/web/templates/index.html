@@ -265,6 +265,8 @@
             <a class="tab-button {{if eq .activeTab "settings"}}active{{end}}" href="/settings" style="text-decoration:none;">Settings</a>
         </div>
 
+        <div id="global-status" style="font-size:0.85rem; color:#555; padding:0.3rem 0.5rem; background:#f8f9fa; border-bottom:1px solid #e5e7eb; display:none;"></div>
+
         <!-- Tasks Tab -->
         <div id="tasks" class="tab-content active">
             <!-- Create Task Form -->
@@ -794,16 +796,15 @@
           fetch('/files/status')
             .then(function(r) { return r.json(); })
             .then(function(data) {
+              // Update Files tab detail view (if on Files page).
               var el = document.getElementById('proc-status');
               if (el) {
                 var parts = [];
-                // Supernote processor status
                 var state = data.Running ? '▶ SN Running' : '⏹ SN Stopped';
                 parts.push(state);
                 if (data.Pending > 0 || data.InFlight > 0) {
                   parts.push('SN Queue: ' + data.Pending);
                 }
-                // Boox pipeline status
                 if (data.boox) {
                   var b = data.boox;
                   if (b.in_progress > 0 && b.active_title) {
@@ -816,6 +817,30 @@
                   parts.push('Boox: ' + queueParts.join(', '));
                 }
                 el.textContent = parts.join(' | ');
+              }
+
+              // Update global status bar (visible on all pages).
+              var gs = document.getElementById('global-status');
+              if (gs) {
+                var gParts = [];
+                if (data.boox) {
+                  var b = data.boox;
+                  if (b.in_progress > 0 && b.active_title) {
+                    gParts.push('⚙ Processing: ' + b.active_title);
+                  }
+                  if (b.pending > 0) gParts.push(b.pending + ' queued');
+                  if (b.failed > 0) gParts.push(b.failed + ' failed');
+                  if (b.done > 0) gParts.push(b.done + ' done');
+                }
+                if (data.Pending > 0 || data.InFlight > 0) {
+                  gParts.push('SN: ' + data.Pending + ' queued');
+                }
+                if (gParts.length > 0) {
+                  gs.textContent = gParts.join(' | ');
+                  gs.style.display = '';
+                } else {
+                  gs.style.display = 'none';
+                }
               }
             })
             .catch(function() {});
@@ -879,6 +904,10 @@
 
         // On page load, activate the tab the server designated (for /files and /search routes).
         (function() {
+            // Start global status polling on every page.
+            updateProcessorStatus();
+            setInterval(updateProcessorStatus, 5000);
+
             const active = "{{.activeTab}}";
             if (active && active !== "tasks") {
                 const tabs = document.querySelectorAll('.tab-content');
@@ -886,8 +915,6 @@
                 const el = document.getElementById(active);
                 if (el) el.classList.add('active');
                 if (active === 'files') {
-                    updateProcessorStatus();
-                    statusInterval = setInterval(updateProcessorStatus, 5000);
                     // Auto-open detail modal if ?detail= parameter is present
                     const params = new URLSearchParams(window.location.search);
                     const detailPath = params.get('detail');
