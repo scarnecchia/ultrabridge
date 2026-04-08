@@ -75,6 +75,10 @@ func (m *mockBooxStore) GetQueueStatus(ctx context.Context) (booxpipeline.QueueS
 	return booxpipeline.QueueStatus{}, nil
 }
 
+func (m *mockBooxStore) CountNotesWithPrefix(ctx context.Context, prefix string) (int, error) {
+	return 0, nil
+}
+
 // TestFilesPage_ShowsBothSources verifies AC5.1: Files list shows both Supernote and Boox notes
 func TestFilesPage_ShowsBothSources(t *testing.T) {
 	// Create mock stores

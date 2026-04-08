@@ -831,6 +831,7 @@
                   if (b.pending > 0) gParts.push(b.pending + ' queued');
                   if (b.failed > 0) gParts.push(b.failed + ' failed');
                   if (b.done > 0) gParts.push(b.done + ' done');
+                  if (b.unmigrated_count > 0) gParts.push('⬇ ' + b.unmigrated_count + ' unmigrated');
                 }
                 if (data.Pending > 0 || data.InFlight > 0) {
                   gParts.push('SN: ' + data.Pending + ' queued');

@@ -69,6 +69,7 @@ type BooxStore interface {
 	SkipNote(ctx context.Context, path, reason string) error
 	UnskipNote(ctx context.Context, path string) error
 	GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error)
+	CountNotesWithPrefix(ctx context.Context, prefix string) (int, error)
 }
 
 // BooxImporter can scan an import path and enqueue files for processing.
@@ -921,6 +922,15 @@ func (h *Handler) handleFilesStatus(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			h.logger.Error("boox queue status", "error", err)
 		} else {
+			// Count unmigrated files if an import path is configured.
+			if h.noteDB != nil {
+				importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+				if importPath != "" {
+					if count, err := h.booxStore.CountNotesWithPrefix(ctx, importPath); err == nil && count > 0 {
+						qs.UnmigratedCount = count
+					}
+				}
+			}
 			resp.Boox = &qs
 		}
 	}

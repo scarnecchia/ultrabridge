@@ -229,6 +229,16 @@ func (s *Store) GetNoteID(ctx context.Context, path string) (string, error) {
 	return noteID, nil
 }
 
+// CountNotesWithPrefix returns how many boox_notes paths start with the given prefix.
+func (s *Store) CountNotesWithPrefix(ctx context.Context, prefix string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM boox_notes WHERE path LIKE ?`, prefix+"%").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count notes with prefix: %w", err)
+	}
+	return count, nil
+}
+
 // ListNotesWithPrefix returns all boox_notes paths that start with the given prefix.
 func (s *Store) ListNotesWithPrefix(ctx context.Context, prefix string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT path FROM boox_notes WHERE path LIKE ?`, prefix+"%")
@@ -333,12 +343,13 @@ func (s *Store) DeleteNote(ctx context.Context, path string) error {
 
 // QueueStatus represents the current state of the processing queue.
 type QueueStatus struct {
-	ActiveTitle string `json:"active_title,omitempty"` // title of currently processing note
-	ActivePages int    `json:"active_pages,omitempty"` // page count of active note
-	Pending     int    `json:"pending"`
-	InProgress  int    `json:"in_progress"`
-	Done        int    `json:"done"`
-	Failed      int    `json:"failed"`
+	ActiveTitle    string `json:"active_title,omitempty"` // title of currently processing note
+	ActivePages    int    `json:"active_pages,omitempty"` // page count of active note
+	Pending        int    `json:"pending"`
+	InProgress     int    `json:"in_progress"`
+	Done           int    `json:"done"`
+	Failed         int    `json:"failed"`
+	UnmigratedCount int   `json:"unmigrated_count,omitempty"` // files still at import path
 }
 
 // GetQueueStatus returns a summary of the processing queue.
