@@ -1,8 +1,7 @@
-package main
+package main // FCIS: Imperative Shell
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -213,13 +212,10 @@ func registerGetNoteImage(server *mcp.Server, client *apiClient) {
 			return nil, nil, fmt.Errorf("read image: %w", err)
 		}
 
-		// Encode imageData to base64 for the Data field
-		encodedData := []byte(base64.StdEncoding.EncodeToString(imageData))
-
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.ImageContent{
-					Data:     encodedData,
+					Data:     imageData,
 					MIMEType: "image/jpeg",
 				},
 			},

@@ -2,13 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -76,25 +73,25 @@ func TestSearchNotesBasic(t *testing.T) {
 	}
 
 	// Verify key fields are present
-	if !contains(text, "Test Note") {
+	if !strings.Contains(text, "Test Note") {
 		t.Error("missing title in response")
 	}
-	if !contains(text, "/notes/test.note") {
+	if !strings.Contains(text,"/notes/test.note") {
 		t.Error("missing note path in response")
 	}
-	if !contains(text, "page 0") {
+	if !strings.Contains(text,"page 0") {
 		t.Error("missing page number in response")
 	}
-	if !contains(text, "Supernote") {
+	if !strings.Contains(text,"Supernote") {
 		t.Error("missing device in response")
 	}
-	if !contains(text, "Work") {
+	if !strings.Contains(text,"Work") {
 		t.Error("missing folder in response")
 	}
-	if !contains(text, "2026-04-08") {
+	if !strings.Contains(text,"2026-04-08") {
 		t.Error("missing note date in response")
 	}
-	if !contains(text, mockServer.URL+"/files/history?path=/notes/test.note") {
+	if !strings.Contains(text,mockServer.URL+"/files/history?path=/notes/test.note") {
 		t.Errorf("missing full URL in response: %s", text)
 	}
 }
@@ -121,7 +118,7 @@ func TestSearchNotesEmptyQuery(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty query")
 	}
-	if !contains(err.Error(), "query is required") {
+	if !strings.Contains(err.Error(),"query is required") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -164,22 +161,22 @@ func TestSearchNotesWithFilters(t *testing.T) {
 	}
 
 	// Verify all parameters are in the query
-	if !contains(capturedQuery, "q=handwriting") {
+	if !strings.Contains(capturedQuery,"q=handwriting") {
 		t.Errorf("missing query param: %s", capturedQuery)
 	}
-	if !contains(capturedQuery, "folder=Work") {
+	if !strings.Contains(capturedQuery,"folder=Work") {
 		t.Errorf("missing folder param: %s", capturedQuery)
 	}
-	if !contains(capturedQuery, "device=Supernote") {
+	if !strings.Contains(capturedQuery,"device=Supernote") {
 		t.Errorf("missing device param: %s", capturedQuery)
 	}
-	if !contains(capturedQuery, "from=2026-04-01") {
+	if !strings.Contains(capturedQuery,"from=2026-04-01") {
 		t.Errorf("missing from param: %s", capturedQuery)
 	}
-	if !contains(capturedQuery, "to=2026-04-08") {
+	if !strings.Contains(capturedQuery,"to=2026-04-08") {
 		t.Errorf("missing to param: %s", capturedQuery)
 	}
-	if !contains(capturedQuery, "limit=20") {
+	if !strings.Contains(capturedQuery,"limit=20") {
 		t.Errorf("missing limit param: %s", capturedQuery)
 	}
 }
@@ -213,7 +210,7 @@ func TestSearchNotesDefaultLimit(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !contains(capturedQuery, "limit=10") {
+	if !strings.Contains(capturedQuery,"limit=10") {
 		t.Errorf("expected default limit=10, got: %s", capturedQuery)
 	}
 }
@@ -270,22 +267,22 @@ func TestGetNotePagesValid(t *testing.T) {
 	text := textContent.Text
 
 	// Verify pages are ordered and contain expected content
-	if !contains(text, "Page 0") {
+	if !strings.Contains(text,"Page 0") {
 		t.Error("missing Page 0 in response")
 	}
-	if !contains(text, "Introduction") {
+	if !strings.Contains(text,"Introduction") {
 		t.Error("missing Introduction title")
 	}
-	if !contains(text, "Page 0 content") {
+	if !strings.Contains(text,"Page 0 content") {
 		t.Error("missing Page 0 content")
 	}
-	if !contains(text, "Page 1") {
+	if !strings.Contains(text,"Page 1") {
 		t.Error("missing Page 1 in response")
 	}
-	if !contains(text, "Details") {
+	if !strings.Contains(text,"Details") {
 		t.Error("missing Details title")
 	}
-	if !contains(text, "Page 1 content") {
+	if !strings.Contains(text,"Page 1 content") {
 		t.Error("missing Page 1 content")
 	}
 }
@@ -311,7 +308,7 @@ func TestGetNotePagesNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent note")
 	}
-	if !contains(err.Error(), "note not found") {
+	if !strings.Contains(err.Error(),"note not found") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -337,7 +334,7 @@ func TestGetNotePagesEmptyPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty path")
 	}
-	if !contains(err.Error(), "note_path is required") {
+	if !strings.Contains(err.Error(),"note_path is required") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -419,7 +416,7 @@ func TestGetNoteImageNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent image")
 	}
-	if !contains(err.Error(), "page image not found") {
+	if !strings.Contains(err.Error(),"page image not found") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -445,7 +442,7 @@ func TestGetNoteImageEmptyPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty path")
 	}
-	if !contains(err.Error(), "note_path is required") {
+	if !strings.Contains(err.Error(),"note_path is required") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -473,7 +470,7 @@ func TestAPIClientBasicAuth(t *testing.T) {
 		t.Fatal("expected Authorization header")
 	}
 
-	if !contains(capturedAuth, "Basic") {
+	if !strings.Contains(capturedAuth,"Basic") {
 		t.Errorf("expected Basic auth, got: %s", capturedAuth)
 	}
 }
@@ -535,192 +532,139 @@ func TestSearchNotesNoResults(t *testing.T) {
 	}
 
 	text := textContent.Text
-	if !contains(text, "No results found") {
+	if !strings.Contains(text,"No results found") {
 		t.Errorf("expected 'No results found' message, got: %s", text)
 	}
 }
 
-// Helper functions for testing tool handlers
+// Helper functions for testing tool handlers via actual MCP client-server communication
 
-// testCallSearchNotesTool calls the search_notes tool handler directly.
-// This simulates how the MCP server would invoke the tool.
+// testCallSearchNotesTool calls the search_notes tool via an in-process MCP client-server pair.
 func testCallSearchNotesTool(server *mcp.Server, client *apiClient, input SearchNotesInput) (*mcp.CallToolResult, any, error) {
 	ctx := context.Background()
 
-	// Call the handler directly by re-implementing search_notes logic
-	// This is a simplified approach that tests the core logic
-	if input.Query == "" {
-		return nil, nil, fmt.Errorf("query is required")
-	}
+	// Create an in-process client-server connection
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	defer clientTransport.Close()
+	defer serverTransport.Close()
 
-	params_vals := url.Values{"q": {input.Query}}
-	if input.Folder != "" {
-		params_vals.Set("folder", input.Folder)
-	}
-	if input.Device != "" {
-		params_vals.Set("device", input.Device)
-	}
-	if input.DateFrom != "" {
-		params_vals.Set("from", input.DateFrom)
-	}
-	if input.DateTo != "" {
-		params_vals.Set("to", input.DateTo)
-	}
-	limit := input.Limit
-	if limit <= 0 {
-		limit = 10
-	}
-	params_vals.Set("limit", fmt.Sprintf("%d", limit))
+	// Connect server to its transport
+	go func() {
+		server.Run(ctx, serverTransport)
+	}()
 
-	resp, err := client.get(ctx, "/api/search?"+params_vals.Encode())
+	// Create client and connect to transport
+	mcpClient := mcp.NewClient(&mcp.ClientOptions{})
+	clientSession, err := mcpClient.Connect(ctx, clientTransport)
 	if err != nil {
-		return nil, nil, fmt.Errorf("API request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
+		return nil, nil, fmt.Errorf("failed to connect client: %w", err)
 	}
 
-	var results []struct {
-		NotePath  string  `json:"note_path"`
-		Page      int     `json:"page"`
-		BodyText  string  `json:"body_text"`
-		TitleText string  `json:"title_text"`
-		Score     float64 `json:"score"`
-		Folder    string  `json:"folder"`
-		Device    string  `json:"device"`
-		NoteDate  string  `json:"note_date"`
-		URL       string  `json:"url"`
+	// Serialize input to map
+	inputBytes, err := json.Marshal(input)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal input: %w", err)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
-		return nil, nil, fmt.Errorf("decode response: %w", err)
+	var inputMap map[string]any
+	if err := json.Unmarshal(inputBytes, &inputMap); err != nil {
+		return nil, nil, fmt.Errorf("failed to unmarshal input: %w", err)
 	}
 
-	var sb strings.Builder
-	for i, r := range results {
-		sb.WriteString(fmt.Sprintf("--- Result %d ---\n", i+1))
-		if r.TitleText != "" {
-			sb.WriteString(fmt.Sprintf("Title: %s\n", r.TitleText))
-		}
-		sb.WriteString(fmt.Sprintf("Note: %s (page %d)\n", r.NotePath, r.Page))
-		if r.Device != "" {
-			sb.WriteString(fmt.Sprintf("Device: %s\n", r.Device))
-		}
-		if r.Folder != "" {
-			sb.WriteString(fmt.Sprintf("Folder: %s\n", r.Folder))
-		}
-		if r.NoteDate != "" {
-			sb.WriteString(fmt.Sprintf("Date: %s\n", r.NoteDate))
-		}
-		sb.WriteString(fmt.Sprintf("URL: %s%s\n", client.baseURL, r.URL))
-		sb.WriteString(fmt.Sprintf("Text:\n%s\n\n", r.BodyText))
+	// Call the tool via the MCP client
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolRequest{
+		Name:      "search_notes",
+		Arguments: inputMap,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("CallTool failed: %w", err)
 	}
 
-	if len(results) == 0 {
-		sb.WriteString("No results found.\n")
-	}
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: sb.String()},
-		},
-	}, nil, nil
+	return result, nil, nil
 }
 
-// testCallGetNotePagesTool calls the get_note_pages tool handler directly.
+// testCallGetNotePagesTool calls the get_note_pages tool via an in-process MCP client-server pair.
 func testCallGetNotePagesTool(server *mcp.Server, client *apiClient, input GetNotePagesInput) (*mcp.CallToolResult, any, error) {
 	ctx := context.Background()
 
-	if input.NotePath == "" {
-		return nil, nil, fmt.Errorf("note_path is required")
-	}
+	// Create an in-process client-server connection
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	defer clientTransport.Close()
+	defer serverTransport.Close()
 
-	apiPath := "/api/notes" + input.NotePath + "/pages"
-	resp, err := client.get(ctx, apiPath)
+	// Connect server to its transport
+	go func() {
+		server.Run(ctx, serverTransport)
+	}()
+
+	// Create client and connect to transport
+	mcpClient := mcp.NewClient(&mcp.ClientOptions{})
+	clientSession, err := mcpClient.Connect(ctx, clientTransport)
 	if err != nil {
-		return nil, nil, fmt.Errorf("API request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 404 {
-		return nil, nil, fmt.Errorf("note not found: %s", input.NotePath)
-	}
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
+		return nil, nil, fmt.Errorf("failed to connect client: %w", err)
 	}
 
-	var pages []struct {
-		Page      int    `json:"page"`
-		BodyText  string `json:"body_text"`
-		TitleText string `json:"title_text"`
-		Keywords  string `json:"keywords"`
+	// Serialize input to map
+	inputBytes, err := json.Marshal(input)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal input: %w", err)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&pages); err != nil {
-		return nil, nil, fmt.Errorf("decode response: %w", err)
-	}
-
-	var sb strings.Builder
-	for _, p := range pages {
-		sb.WriteString(fmt.Sprintf("--- Page %d ---\n", p.Page))
-		if p.TitleText != "" {
-			sb.WriteString(fmt.Sprintf("Title: %s\n", p.TitleText))
-		}
-		sb.WriteString(p.BodyText)
-		sb.WriteString("\n\n")
+	var inputMap map[string]any
+	if err := json.Unmarshal(inputBytes, &inputMap); err != nil {
+		return nil, nil, fmt.Errorf("failed to unmarshal input: %w", err)
 	}
 
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: sb.String()},
-		},
-	}, nil, nil
+	// Call the tool via the MCP client
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolRequest{
+		Name:      "get_note_pages",
+		Arguments: inputMap,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("CallTool failed: %w", err)
+	}
+
+	return result, nil, nil
 }
 
-// testCallGetNoteImageTool calls the get_note_image tool handler directly.
+// testCallGetNoteImageTool calls the get_note_image tool via an in-process MCP client-server pair.
 func testCallGetNoteImageTool(server *mcp.Server, client *apiClient, input GetNoteImageInput) (*mcp.CallToolResult, any, error) {
 	ctx := context.Background()
 
-	if input.NotePath == "" {
-		return nil, nil, fmt.Errorf("note_path is required")
-	}
+	// Create an in-process client-server connection
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	defer clientTransport.Close()
+	defer serverTransport.Close()
 
-	apiPath := fmt.Sprintf("/api/notes%s/pages/%d/image", input.NotePath, input.Page)
-	resp, err := client.get(ctx, apiPath)
+	// Connect server to its transport
+	go func() {
+		server.Run(ctx, serverTransport)
+	}()
+
+	// Create client and connect to transport
+	mcpClient := mcp.NewClient(&mcp.ClientOptions{})
+	clientSession, err := mcpClient.Connect(ctx, clientTransport)
 	if err != nil {
-		return nil, nil, fmt.Errorf("API request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 404 {
-		return nil, nil, fmt.Errorf("page image not found: %s page %d", input.NotePath, input.Page)
-	}
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
+		return nil, nil, fmt.Errorf("failed to connect client: %w", err)
 	}
 
-	imageData, err := io.ReadAll(resp.Body)
+	// Serialize input to map
+	inputBytes, err := json.Marshal(input)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read image: %w", err)
+		return nil, nil, fmt.Errorf("failed to marshal input: %w", err)
+	}
+	var inputMap map[string]any
+	if err := json.Unmarshal(inputBytes, &inputMap); err != nil {
+		return nil, nil, fmt.Errorf("failed to unmarshal input: %w", err)
 	}
 
-	// Encode imageData to base64 for the Data field
-	encodedData := []byte(base64.StdEncoding.EncodeToString(imageData))
+	// Call the tool via the MCP client
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolRequest{
+		Name:      "get_note_image",
+		Arguments: inputMap,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("CallTool failed: %w", err)
+	}
 
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.ImageContent{
-				Data:     encodedData,
-				MIMEType: "image/jpeg",
-			},
-		},
-	}, nil, nil
+	return result, nil, nil
 }
 
-// contains is a helper to check if a string contains a substring.
-func contains(s, substr string) bool {
-	return strings.Contains(s, substr)
-}
