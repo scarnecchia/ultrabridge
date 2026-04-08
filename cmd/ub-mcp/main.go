@@ -33,10 +33,17 @@ func main() {
 
 	if *httpAddr != "" {
 		// HTTP SSE transport
-		handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 			return server
 		}, nil)
-		log.Printf("ub-mcp listening on %s (HTTP SSE)", *httpAddr)
+
+		var handler http.Handler = mcpHandler
+		if token := os.Getenv("UB_MCP_AUTH_TOKEN"); token != "" {
+			handler = bearerAuth(token, mcpHandler)
+			log.Printf("ub-mcp listening on %s (HTTP SSE, auth enabled)", *httpAddr)
+		} else {
+			log.Printf("ub-mcp listening on %s (HTTP SSE, no auth — set UB_MCP_AUTH_TOKEN to secure)", *httpAddr)
+		}
 		if err := http.ListenAndServe(*httpAddr, handler); err != nil {
 			log.Fatalf("HTTP server failed: %v", err)
 		}
@@ -64,6 +71,18 @@ func newAPIClient(baseURL, user, pass string) *apiClient {
 		pass:    pass,
 		http:    &http.Client{},
 	}
+}
+
+// bearerAuth wraps an http.Handler with Bearer token authentication.
+func bearerAuth(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer "+token {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // get performs a GET request to the UltraBridge API with Basic Auth.

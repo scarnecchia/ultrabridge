@@ -14,6 +14,7 @@ COPY --from=builder /ub-mcp /usr/local/bin/ub-mcp
 
 EXPOSE 8081
 ENTRYPOINT ["ub-mcp"]
+CMD ["--http", ":8081"]
 
 FROM alpine:3.20 AS ultrabridge
 

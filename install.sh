@@ -388,6 +388,11 @@ fi
 prompt UB_MCP_ENABLED "Enable MCP server for Claude integration? (true/false)" "${UB_MCP_ENABLED:-false}"
 if [[ "$UB_MCP_ENABLED" == "true" ]]; then
     prompt UB_MCP_PORT "MCP server port (HTTP SSE)" "${UB_MCP_PORT:-8081}"
+    # Generate a random token if none exists
+    if [[ -z "${UB_MCP_AUTH_TOKEN:-}" ]]; then
+        UB_MCP_AUTH_TOKEN=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
+    fi
+    prompt UB_MCP_AUTH_TOKEN "MCP auth token (Bearer)" "${UB_MCP_AUTH_TOKEN}"
 fi
 
 echo
@@ -503,6 +508,9 @@ if [[ "$UB_CHAT_ENABLED" == "true" ]]; then
 fi
 
 echo "UB_MCP_ENABLED=${UB_MCP_ENABLED:-false}" >> "$SUPERNOTE_DIR/.ultrabridge.env"
+if [[ "${UB_MCP_ENABLED:-false}" == "true" ]]; then
+    echo "UB_MCP_AUTH_TOKEN=${UB_MCP_AUTH_TOKEN}" >> "$SUPERNOTE_DIR/.ultrabridge.env"
+fi
 
 # --- write docker-compose.override.yml ---
 
@@ -580,7 +588,8 @@ EOF
       - UB_MCP_API_URL=http://ultrabridge:8443
       - UB_MCP_API_USER=${UB_USERNAME}
       - UB_MCP_API_PASS=${UB_PASSWORD}
-    command: ["ub-mcp", "--http", ":8081"]
+      - UB_MCP_AUTH_TOKEN=${UB_MCP_AUTH_TOKEN}
+    command: ["--http", ":8081"]
     depends_on:
       - ultrabridge
     restart: unless-stopped
@@ -619,7 +628,8 @@ EOF
       - UB_MCP_API_URL=http://ultrabridge:8443
       - UB_MCP_API_USER=${UB_USERNAME}
       - UB_MCP_API_PASS=${UB_PASSWORD}
-    command: ["ub-mcp", "--http", ":8081"]
+      - UB_MCP_AUTH_TOKEN=${UB_MCP_AUTH_TOKEN}
+    command: ["--http", ":8081"]
     depends_on:
       - ultrabridge
     restart: unless-stopped
@@ -642,7 +652,11 @@ fi
 echo
 info "Starting UltraBridge..."
 
-$COMPOSE up -d --force-recreate ultrabridge || fail "Failed to start container"
+SERVICES="ultrabridge"
+if [[ "${UB_MCP_ENABLED:-false}" == "true" ]]; then
+    SERVICES="ultrabridge ub-mcp"
+fi
+$COMPOSE up -d --force-recreate $SERVICES || fail "Failed to start container(s)"
 
 # --- verify ---
 
