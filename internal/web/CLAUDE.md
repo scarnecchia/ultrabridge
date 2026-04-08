@@ -50,8 +50,8 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 | GET | `/sync/status` | `handleSyncStatus` | JSON: SyncStatus (adapter state, timestamps) |
 | POST | `/sync/trigger` | `handleSyncTrigger` | Trigger immediate sync cycle |
 | GET | `/api/search` | `handleAPISearch` | JSON: hybrid search results (requires retriever) |
-| GET | `/api/notes/{path...}/pages` | `handleAPIGetPages` | JSON: indexed page content for a note |
-| GET | `/api/notes/{path...}/pages/{page}/image` | `handleAPIGetImage` | JPEG image for a note page |
+| GET | `/api/notes/pages` | `handleAPIGetPages` | JSON: indexed page content for a note (requires retriever) |
+| GET | `/api/notes/pages/image` | `handleAPIGetImage` | JPEG image for a note page (requires retriever) |
 
 ## Interfaces
 
@@ -77,8 +77,8 @@ In addition to previously documented methods, `BooxStore` now includes:
 Three new routes provide JSON API access for MCP servers and external tools:
 
 - `GET /api/search?q=...&folder=...&device=...&from=...&to=...&limit=...` — hybrid search using SearchRetriever
-- `GET /api/notes/{path...}/pages` — fetch indexed content for a note (all pages)
-- `GET /api/notes/{path...}/pages/{page}/image` — render JPEG image for a page
+- `GET /api/notes/pages?path=...` — fetch indexed content for a note (all pages)
+- `GET /api/notes/pages/image?path=...&page=...` — render JPEG image for a page
 
 All API endpoints are **conditional**: they are only registered if `retriever` is non-nil. When retriever is nil (FTS-only or disabled), the API routes return 404.
 

@@ -1221,6 +1221,7 @@
                         if (json.type === 'session') {
                           currentSessionId = json.session_id;
                           document.getElementById('current-session-id').value = currentSessionId;
+                          searchResults = json.context || [];
                         } else if (json.type === 'content') {
                           fullText += json.content;
                           if (!assistantDiv) {

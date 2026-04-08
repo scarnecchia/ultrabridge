@@ -254,8 +254,8 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	// JSON API endpoints (requires retriever)
 	if h.retriever != nil {
 		h.mux.HandleFunc("GET /api/search", h.handleAPISearch)
-		h.mux.HandleFunc("GET /api/notes/{path...}/pages", h.handleAPIGetPages)
-		h.mux.HandleFunc("GET /api/notes/{path...}/pages/{page}/image", h.handleAPIGetImage)
+		h.mux.HandleFunc("GET /api/notes/pages", h.handleAPIGetPages)
+		h.mux.HandleFunc("GET /api/notes/pages/image", h.handleAPIGetImage)
 	}
 
 	// Chat routes (requires chatHandler)

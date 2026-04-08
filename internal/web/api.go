@@ -106,9 +106,13 @@ func (h *Handler) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(out)
 }
 
-// handleAPIGetPages handles GET /api/notes/{path...}/pages
+// handleAPIGetPages handles GET /api/notes/pages?path=...
 func (h *Handler) handleAPIGetPages(w http.ResponseWriter, r *http.Request) {
-	notePath := "/" + r.PathValue("path") // restore leading slash for absolute path
+	notePath := r.URL.Query().Get("path")
+	if notePath == "" {
+		apiError(w, http.StatusBadRequest, "missing required parameter: path")
+		return
+	}
 
 	docs, err := h.searchIndex.GetContent(r.Context(), notePath)
 	if err != nil {
@@ -141,10 +145,18 @@ func (h *Handler) handleAPIGetPages(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(out)
 }
 
-// handleAPIGetImage handles GET /api/notes/{path...}/pages/{page}/image
+// handleAPIGetImage handles GET /api/notes/pages/image?path=...&page=...
 func (h *Handler) handleAPIGetImage(w http.ResponseWriter, r *http.Request) {
-	notePath := "/" + r.PathValue("path") // restore leading slash
-	pageStr := r.PathValue("page")
+	notePath := r.URL.Query().Get("path")
+	if notePath == "" {
+		apiError(w, http.StatusBadRequest, "missing required parameter: path")
+		return
+	}
+	pageStr := r.URL.Query().Get("page")
+	if pageStr == "" {
+		apiError(w, http.StatusBadRequest, "missing required parameter: page")
+		return
+	}
 	page, err := strconv.Atoi(pageStr)
 	if err != nil {
 		apiError(w, http.StatusBadRequest, "invalid page number")

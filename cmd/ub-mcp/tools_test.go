@@ -218,7 +218,7 @@ func TestSearchNotesDefaultLimit(t *testing.T) {
 // TestGetNotePagesValid verifies get_note_pages returns ordered page text.
 func TestGetNotePagesValid(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/notes/path/to/note.note/pages" && r.Method == "GET" {
+		if r.URL.Path == "/api/notes/pages" && r.URL.Query().Get("path") == "/path/to/note.note" && r.Method == "GET" {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode([]map[string]interface{}{
 				{
@@ -351,7 +351,7 @@ func TestGetNoteImageValid(t *testing.T) {
 	}
 
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/notes/path/to/note.note/pages/0/image" && r.Method == "GET" {
+		if r.URL.Path == "/api/notes/pages/image" && r.URL.Query().Get("path") == "/path/to/note.note" && r.URL.Query().Get("page") == "0" && r.Method == "GET" {
 			w.Header().Set("Content-Type", "image/jpeg")
 			w.Write(testImageData)
 			return

@@ -202,7 +202,7 @@ func TestAPISearchWithParameters(t *testing.T) {
 	}
 }
 
-// TestAPIGetPagesSuccess verifies AC3.2: GET /api/notes/{path}/pages returns JSON array
+// TestAPIGetPagesSuccess verifies AC3.2: GET /api/notes/pages?path=... returns JSON array
 func TestAPIGetPagesSuccess(t *testing.T) {
 	searchIndex := newMockSearchIndexWithContent()
 	searchIndex.docs["/home/user/test.note"] = []search.NoteDocument{
@@ -227,7 +227,7 @@ func TestAPIGetPagesSuccess(t *testing.T) {
 	broadcaster := logging.NewLogBroadcaster()
 	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
 
-	req := httptest.NewRequest("GET", "/api/notes/home/user/test.note/pages", nil)
+	req := httptest.NewRequest("GET", "/api/notes/pages?path=/home/user/test.note", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -264,7 +264,7 @@ func TestAPIGetPagesNotFound(t *testing.T) {
 	broadcaster := logging.NewLogBroadcaster()
 	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
 
-	req := httptest.NewRequest("GET", "/api/notes/nonexistent/path/pages", nil)
+	req := httptest.NewRequest("GET", "/api/notes/pages?path=/nonexistent/path", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -288,7 +288,7 @@ func TestAPIGetImageInvalidPageNumber(t *testing.T) {
 	broadcaster := logging.NewLogBroadcaster()
 	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
 
-	req := httptest.NewRequest("GET", "/api/notes/home/user/test.note/pages/invalid/image", nil)
+	req := httptest.NewRequest("GET", "/api/notes/pages/image?path=/home/user/test.note&page=invalid", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -313,12 +313,85 @@ func TestAPIGetImageNotAvailable(t *testing.T) {
 	// Handler with no snNotesPath and no booxStore, so images aren't available
 	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
 
-	req := httptest.NewRequest("GET", "/api/notes/home/user/test.note/pages/0/image", nil)
+	req := httptest.NewRequest("GET", "/api/notes/pages/image?path=/home/user/test.note&page=0", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("Expected 404, got %d", w.Code)
+	}
+
+	var errResp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatalf("Failed to decode error: %v", err)
+	}
+	if _, ok := errResp["error"]; !ok {
+		t.Error("Expected 'error' field in response")
+	}
+}
+
+// TestAPIGetPagesMissingPath verifies missing path parameter returns 400
+func TestAPIGetPagesMissingPath(t *testing.T) {
+	searchIndex := newMockSearchIndexWithContent()
+	retriever := &mockRetriever{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(nil, nil, nil, searchIndex, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/notes/pages", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400, got %d", w.Code)
+	}
+
+	var errResp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatalf("Failed to decode error: %v", err)
+	}
+	if _, ok := errResp["error"]; !ok {
+		t.Error("Expected 'error' field in response")
+	}
+}
+
+// TestAPIGetImageMissingPath verifies missing path parameter returns 400
+func TestAPIGetImageMissingPath(t *testing.T) {
+	retriever := &mockRetriever{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/notes/pages/image?page=0", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400, got %d", w.Code)
+	}
+
+	var errResp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatalf("Failed to decode error: %v", err)
+	}
+	if _, ok := errResp["error"]; !ok {
+		t.Error("Expected 'error' field in response")
+	}
+}
+
+// TestAPIGetImageMissingPage verifies missing page parameter returns 400
+func TestAPIGetImageMissingPage(t *testing.T) {
+	retriever := &mockRetriever{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/notes/pages/image?path=/home/user/test.note", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400, got %d", w.Code)
 	}
 
 	var errResp map[string]string

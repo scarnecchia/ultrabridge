@@ -139,7 +139,8 @@ func registerGetNotePages(server *mcp.Server, client *apiClient) {
 		}
 
 		// API path construction
-		apiPath := "/api/notes" + input.NotePath + "/pages"
+		params := url.Values{"path": {input.NotePath}}
+		apiPath := "/api/notes/pages?" + params.Encode()
 		resp, err := client.get(ctx, apiPath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("API request failed: %w", err)
@@ -192,7 +193,11 @@ func registerGetNoteImage(server *mcp.Server, client *apiClient) {
 			return nil, nil, fmt.Errorf("note_path is required")
 		}
 
-		apiPath := fmt.Sprintf("/api/notes%s/pages/%d/image", input.NotePath, input.Page)
+		params := url.Values{
+			"path": {input.NotePath},
+			"page": {fmt.Sprintf("%d", input.Page)},
+		}
+		apiPath := "/api/notes/pages/image?" + params.Encode()
 		resp, err := client.get(ctx, apiPath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("API request failed: %w", err)
