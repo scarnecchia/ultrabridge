@@ -10,6 +10,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gorilla/websocket v1.5.3
 	github.com/jdkruzr/go-sn v0.0.0-20260322033813-b2a5f8c9e7e4
+	github.com/modelcontextprotocol/go-sdk v1.4.0
 	golang.org/x/crypto v0.37.0
 	golang.org/x/net v0.39.0
 	google.golang.org/protobuf v1.34.2
