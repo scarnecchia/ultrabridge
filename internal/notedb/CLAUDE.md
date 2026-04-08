@@ -1,10 +1,10 @@
 # Note Database
 
-Last verified: 2026-04-05
+Last verified: 2026-04-08
 
 ## Purpose
-Opens and migrates the SQLite database used by both the Supernote and Boox notes pipelines.
-Centralizes schema ownership so all pipeline packages share one DB connection.
+Opens and migrates the SQLite database used by the Supernote pipeline, Boox pipeline, RAG embeddings, and chat subsystem.
+Centralizes schema ownership so all packages share one DB connection.
 
 ## Contracts
 - **Exposes**: `Open(ctx, path) (*sql.DB, error)` -- opens/creates SQLite DB, applies migrations, returns pool.
@@ -13,7 +13,7 @@ Centralizes schema ownership so all pipeline packages share one DB connection.
 
 ## Dependencies
 - **Uses**: `modernc.org/sqlite` (pure-Go, no CGO)
-- **Used by**: `cmd/ultrabridge` (startup), indirectly by `notestore`, `processor`, `search`, `booxpipeline`
+- **Used by**: `cmd/ultrabridge` (startup), indirectly by `notestore`, `processor`, `search`, `booxpipeline`, `rag`, `chat`
 - **Boundary**: Only owns schema DDL. No CRUD logic -- that lives in domain packages.
 
 ## Key Decisions
@@ -28,6 +28,8 @@ Centralizes schema ownership so all pipeline packages share one DB connection.
 - `note_fts` is a contentless FTS5 table synced via triggers on `note_content`
 - `note_content` has UNIQUE(note_path, page) -- one content row per page per note
 - `note_content` is shared by both Supernote and Boox pipelines (unified search)
+- `note_embeddings` has UNIQUE(note_path, page) -- one embedding per page per note
+- `chat_messages.session_id` has FK to `chat_sessions.id`
 
 ## Schema Tables
 
@@ -42,3 +44,10 @@ Centralizes schema ownership so all pipeline packages share one DB connection.
 ### Shared (both pipelines)
 - `note_content` -- extracted text per page (title, body, keywords, source)
 - `note_fts` -- FTS5 virtual table for full-text search
+
+### RAG Pipeline
+- `note_embeddings` -- float32 vector embeddings per page (note_path, page, embedding BLOB, model, created_at)
+
+### Chat Subsystem
+- `chat_sessions` -- conversation sessions (id, title, created_at, updated_at; millisecond timestamps)
+- `chat_messages` -- messages within sessions (id, session_id FK, role, content, created_at; millisecond timestamps)

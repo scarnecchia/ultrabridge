@@ -2,13 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Last verified: 2026-04-05
+Last verified: 2026-04-08
 
-Go sidecar service for Supernote Private Cloud. Four subsystems:
+Go sidecar service for Supernote Private Cloud. Six subsystems:
 1. **CalDAV task sync** -- CalDAV VTODO over local SQLite task store
 2. **Device sync** -- bidirectional task sync with Supernote via SPC REST API (adapter-based)
 3. **Supernote notes pipeline** -- scans Supernote .note files, extracts/OCRs text, indexes for full-text search
 4. **Boox notes pipeline** -- receives Boox .note files via WebDAV, parses ZIP+protobuf, renders strokes, OCRs, indexes for unified search
+5. **RAG retrieval pipeline** -- Ollama embeddings, hybrid FTS5+vector search, vLLM-powered chat with retrieval-augmented context
+6. **MCP server** -- Model Context Protocol server exposing note search/retrieval tools for AI agents
 
 ## Bash Commands: No `cd &&` Compounds
 
@@ -19,6 +21,7 @@ Instead: `git -C /path`, `go -C /path build`, or absolute paths.
 ## Project Structure
 
 - `cmd/ultrabridge/` -- entry point, wires all components
+- `cmd/ub-mcp/` -- MCP server binary: exposes search_notes, get_note_pages, get_note_image tools via stdio or HTTP SSE (see domain CLAUDE.md)
 - `internal/caldav/` -- CalDAV backend (go-webdav), VTODO conversion with iCal blob overlay (see domain CLAUDE.md)
 - `internal/taskstore/` -- Task model, field mapping helpers, MariaDB CRUD (legacy), ErrNotFound sentinel (see domain CLAUDE.md)
 - `internal/taskdb/` -- SQLite task store: Open/migrate DB, implements caldav.TaskStore (see domain CLAUDE.md)
@@ -26,10 +29,12 @@ Instead: `git -C /path`, `go -C /path build`, or absolute paths.
 - `internal/tasksync/supernote/` -- Supernote SPC REST adapter: JWT auth, field mapping, migration (see domain CLAUDE.md)
 - `internal/sync/` -- Engine.IO v3 notifier: STARTSYNC push + inbound events (see domain CLAUDE.md)
 - `internal/auth/` -- Basic Auth middleware (bcrypt)
-- `internal/config/` -- env vars (UB_ prefix) + .dbenv file loading + pipeline config + sync config + boox config
+- `internal/config/` -- env vars (UB_ prefix) + .dbenv file loading + pipeline config + sync config + boox config + RAG/chat config
 - `internal/db/` -- MariaDB pool + single-user discovery
 - `internal/logging/` -- structured slog, file rotation, syslog, WebSocket broadcast
-- `internal/web/` -- HTML UI: task list, Files tab, Search tab, processor C&C, sync status, Boox render/versions, SSE log stream (see domain CLAUDE.md)
+- `internal/web/` -- HTML UI: task list, Files tab, Search tab, Chat tab, processor C&C, sync status, Boox render/versions, JSON API, SSE log stream (see domain CLAUDE.md)
+- `internal/rag/` -- RAG embedding infrastructure: Ollama embedder, embedding store with in-memory cache, hybrid FTS5+vector retriever, backfill (see domain CLAUDE.md)
+- `internal/chat/` -- Chat subsystem: session/message store (SQLite), vLLM streaming handler with RAG context injection (see domain CLAUDE.md)
 - `internal/booxnote/` -- Boox .note ZIP parser: protobuf pages, nested shape ZIPs, binary point files (see domain CLAUDE.md)
 - `internal/booxnote/proto/` -- Generated protobuf code for Boox .note format (NoteInfo, VirtualPage, ShapeInfoProto)
 - `internal/booxnote/testutil/` -- Exported test helper: builds synthetic .note ZIP files for tests
@@ -50,6 +55,7 @@ Use `-C` flag to target the repo root without `cd`:
 
 ```bash
 go build -C /home/jtd/ultrabridge ./cmd/ultrabridge/
+go build -C /home/jtd/ultrabridge ./cmd/ub-mcp/
 go test -C /home/jtd/ultrabridge ./...
 go vet -C /home/jtd/ultrabridge ./...
 ```
@@ -77,10 +83,12 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 - `google.golang.org/protobuf` -- Boox .note protobuf parsing
 - `golang.org/x/net/webdav` -- WebDAV protocol handler (Boox uploads)
 - `modernc.org/sqlite` -- pure-Go SQLite (no CGO)
+- `github.com/modelcontextprotocol/go-sdk/mcp` -- MCP server (stdio + HTTP SSE transport)
 
 ## Subcommands
 
 - `ultrabridge hash-password "pw"` -- generate bcrypt hash for UB_PASSWORD_HASH
+- `ub-mcp` -- MCP server for AI agents (stdio by default, `--http :8081` for HTTP SSE)
 
 ## Conventions
 
@@ -128,3 +136,23 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 - Bulk import: filesystem paths can be imported in bulk via the web UI; importer scans for .note and .pdf files, enqueues each, and optionally migrates files to the Boox notes directory
 - PDF support: .pdf files accepted alongside .note files; pages rendered via pdftoppm (pdfrender package), then OCR'd and indexed identically to .note files
 - Config: UB_BOOX_ENABLED (feature flag), UB_BOOX_NOTES_PATH (filesystem root for uploads + cache), UB_BOOX_IMPORT_PATH (source directory for bulk imports)
+
+### RAG Retrieval Pipeline (Ollama + SQLite)
+- Embedding: Ollama `/api/embed` endpoint generates float32 vectors, stored as little-endian blobs in `note_embeddings` table
+- In-memory cache: all embeddings loaded on startup; cache updated atomically on Save
+- Hybrid retriever: combines FTS5 keyword search with cosine-similarity vector search, fuses results via reciprocal rank fusion
+- Backfill: startup goroutine embeds unembedded pages; manual trigger via web UI for re-embedding after model upgrades
+- Integration: both Supernote and Boox workers embed OCR'd text as part of the processing pipeline (best-effort, failures logged not propagated)
+- Config: UB_EMBED_ENABLED (feature flag), UB_OLLAMA_URL (default http://localhost:11434), UB_OLLAMA_EMBED_MODEL (default nomic-embed-text:v1.5)
+
+### Chat Subsystem (vLLM + RAG)
+- RAG-powered chat: user question triggers hybrid search, top results injected as context into vLLM prompt
+- SSE streaming: handler proxies vLLM OpenAI-compatible streaming response to browser via Server-Sent Events
+- Session persistence: chat sessions and messages stored in SQLite (chat_sessions, chat_messages tables in notedb)
+- Config: UB_CHAT_ENABLED (feature flag), UB_CHAT_API_URL (default http://localhost:8000), UB_CHAT_MODEL (default Qwen/Qwen3-8B)
+
+### MCP Server (cmd/ub-mcp)
+- Separate binary that calls UltraBridge JSON API endpoints via HTTP with Basic Auth
+- Tools: `search_notes` (hybrid search), `get_note_pages` (page content), `get_note_image` (JPEG rendering)
+- Transport: stdio (default) or HTTP SSE (`--http :8081`)
+- Config: UB_MCP_API_URL (default http://localhost:8443), UB_MCP_API_USER, UB_MCP_API_PASS
