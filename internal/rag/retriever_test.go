@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"log/slog"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -95,10 +94,10 @@ func TestRetrieverFolderFilter(t *testing.T) {
 	db, _ := notedb.Open(ctx, ":memory:")
 	defer db.Close()
 
-	// Insert pages with different folders
-	insertTestNote(t, db, "/notes/Work/proj1.note", 0, "project details", "Project management details")
-	insertTestNote(t, db, "/notes/Personal/diary.note", 0, "personal thoughts", "Personal diary entry")
-	insertTestNote(t, db, "/notes/Work/proj2.note", 0, "project details", "Another project details")
+	// Insert pages with metadata rows so enrichResult can populate Folder field
+	insertBooxNote(t, db, "/notes/Work/proj1.note", "Boox1", "Work", "Project management details")
+	insertBooxNote(t, db, "/notes/Personal/diary.note", "Boox2", "Personal", "Personal diary entry")
+	insertBooxNote(t, db, "/notes/Work/proj2.note", "Boox3", "Work", "Another project details")
 
 	searchIndex := search.New(db)
 	embedStore := NewStore(db, slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -514,9 +513,3 @@ func insertSupernoteNote(t *testing.T, db *sql.DB, path, relPath, bodyText strin
 	}
 }
 
-func containsFolder(path, folder string) bool {
-	// Check if path matches the LIKE pattern "%/{folder}/%"
-	// Simulate SQL LIKE: replace % with any chars
-	target := "/" + folder + "/"
-	return strings.Contains(path, target)
-}

@@ -242,6 +242,14 @@ func (r *Retriever) enrichResult(ctx context.Context, notePath string, page int,
 		return result, nil
 	}
 
-	// Neither table matched — return what we have
+	// Neither table matched — fall back to path-based folder extraction
+	// This provides defense-in-depth for orphaned note_content rows
+	if notePath != "" {
+		dir := path.Dir(notePath)
+		result.Folder = path.Base(dir)
+		if result.Folder == "." || result.Folder == "/" {
+			result.Folder = ""
+		}
+	}
 	return result, nil
 }
