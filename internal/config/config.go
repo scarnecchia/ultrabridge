@@ -71,6 +71,11 @@ type Config struct {
 	BooxEnabled    bool
 	BooxNotesPath  string
 	BooxImportPath string
+
+	// Embedding pipeline
+	EmbedEnabled   bool
+	OllamaURL      string
+	OllamaEmbedModel string
 }
 
 func Load() (*Config, error) {
@@ -116,6 +121,10 @@ func Load() (*Config, error) {
 	cfg.BooxEnabled    = envBoolOrDefault("UB_BOOX_ENABLED", false)
 	cfg.BooxNotesPath  = os.Getenv("UB_BOOX_NOTES_PATH")
 	cfg.BooxImportPath = os.Getenv("UB_BOOX_IMPORT_PATH")
+
+	cfg.EmbedEnabled     = envBoolOrDefault("UB_EMBED_ENABLED", false)
+	cfg.OllamaURL        = envOrDefault("UB_OLLAMA_URL", "http://localhost:11434")
+	cfg.OllamaEmbedModel = envOrDefault("UB_OLLAMA_EMBED_MODEL", "nomic-embed-text:v1.5")
 
 	// Load password hash from secrets file if not set via env var.
 	// This avoids the $$ escaping issue with Docker Compose env_file.

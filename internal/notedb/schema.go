@@ -102,6 +102,14 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS note_embeddings (
+			note_path  TEXT NOT NULL,
+			page       INTEGER NOT NULL,
+			embedding  BLOB NOT NULL,
+			model      TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			UNIQUE(note_path, page)
+		)`,
 	}
 	for i, stmt := range stmts {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
