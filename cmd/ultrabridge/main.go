@@ -23,6 +23,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/pipeline"
 	"github.com/sysop/ultrabridge/internal/processor"
+	"github.com/sysop/ultrabridge/internal/rag"
 	"github.com/sysop/ultrabridge/internal/search"
 	"github.com/sysop/ultrabridge/internal/sync"
 	"github.com/sysop/ultrabridge/internal/taskdb"
@@ -161,11 +162,41 @@ func main() {
 	// Notes pipeline components
 	ns := notestore.New(noteDB, cfg.NotesPath)
 	si := search.New(noteDB)
+
+	// Initialize embedding pipeline if enabled
+	var embedder rag.Embedder
+	var embedStore *rag.Store
+	if cfg.EmbedEnabled {
+		embedder = rag.NewOllamaEmbedder(cfg.OllamaURL, cfg.OllamaEmbedModel, logger)
+		embedStore = rag.NewStore(noteDB, logger)
+
+		// Load existing embeddings into memory (AC1.6)
+		n, err := embedStore.LoadAll(context.Background())
+		if err != nil {
+			logger.Warn("failed to load embeddings into cache", "err", err)
+		} else {
+			logger.Info("loaded embeddings into memory", "count", n)
+		}
+
+		// Startup backfill (AC1.4) — runs in background
+		go func() {
+			n, err := rag.Backfill(context.Background(), embedStore, embedder, cfg.OllamaEmbedModel, logger)
+			if err != nil {
+				logger.Warn("startup backfill failed", "err", err)
+			} else if n > 0 {
+				logger.Info("startup backfill complete", "embedded", n)
+			}
+		}()
+	}
+
 	workerCfg := processor.WorkerConfig{
 		OCREnabled: cfg.OCREnabled,
 		BackupPath: cfg.BackupPath,
 		MaxFileMB:  cfg.OCRMaxFileMB,
 		Indexer:    si,
+		Embedder:   embedder,
+		EmbedModel: cfg.OllamaEmbedModel,
+		EmbedStore: embedStore,
 		OCRPrompt: func() string {
 			v, _ := notedb.GetSetting(context.Background(), noteDB, "sn_ocr_prompt")
 			return v
@@ -202,6 +233,9 @@ func main() {
 			Indexer:        si,  // shared search.Store (same as Supernote)
 			ContentDeleter: si,  // search.Store also satisfies ContentDeleter
 			CachePath:      filepath.Join(cfg.BooxNotesPath, ".cache"),
+			Embedder:       embedder,
+			EmbedModel:     cfg.OllamaEmbedModel,
+			EmbedStore:     embedStore,
 			OCRPrompt: func() string {
 				v, _ := notedb.GetSetting(context.Background(), noteDB, "boox_ocr_prompt")
 				return v
@@ -307,7 +341,7 @@ func main() {
 			booxStore = booxProc.Store()
 			booxImporter = booxProc
 		}
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster)
+		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel)
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 
