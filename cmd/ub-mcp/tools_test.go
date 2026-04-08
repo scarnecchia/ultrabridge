@@ -577,6 +577,16 @@ func testCallSearchNotesTool(server *mcp.Server, client *apiClient, input Search
 		return nil, nil, fmt.Errorf("CallTool failed: %w", err)
 	}
 
+	// Check if the MCP result indicates an error from the tool handler
+	if result.IsError {
+		if len(result.Content) > 0 {
+			if tc, ok := result.Content[0].(*mcp.TextContent); ok {
+				return nil, nil, fmt.Errorf("%s", tc.Text)
+			}
+		}
+		return nil, nil, fmt.Errorf("tool returned error")
+	}
+
 	return result, nil, nil
 }
 
@@ -618,6 +628,16 @@ func testCallGetNotePagesTool(server *mcp.Server, client *apiClient, input GetNo
 		return nil, nil, fmt.Errorf("CallTool failed: %w", err)
 	}
 
+	// Check if the MCP result indicates an error from the tool handler
+	if result.IsError {
+		if len(result.Content) > 0 {
+			if tc, ok := result.Content[0].(*mcp.TextContent); ok {
+				return nil, nil, fmt.Errorf("%s", tc.Text)
+			}
+		}
+		return nil, nil, fmt.Errorf("tool returned error")
+	}
+
 	return result, nil, nil
 }
 
@@ -657,6 +677,16 @@ func testCallGetNoteImageTool(server *mcp.Server, client *apiClient, input GetNo
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("CallTool failed: %w", err)
+	}
+
+	// Check if the MCP result indicates an error from the tool handler
+	if result.IsError {
+		if len(result.Content) > 0 {
+			if tc, ok := result.Content[0].(*mcp.TextContent); ok {
+				return nil, nil, fmt.Errorf("%s", tc.Text)
+			}
+		}
+		return nil, nil, fmt.Errorf("tool returned error")
 	}
 
 	return result, nil, nil
