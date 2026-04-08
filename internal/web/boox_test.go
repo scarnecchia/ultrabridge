@@ -63,6 +63,10 @@ func (m *mockBooxStore) DeleteNote(ctx context.Context, path string) error {
 	return nil
 }
 
+func (m *mockBooxStore) GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error) {
+	return booxpipeline.QueueStatus{}, nil
+}
+
 // TestFilesPage_ShowsBothSources verifies AC5.1: Files list shows both Supernote and Boox notes
 func TestFilesPage_ShowsBothSources(t *testing.T) {
 	// Create mock stores

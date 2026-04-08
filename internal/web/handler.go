@@ -66,6 +66,7 @@ type BooxStore interface {
 	GetLatestJob(ctx context.Context, notePath string) (*booxpipeline.BooxJob, error)
 	RetryAllFailed(ctx context.Context) (int64, error)
 	DeleteNote(ctx context.Context, path string) error
+	GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error)
 }
 
 // BooxImporter can scan an import path and enqueue files for processing.
@@ -891,12 +892,26 @@ func (h *Handler) handleFilesForce(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleFilesStatus(w http.ResponseWriter, r *http.Request) {
-	var st processor.ProcessorStatus
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	resp := struct {
+		processor.ProcessorStatus
+		Boox *booxpipeline.QueueStatus `json:"boox,omitempty"`
+	}{}
 	if h.proc != nil {
-		st = h.proc.Status()
+		resp.ProcessorStatus = h.proc.Status()
+	}
+	if h.booxStore != nil {
+		qs, err := h.booxStore.GetQueueStatus(ctx)
+		if err != nil {
+			h.logger.Error("boox queue status", "error", err)
+		} else {
+			resp.Boox = &qs
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(st)
+	json.NewEncoder(w).Encode(resp)
 }
 
 // isBooxPath reports whether a file path belongs to the Boox pipeline

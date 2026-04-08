@@ -306,6 +306,40 @@ func (s *Store) DeleteNote(ctx context.Context, path string) error {
 	return tx.Commit()
 }
 
+// QueueStatus represents the current state of the processing queue.
+type QueueStatus struct {
+	ActiveTitle string `json:"active_title,omitempty"` // title of currently processing note
+	ActivePages int    `json:"active_pages,omitempty"` // page count of active note
+	Pending     int    `json:"pending"`
+	InProgress  int    `json:"in_progress"`
+	Done        int    `json:"done"`
+	Failed      int    `json:"failed"`
+}
+
+// GetQueueStatus returns a summary of the processing queue.
+func (s *Store) GetQueueStatus(ctx context.Context) (QueueStatus, error) {
+	var qs QueueStatus
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE((SELECT COUNT(*) FROM boox_jobs WHERE status = 'pending'), 0),
+			COALESCE((SELECT COUNT(*) FROM boox_jobs WHERE status = 'in_progress'), 0),
+			COALESCE((SELECT COUNT(*) FROM boox_jobs WHERE status = 'done'), 0),
+			COALESCE((SELECT COUNT(*) FROM boox_jobs WHERE status = 'failed'), 0)
+	`).Scan(&qs.Pending, &qs.InProgress, &qs.Done, &qs.Failed)
+	if err != nil {
+		return qs, fmt.Errorf("queue status: %w", err)
+	}
+	// Get active job details.
+	if qs.InProgress > 0 {
+		s.db.QueryRowContext(ctx, `
+			SELECT bn.title, bn.page_count
+			FROM boox_jobs bj JOIN boox_notes bn ON bn.path = bj.note_path
+			WHERE bj.status = 'in_progress' LIMIT 1
+		`).Scan(&qs.ActiveTitle, &qs.ActivePages)
+	}
+	return qs, nil
+}
+
 // RetryAllFailed resets all failed jobs back to pending.
 // Returns the number of jobs reset.
 func (s *Store) RetryAllFailed(ctx context.Context) (int64, error) {
