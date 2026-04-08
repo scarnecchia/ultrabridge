@@ -10,7 +10,7 @@ UltraBridge is a data management application for e-ink tablets including Onyx Bo
 
 1. **CalDAV task sync** — synchronise Supernote tasks with any CalDAV client (DAVx5, GNOME Evolution, 2Do, etc.)
 2. **Supernote notes pipeline** — automatically discover `.note` files, extract handwritten text, index it for full-text search, and optionally run vision-API OCR
-3. **Boox notes pipeline** — accept Boox `.note` file uploads via WebDAV, parse the ZIP/protobuf format, render pages, OCR, extract TODOs via color coding, and index for unified search alongside Supernote notes
+3. **Boox notes pipeline** — accept Boox `.note` file uploads via WebDAV or bulk import from filesystem (including PDFs), parse ZIP/protobuf format, render pages, OCR, extract TODOs via color coding, and index for unified search alongside Supernote notes
 4. **Unified search** — full-text search across both Supernote and Boox notes with source indicators
 
 **This software was developed using Claude Code, which was trained on open source software, and will therefore always be open-source software.**
@@ -35,6 +35,7 @@ Have the following ready:
 - **For Supernote pipeline:** full path to your `.note` files (usually `/mnt/supernote/note/your@email.com`)
 - **For Supernote pipeline:** full path for backups *(recommended)* — originals are copied here before OCR writes
 - **For Boox pipeline:** a directory for Boox note uploads (the WebDAV root)
+- **For bulk import** *(optional):* path to an existing directory of `.note` and/or `.pdf` files to import
 - **API credentials** *(optional, for OCR)* — an [OpenRouter](https://openrouter.ai) key, a direct Anthropic key, or the base URL of a local vLLM instance
 
 You can skip any feature during install and enable it later by re-running `install.sh`. The installer auto-detects Supernote Private Cloud and only shows relevant prompts.
