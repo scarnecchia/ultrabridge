@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/sysop/ultrabridge/internal/rag"
 )
 
 // Indexer is the interface the worker uses to index recognized text.
@@ -37,6 +39,9 @@ type WorkerConfig struct {
 	OCRPrompt      func() string  // returns current OCR prompt; nil = use default
 	Indexer        Indexer         // nil = indexing disabled
 	CatalogUpdater CatalogUpdater // nil = SPC catalog sync disabled
+	Embedder       rag.Embedder   // nil = embedding disabled
+	EmbedModel     string         // model name for note_embeddings.model column
+	EmbedStore     *rag.Store     // nil = embedding disabled
 }
 
 // EnqueueOption configures optional behavior for Enqueue.

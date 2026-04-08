@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1172,4 +1173,170 @@ func TestWorker_RTR_NoInjection(t *testing.T) {
 	if !hasAPIIndex {
 		t.Error("expected OCR text indexed with source=api even for RTR notes")
 	}
+}
+
+// mockEmbedder tracks embedding calls and can be configured to fail.
+type mockEmbedder struct {
+	calls []string // track what text was embedded
+	err   error    // if set, Embed returns this error
+}
+
+func (m *mockEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	m.calls = append(m.calls, text)
+	return make([]float32, 768), nil // return zero vector
+}
+
+// testEmbedStore is a simple in-memory implementation for testing.
+type testEmbedStore struct {
+	embeddings map[string]map[int][]float32 // note_path -> page -> embedding
+}
+
+func (s *testEmbedStore) Save(ctx context.Context, notePath string, page int, embedding []float32, model string) error {
+	if s.embeddings[notePath] == nil {
+		s.embeddings[notePath] = make(map[int][]float32)
+	}
+	vec := make([]float32, len(embedding))
+	copy(vec, embedding)
+	s.embeddings[notePath][page] = vec
+	return nil
+}
+
+func (s *testEmbedStore) LoadAll(ctx context.Context) (int, error) {
+	return 0, nil
+}
+
+func (s *testEmbedStore) AllEmbeddings() []interface{} {
+	return nil
+}
+
+func (s *testEmbedStore) UnembeddedPages(ctx context.Context) ([]struct {
+	NotePath string
+	Page     int
+	BodyText string
+}, error) {
+	return nil, nil
+}
+
+// rag-retrieval-pipeline.AC1.3: TestEmbed_SupernoteWithEmbedder verifies embeddings are created for Supernote .note files.
+func TestEmbed_SupernoteWithEmbedder(t *testing.T) {
+	path := copyTestNote(t, "simple.note")
+	store := openWorkerStore(t, WorkerConfig{})
+
+	seedNote(t, store, path)
+
+	// Create mock indexer
+	idx := &mockIndexer{}
+
+	// Create mock OCR server
+	ocrServer := mockOCRServer(t, "OCR content for embedding")
+	defer ocrServer.Close()
+
+	// Create embedder and store
+	embedder := &mockEmbedder{}
+	embedStore := &testEmbedStore{
+		embeddings: make(map[string]map[int][]float32),
+	}
+
+	// Configure store with OCR, indexer, and embedder
+	store.cfg.OCREnabled = true
+	store.cfg.OCRClient = NewOCRClient(ocrServer.URL, "test-key", "test-model", "anthropic")
+	store.cfg.Indexer = idx
+	store.cfg.Embedder = embedder
+	store.cfg.EmbedModel = "test-embed-model"
+	store.cfg.EmbedStore = embedStore
+
+	// Get the job
+	job, err := claimNextJob(t, store)
+	if err != nil {
+		t.Fatalf("claimNextJob: %v", err)
+	}
+
+	// Execute the job
+	store.executeJob(context.Background(), job)
+
+	// Verify that embeddings were created
+	if len(embedder.calls) == 0 {
+		t.Errorf("embedder was not called, want at least 1 embedding call")
+	}
+
+	// Verify that embeddings were saved
+	if savedEmbeddings, ok := embedStore.embeddings[path]; !ok {
+		t.Errorf("no embeddings saved for note path %s", path)
+	} else if len(savedEmbeddings) == 0 {
+		t.Errorf("no pages were embedded")
+	}
+}
+
+// rag-retrieval-pipeline.AC1.7: TestEmbed_SupernoteFailureDoesNotFailJob verifies embedding errors don't fail the job.
+func TestEmbed_SupernoteFailureDoesNotFailJob(t *testing.T) {
+	path := copyTestNote(t, "simple.note")
+	store := openWorkerStore(t, WorkerConfig{})
+
+	seedNote(t, store, path)
+
+	// Create mock indexer
+	idx := &mockIndexer{}
+
+	// Create mock OCR server
+	ocrServer := mockOCRServer(t, "Page content that will fail to embed")
+	defer ocrServer.Close()
+
+	// Create embedder that always fails
+	failingEmbedder := &mockEmbedder{err: fmt.Errorf("simulated embedding failure")}
+	embedStore := &testEmbedStore{
+		embeddings: make(map[string]map[int][]float32),
+	}
+
+	// Configure store with OCR, indexer, and failing embedder
+	store.cfg.OCREnabled = true
+	store.cfg.OCRClient = NewOCRClient(ocrServer.URL, "test-key", "test-model", "anthropic")
+	store.cfg.Indexer = idx
+	store.cfg.Embedder = failingEmbedder
+	store.cfg.EmbedModel = "test-embed-model"
+	store.cfg.EmbedStore = embedStore
+
+	// Get the job
+	job, err := claimNextJob(t, store)
+	if err != nil {
+		t.Fatalf("claimNextJob: %v", err)
+	}
+
+	// Execute the job - should complete successfully despite embedding failure
+	store.executeJob(context.Background(), job)
+
+	// Verify that the job was marked as done (not failed)
+	var status string
+	err = store.db.QueryRow("SELECT status FROM jobs WHERE id=?", job.ID).Scan(&status)
+	if err != nil {
+		t.Fatalf("failed to query job status: %v", err)
+	}
+	if status != "done" {
+		t.Errorf("job status is %s, want done despite embedding failure", status)
+	}
+
+	// Verify that no embeddings were saved (embedder failed)
+	if len(embedStore.embeddings) > 0 {
+		t.Errorf("embeddings were saved despite failure, want none")
+	}
+
+	// Verify that OCR text was still indexed
+	if len(idx.calls) == 0 {
+		t.Errorf("indexer was not called, want at least 1 index call")
+	}
+}
+
+// claimNextJob is a helper to claim the next pending job from the queue.
+func claimNextJob(t *testing.T, s *Store) (*Job, error) {
+	t.Helper()
+	j, err := s.claimNext(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if j == nil {
+		t.Fatalf("no jobs available to claim")
+	}
+	return j, nil
 }
