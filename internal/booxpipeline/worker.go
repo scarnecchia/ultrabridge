@@ -18,6 +18,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/booxrender"
 	"github.com/sysop/ultrabridge/internal/pdfrender"
 	"github.com/sysop/ultrabridge/internal/processor"
+	"github.com/sysop/ultrabridge/internal/rag"
 	ubwebdav "github.com/sysop/ultrabridge/internal/webdav"
 )
 
@@ -47,6 +48,9 @@ type WorkerConfig struct {
 	TodoPrompt     func() string  // returns current to-do extraction prompt
 	OnTodosFound   func(ctx context.Context, notePath string, todos []TodoItem) // callback for extracted todos
 	CachePath      string         // base dir for rendered page cache
+	Embedder       rag.Embedder   // nil = embedding disabled
+	EmbedModel     string         // model name for note_embeddings.model column
+	EmbedStore     *rag.Store     // nil = embedding disabled
 }
 
 func (p *Processor) executeJob(ctx context.Context, job *BooxJob) error {
@@ -141,6 +145,15 @@ func (p *Processor) executeNoteJob(ctx context.Context, job *BooxJob) error {
 		if err := p.cfg.Indexer.IndexPage(ctx, notePath, i, "api", ocrText, titleText, keywords); err != nil {
 			return fmt.Errorf("index page %d: %w", i, err)
 		}
+		// Embed page text if embedder is available
+		if p.cfg.Embedder != nil && p.cfg.EmbedStore != nil && ocrText != "" {
+			vec, err := p.cfg.Embedder.Embed(ctx, ocrText)
+			if err != nil {
+				p.logger.Warn("embedding failed", "path", notePath, "page", i, "err", err)
+			} else if err := p.cfg.EmbedStore.Save(ctx, notePath, i, vec, p.cfg.EmbedModel); err != nil {
+				p.logger.Warn("save embedding failed", "path", notePath, "page", i, "err", err)
+			}
+		}
 	}
 
 	// 7. Second OCR pass: red ink to-do extraction.
@@ -226,6 +239,15 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 		}
 		if err := p.cfg.Indexer.IndexPage(ctx, pdfPath, i, "api", ocrText, titleText, ""); err != nil {
 			return fmt.Errorf("index page %d: %w", i, err)
+		}
+		// Embed page text if embedder is available
+		if p.cfg.Embedder != nil && p.cfg.EmbedStore != nil && ocrText != "" {
+			vec, err := p.cfg.Embedder.Embed(ctx, ocrText)
+			if err != nil {
+				p.logger.Warn("embedding failed", "path", pdfPath, "page", i, "err", err)
+			} else if err := p.cfg.EmbedStore.Save(ctx, pdfPath, i, vec, p.cfg.EmbedModel); err != nil {
+				p.logger.Warn("save embedding failed", "path", pdfPath, "page", i, "err", err)
+			}
 		}
 	}
 

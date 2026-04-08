@@ -601,3 +601,368 @@ func TestProcessor_StartStop(t *testing.T) {
 	// Stop again should not panic (idempotent)
 	proc.Stop()
 }
+
+// mockEmbedder tracks embedding calls and can be configured to fail.
+type mockEmbedder struct {
+	calls []string // track what text was embedded
+	err   error    // if set, Embed returns this error
+}
+
+func (m *mockEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	m.calls = append(m.calls, text)
+	return make([]float32, 768), nil // return zero vector
+}
+
+// rag-retrieval-pipeline.AC1.2: TestEmbed_NoteFileWithEmbedder verifies embeddings are created for .note files.
+func TestEmbed_NoteFileWithEmbedder(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a synthetic .note file with one page
+	noteID := "test-embed-note"
+	opts := testutil.TestNoteOpts{
+		NoteID: noteID,
+		Title:  "Embed Test",
+		Pages: []*testutil.TestPage{
+			{
+				PageID: "page-1",
+				Width:  1404,
+				Height: 1872,
+				Shapes: []*pb.ShapeInfoProto{
+					{
+						UniqueId:   "shape-1",
+						ShapeType:  0,
+						Color:      -16777216,
+						Thickness:  1.0,
+						Zorder:     0,
+					},
+				},
+				Points: map[string][]booxnote.TinyPoint{
+					"shape-1": {
+						{X: 100.0, Y: 100.0, Size: 1, Pressure: 100, Time: 0},
+						{X: 101.0, Y: 101.0, Size: 1, Pressure: 100, Time: 1},
+					},
+				},
+			},
+		},
+	}
+	notePath := testutil.BuildTestNoteFile(t, tmpDir, opts)
+
+	// Create mock indexer and embedder
+	indexer := &mockIndexer{}
+	embedder := &mockEmbedder{}
+	embedStore := &testEmbedStore{
+		embeddings: make(map[string]map[int][]float32),
+	}
+
+	// Create mock OCR server
+	ocrServer := mockOCRServer(t, "Test OCR content for embedding")
+	defer ocrServer.Close()
+
+	// Create OCR client
+	ocrClient := processor.NewOCRClient(ocrServer.URL, "test-key", "test-model", "anthropic")
+
+	// Open processor with embedder
+	db, err := notedb.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("notedb.Open: %v", err)
+	}
+	defer db.Close()
+
+	cachePath := filepath.Join(tmpDir, ".cache")
+	cfg := WorkerConfig{
+		Indexer:    indexer,
+		OCR:        ocrClient,
+		CachePath:  cachePath,
+		Embedder:   embedder,
+		EmbedModel: "test-model",
+		EmbedStore: embedStore,
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	proc := New(db, tmpDir, cfg, logger)
+	defer proc.Stop()
+
+	if err := proc.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Enqueue the job
+	if err := proc.Enqueue(context.Background(), notePath); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	// Wait for job to complete
+	if !waitForJobStatus(t, db, notePath, "done", 10*time.Second) {
+		t.Fatalf("job did not complete in time")
+	}
+
+	proc.Stop()
+
+	// Verify that Embed was called
+	if len(embedder.calls) == 0 {
+		t.Errorf("embedder was not called, want at least 1 embedding call")
+	}
+
+	// Verify that the embedding was saved for page 0
+	if savedEmbeddings, ok := embedStore.embeddings[notePath]; !ok {
+		t.Errorf("no embeddings saved for note path %s", notePath)
+	} else {
+		if _, ok := savedEmbeddings[0]; !ok {
+			t.Errorf("no embedding saved for page 0")
+		}
+	}
+}
+
+// rag-retrieval-pipeline.AC1.7: TestEmbed_FailureDoesNotFailJob verifies that embedding errors don't fail the job.
+func TestEmbed_FailureDoesNotFailJob(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a synthetic .note file
+	noteID := "test-embed-fail"
+	opts := testutil.TestNoteOpts{
+		NoteID: noteID,
+		Title:  "Embed Failure Test",
+		Pages: []*testutil.TestPage{
+			{
+				PageID: "page-1",
+				Width:  1404,
+				Height: 1872,
+				Shapes: []*pb.ShapeInfoProto{
+					{
+						UniqueId:   "shape-1",
+						ShapeType:  0,
+						Color:      -16777216,
+						Thickness:  1.0,
+						Zorder:     0,
+					},
+				},
+				Points: map[string][]booxnote.TinyPoint{
+					"shape-1": {
+						{X: 100.0, Y: 100.0, Size: 1, Pressure: 100, Time: 0},
+						{X: 101.0, Y: 101.0, Size: 1, Pressure: 100, Time: 1},
+					},
+				},
+			},
+		},
+	}
+	notePath := testutil.BuildTestNoteFile(t, tmpDir, opts)
+
+	// Create embedder that always fails
+	failingEmbedder := &mockEmbedder{err: fmt.Errorf("simulated embedding failure")}
+	embedStore := &testEmbedStore{
+		embeddings: make(map[string]map[int][]float32),
+	}
+
+	// Create mock indexer
+	indexer := &mockIndexer{}
+
+	// Create mock OCR server
+	ocrServer := mockOCRServer(t, "Page content that fails to embed")
+	defer ocrServer.Close()
+
+	// Create OCR client
+	ocrClient := processor.NewOCRClient(ocrServer.URL, "test-key", "test-model", "anthropic")
+
+	// Open processor with failing embedder
+	db, err := notedb.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("notedb.Open: %v", err)
+	}
+	defer db.Close()
+
+	cachePath := filepath.Join(tmpDir, ".cache")
+	cfg := WorkerConfig{
+		Indexer:    indexer,
+		OCR:        ocrClient,
+		CachePath:  cachePath,
+		Embedder:   failingEmbedder,
+		EmbedModel: "test-model",
+		EmbedStore: embedStore,
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	proc := New(db, tmpDir, cfg, logger)
+	defer proc.Stop()
+
+	if err := proc.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Enqueue the job
+	if err := proc.Enqueue(context.Background(), notePath); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	// Wait for job to complete - should succeed despite embedder failure
+	if !waitForJobStatus(t, db, notePath, "done", 10*time.Second) {
+		t.Fatalf("job did not complete in time")
+	}
+
+	proc.Stop()
+
+	// Verify that job completed successfully despite embedding failure
+	var jobStatus string
+	err = db.QueryRowContext(context.Background(),
+		"SELECT status FROM boox_jobs WHERE note_path = ? ORDER BY id DESC LIMIT 1", notePath).Scan(&jobStatus)
+	if err != nil {
+		t.Fatalf("failed to query job status: %v", err)
+	}
+	if jobStatus != "done" {
+		t.Errorf("job status is %s, want done", jobStatus)
+	}
+
+	// Verify that no embeddings were saved (embedder failed)
+	if len(embedStore.embeddings) > 0 {
+		t.Errorf("embeddings were saved despite failure, want none")
+	}
+}
+
+// rag-retrieval-pipeline.AC1.2: TestEmbed_PDFFileWithEmbedder verifies embeddings are created for .pdf files.
+func TestEmbed_PDFFileWithEmbedder(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a simple single-page PDF
+	pdfPath := filepath.Join(tmpDir, "test.pdf")
+	if err := createTestPDF(pdfPath); err != nil {
+		t.Fatalf("createTestPDF: %v", err)
+	}
+
+	// Create mock indexer and embedder
+	indexer := &mockIndexer{}
+	embedder := &mockEmbedder{}
+	embedStore := &testEmbedStore{
+		embeddings: make(map[string]map[int][]float32),
+	}
+
+	// Create mock OCR server
+	ocrServer := mockOCRServer(t, "PDF content from OCR")
+	defer ocrServer.Close()
+
+	// Create OCR client
+	ocrClient := processor.NewOCRClient(ocrServer.URL, "test-key", "test-model", "anthropic")
+
+	// Open processor with embedder
+	db, err := notedb.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("notedb.Open: %v", err)
+	}
+	defer db.Close()
+
+	cachePath := filepath.Join(tmpDir, ".cache")
+	cfg := WorkerConfig{
+		Indexer:    indexer,
+		OCR:        ocrClient,
+		CachePath:  cachePath,
+		Embedder:   embedder,
+		EmbedModel: "test-model",
+		EmbedStore: embedStore,
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	proc := New(db, tmpDir, cfg, logger)
+	defer proc.Stop()
+
+	if err := proc.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Enqueue the PDF
+	if err := proc.Enqueue(context.Background(), pdfPath); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	// Wait for job to complete
+	if !waitForJobStatus(t, db, pdfPath, "done", 10*time.Second) {
+		t.Fatalf("job did not complete in time")
+	}
+
+	proc.Stop()
+
+	// Verify that Embed was called for the PDF page
+	if len(embedder.calls) == 0 {
+		t.Errorf("embedder was not called, want at least 1 embedding call")
+	}
+
+	// Verify that the embedding was saved
+	if savedEmbeddings, ok := embedStore.embeddings[pdfPath]; !ok {
+		t.Errorf("no embeddings saved for PDF path %s", pdfPath)
+	} else {
+		if _, ok := savedEmbeddings[0]; !ok {
+			t.Errorf("no embedding saved for PDF page 0")
+		}
+	}
+}
+
+// testEmbedStore is a simple in-memory implementation of rag.Store for testing.
+type testEmbedStore struct {
+	embeddings map[string]map[int][]float32 // note_path -> page -> embedding
+}
+
+func (s *testEmbedStore) Save(ctx context.Context, notePath string, page int, embedding []float32, model string) error {
+	if s.embeddings[notePath] == nil {
+		s.embeddings[notePath] = make(map[int][]float32)
+	}
+	vec := make([]float32, len(embedding))
+	copy(vec, embedding)
+	s.embeddings[notePath][page] = vec
+	return nil
+}
+
+func (s *testEmbedStore) LoadAll(ctx context.Context) (int, error) {
+	return 0, nil
+}
+
+func (s *testEmbedStore) AllEmbeddings() []interface{} {
+	return nil
+}
+
+func (s *testEmbedStore) UnembeddedPages(ctx context.Context) ([]struct {
+	NotePath string
+	Page     int
+	BodyText string
+}, error) {
+	return nil, nil
+}
+
+// createTestPDF creates a minimal PDF file for testing.
+// This is a very basic PDF structure that can be parsed by pdfrender.
+func createTestPDF(path string) error {
+	// Minimal PDF with one page
+	pdfContent := `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 612 792] /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 44 >>
+stream
+BT
+/F1 12 Tf
+100 700 Td
+(Test PDF) Tj
+ET
+endstream
+endobj
+xref
+0 5
+0000000000 65535 f
+0000000009 00000 n
+0000000058 00000 n
+0000000115 00000 n
+0000000206 00000 n
+trailer
+<< /Size 5 /Root 1 0 R >>
+startxref
+299
+%%EOF
+`
+	return os.WriteFile(path, []byte(pdfContent), 0644)
+}
