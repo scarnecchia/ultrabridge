@@ -1,17 +1,23 @@
 # internal/web
 
-Last verified: 2026-04-04
+Last verified: 2026-04-08
 
 HTTP handler and HTML templates for the UltraBridge web UI.
 
 ## Handler contract
 
-`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, syncProvider, booxStore, booxImporter, booxNotesPath, logger, broadcaster) *Handler`
+`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, syncProvider, booxStore, booxImporter, booxNotesPath, snNotesPath, noteDB, logger, broadcaster, embedder, embedStore, embedModel, retriever) *Handler`
 
 - All domain dependencies (`noteStore`, `searchIndex`, `proc`, `scanner`, `notifier`, `syncProvider`) are **nil-safe** — passing nil disables the corresponding feature gracefully (no crash, renders an informative state).
 - `booxStore` is **nil-safe** — when nil, Boox-specific routes return empty lists and the UI shows only Supernote notes.
 - `booxImporter` is **nil-safe** — when nil, bulk import routes return an error response.
 - `booxNotesPath` is a string path (may be empty if Boox is disabled).
+- `snNotesPath` is the Supernote notes directory path for rendering pages.
+- `noteDB` is the shared SQLite DB for settings and notes (may be nil).
+- `embedder` is the RAG embedder implementation (nil-safe, feature disabled when nil).
+- `embedStore` is the embedding store for backfill and vector search (nil-safe).
+- `embedModel` is the embedding model name.
+- `retriever` is the hybrid search retriever interface (nil-safe; when nil, JSON API endpoints are disabled).
 - `Handler` implements `http.Handler` via an internal `*http.ServeMux`.
 
 ## Routes
@@ -43,6 +49,9 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 | GET | `/search` | `handleSearch` | FTS5 keyword search |
 | GET | `/sync/status` | `handleSyncStatus` | JSON: SyncStatus (adapter state, timestamps) |
 | POST | `/sync/trigger` | `handleSyncTrigger` | Trigger immediate sync cycle |
+| GET | `/api/search` | `handleAPISearch` | JSON: hybrid search results (requires retriever) |
+| GET | `/api/notes/{path...}/pages` | `handleAPIGetPages` | JSON: indexed page content for a note |
+| GET | `/api/notes/{path...}/pages/{page}/image` | `handleAPIGetImage` | JPEG image for a note page |
 
 ## Interfaces
 
@@ -62,6 +71,18 @@ In addition to previously documented methods, `BooxStore` now includes:
 - `SkipNote(ctx, path) error` — mark note's pending job as skipped
 - `UnskipNote(ctx, path) error` — reset a skipped job to pending
 - `GetQueueStatus(ctx) (QueueStatus, error)` — return counts of jobs by status
+
+## JSON API Endpoints (Phase 3)
+
+Three new routes provide JSON API access for MCP servers and external tools:
+
+- `GET /api/search?q=...&folder=...&device=...&from=...&to=...&limit=...` — hybrid search using SearchRetriever
+- `GET /api/notes/{path...}/pages` — fetch indexed content for a note (all pages)
+- `GET /api/notes/{path...}/pages/{page}/image` — render JPEG image for a page
+
+All API endpoints are **conditional**: they are only registered if `retriever` is non-nil. When retriever is nil (FTS-only or disabled), the API routes return 404.
+
+Auth: All API routes use the same Basic Auth middleware as the web UI (authMW in main.go).
 
 ## Path traversal guard
 

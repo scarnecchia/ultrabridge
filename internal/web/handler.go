@@ -100,6 +100,7 @@ type Handler struct {
 	embedder        rag.Embedder
 	embedStore      *rag.Store
 	embedModel      string
+	retriever       rag.SearchRetriever // nil = API endpoints disabled
 }
 
 // formatDueTime converts a millisecond Unix timestamp to a formatted date string.
@@ -121,7 +122,7 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string, retriever rag.SearchRetriever) *Handler {
 	h := &Handler{
 		store:         store,
 		notifier:      notifier,
@@ -142,6 +143,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		embedder:      embedder,
 		embedStore:    embedStore,
 		embedModel:    embedModel,
+		retriever:     retriever,
 	}
 
 	// Cache the import path for the noteSource template function.
@@ -243,6 +245,13 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("GET /sync/status", h.handleSyncStatus)
 	h.mux.HandleFunc("POST /sync/trigger", h.handleSyncTrigger)
 	h.registerLogStreamHandler(broadcaster)
+
+	// JSON API endpoints (requires retriever)
+	if h.retriever != nil {
+		h.mux.HandleFunc("GET /api/search", h.handleAPISearch)
+		h.mux.HandleFunc("GET /api/notes/{path...}/pages", h.handleAPIGetPages)
+		h.mux.HandleFunc("GET /api/notes/{path...}/pages/{page}/image", h.handleAPIGetImage)
+	}
 
 	return h
 }
