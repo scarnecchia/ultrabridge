@@ -213,11 +213,13 @@ func registerGetNoteImage(server *mcp.Server, client *apiClient) {
 			return nil, nil, fmt.Errorf("read image: %w", err)
 		}
 
+		// Encode imageData to base64 for the Data field
+		encodedData := []byte(base64.StdEncoding.EncodeToString(imageData))
+
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.ImageContent{
-					Type:     "image",
-					Data:     base64.StdEncoding.EncodeToString(imageData),
+					Data:     encodedData,
 					MIMEType: "image/jpeg",
 				},
 			},
