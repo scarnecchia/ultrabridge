@@ -1,20 +1,20 @@
 # Boox Pipeline
 
-Last verified: 2026-04-05
+Last verified: 2026-04-08
 
 ## Purpose
-Processing pipeline for Boox notes. Orchestrates parse → render → OCR → index workflow
+Processing pipeline for Boox notes. Orchestrates parse → render → OCR → index → embed workflow
 for .note files uploaded via WebDAV, triggered by file uploads.
 
 ## Contracts
-- **Exposes**: `Store` (UpsertNote, EnqueueJob, ClaimNextJob, CompleteJob, FailJob, GetNote, ReclaimStuckJobs, RetryAllFailed, DeleteNote, SkipNote, UnskipNote, GetQueueStatus, ListNotesWithPrefix, UpdateNotePath, ReclaimAllInProgress), `BooxNote` and `BooxJob` models, `Processor` interface (Start, Stop, Enqueue), `WorkerConfig` with Indexer, ContentDeleter, OCR interfaces, `Importer` (ScanAndEnqueue, MigrateImportedFiles) with `ImportConfig` and `ImportResult` types.
-- **Guarantees**: Atomic job claiming via SQLite RETURNING. Watchdog reclaims stuck jobs (>10 min in_progress). Graceful shutdown waits for current job. Content deletion uses ContentDeleter interface to ensure FTS5 triggers fire. OCR failure fails the job but does not block subsequent jobs.
-- **Expects**: SQLite `*sql.DB` with `boox_notes` and `boox_jobs` tables (created by notedb schema migrations). `WorkerConfig` with Indexer and optional OCR, ContentDeleter.
+- **Exposes**: `Store` (UpsertNote, EnqueueJob, ClaimNextJob, CompleteJob, FailJob, GetNote, ReclaimStuckJobs, RetryAllFailed, DeleteNote, SkipNote, UnskipNote, GetQueueStatus, ListNotesWithPrefix, UpdateNotePath, ReclaimAllInProgress), `BooxNote` and `BooxJob` models, `Processor` interface (Start, Stop, Enqueue), `WorkerConfig` with Indexer, ContentDeleter, OCR interfaces, and embedding interfaces (Embedder, EmbedStore from rag package), `Importer` (ScanAndEnqueue, MigrateImportedFiles) with `ImportConfig` and `ImportResult` types.
+- **Guarantees**: Atomic job claiming via SQLite RETURNING. Watchdog reclaims stuck jobs (>10 min in_progress). Graceful shutdown waits for current job. Content deletion uses ContentDeleter interface to ensure FTS5 triggers fire. OCR and embedding failures are best-effort (logged, do not fail the job).
+- **Expects**: SQLite `*sql.DB` with `boox_notes` and `boox_jobs` tables (created by notedb schema migrations). `WorkerConfig` with Indexer, ContentDeleter, and optional OCR, Embedder, EmbedStore.
 
 ## Dependencies
-- **Uses**: `notedb` schema (boox_notes, boox_jobs tables), `booxnote` (ZIP parser), `booxrender` (page renderer), `processor.Indexer` interface (shared with Supernote processor), optional `processor.OCRClient` (vision API), `search.Store.Delete()` for content deletion
+- **Uses**: `notedb` schema (boox_notes, boox_jobs tables), `booxnote` (ZIP parser), `booxrender` (page renderer), `processor.Indexer` interface (shared with Supernote processor), optional `processor.OCRClient` (vision API), `search.Store.Delete()` for content deletion, `rag` package (Embedder and EmbedStore interfaces for embedding text)
 - **Used by**: `cmd/ultrabridge` (wiring in main), `webdav` handler (Enqueue callback on upload), `web` handler (bulk import and management routes via BooxImporter interface)
-- **Boundary**: Does not own file discovery — WebDAV handler passes paths directly. Importer owns bulk discovery from a configured import path.
+- **Boundary**: Does not own file discovery — WebDAV handler passes paths directly. Importer owns bulk discovery from a configured import path. Does not implement Embedder or EmbedStore — those come from `rag` package.
 
 ## Key Decisions
 - Separate from Supernote processor: Boox notes use different parser/renderer (booxnote/booxrender vs go-sn for .note files; pdftoppm via pdfrender for .pdf files), no RECOGNTEXT injection, different storage format
@@ -25,6 +25,7 @@ for .note files uploaded via WebDAV, triggered by file uploads.
 - Cache lifecycle: old cached JPEGs removed on re-process via `os.RemoveAll` before new renders
 - OCR source tracking: "api" if OCR enabled, empty string if OCR disabled (no "myScript" equivalent for Boox)
 - resolveMetadata preserves importer-provided metadata (title, author, etc.) when present; only falls back to WebDAV path extraction for files whose path is under the WebDAV root and that have no importer-supplied metadata
+- Embedding integration: OCR'd text is embedded via Embedder interface and stored via EmbedStore interface (both from `rag` package). Embedding failures are logged but do not fail the job; allows OCR to proceed if embedding is unavailable.
 
 ## Invariants
 - Job statuses: pending -> in_progress -> done|failed|skipped (or back to pending via ReclaimStuckJobs)

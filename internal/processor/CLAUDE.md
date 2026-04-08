@@ -1,20 +1,20 @@
 # Processor
 
-Last verified: 2026-03-22
+Last verified: 2026-04-08
 
 ## Purpose
 Background OCR job queue. Processes .note files through a pipeline of backup,
-text extraction, optional vision-API OCR, RECOGNTEXT injection, and search indexing.
+text extraction, optional vision-API OCR, RECOGNTEXT injection, search indexing, and embedding.
 
 ## Contracts
-- **Exposes**: `Processor` interface (Start, Stop, Status, Enqueue, Skip, Unskip, GetJob), `Job` model (includes `RequeueAfter`), `ProcessorStatus`, `OCRClient`, `Indexer` interface, `Requeue(ctx, jobID, delay)`, `CatalogUpdater` interface, `NewSPCCatalog`, `EnqueueOption` type, `WithRequeueAfter(duration)`.
-- **Guarantees**: Single worker loop claims jobs atomically. Watchdog reclaims stuck jobs (>10 min in_progress). Backup before any file modification. Graceful shutdown waits for current job. Requeued jobs respect delay before re-claim. SPC catalog updates are best-effort (logged, never fail the job).
-- **Expects**: SQLite `*sql.DB` with `notes` and `jobs` tables (including `requeue_after` column). `WorkerConfig` with optional OCRClient, Indexer, and CatalogUpdater.
+- **Exposes**: `Processor` interface (Start, Stop, Status, Enqueue, Skip, Unskip, GetJob), `Job` model (includes `RequeueAfter`), `ProcessorStatus`, `OCRClient`, `Indexer` interface, `CatalogUpdater` interface, `NewSPCCatalog`, `EnqueueOption` type, `WithRequeueAfter(duration)`.
+- **Guarantees**: Single worker loop claims jobs atomically. Watchdog reclaims stuck jobs (>10 min in_progress). Backup before any file modification. Graceful shutdown waits for current job. Requeued jobs respect delay before re-claim. SPC catalog updates and embedding saves are best-effort (logged, never fail the job).
+- **Expects**: SQLite `*sql.DB` with `notes` and `jobs` tables (including `requeue_after` column). `WorkerConfig` with optional OCRClient, Indexer, CatalogUpdater, Embedder, and EmbedStore (rag interfaces).
 
 ## Dependencies
-- **Uses**: `notedb` schema, `go-sn/note` (parse/render/inject), vision API (Anthropic/OpenRouter), SPC MariaDB (f_user_file, f_file_action, f_capacity -- via CatalogUpdater)
+- **Uses**: `notedb` schema, `go-sn/note` (parse/render/inject), vision API (Anthropic/OpenRouter), SPC MariaDB (f_user_file, f_file_action, f_capacity -- via CatalogUpdater), `rag` package (Embedder and EmbedStore interfaces for embedding text)
 - **Used by**: `pipeline` (Enqueue with WithRequeueAfter, GetJob), `web` (Start/Stop/Status/Skip/Unskip/GetJob for C&C routes)
-- **Boundary**: Does not own file discovery -- that is `pipeline`'s responsibility.
+- **Boundary**: Does not own file discovery -- that is `pipeline`'s responsibility. Does not implement Embedder or EmbedStore -- those come from `rag` package.
 
 ## Key Decisions
 - SQLite job queue (not external broker): simplicity, single-process deployment
@@ -27,6 +27,7 @@ text extraction, optional vision-API OCR, RECOGNTEXT injection, and search index
 - Standard-only injection: only notes with `FILE_RECOGN_TYPE=0` (Standard) get RECOGNTEXT injection; RTR notes (`FILE_RECOGN_TYPE=1`) are OCR'd and indexed but the file is NOT modified. Reason: device AUTO_CONVERT clobbers injected RECOGNTEXT on RTR notes ~40s after opening, and silently converting RTR→Standard removes the real-time recognition sidebar.
 - JIIX format: injection uses `BuildRecognText` (JIIX v3 "Raw Content" with word-level bounding boxes in mm) to produce device-compatible RECOGNTEXT that survives SPC sync
 - SPC catalog sync after successful injection: updates f_user_file (size, md5, update_time), inserts f_file_action audit row, adjusts f_capacity quota delta. Each step independent -- one failure does not block others.
+- Embedding integration: OCR'd text is embedded via Embedder interface and stored via EmbedStore interface (both from `rag` package). Embedding failures are logged but do not fail the job; allows OCR to proceed if embedding is unavailable.
 
 ## Invariants
 - Job statuses: pending -> in_progress -> done|failed|skipped (requeue sets back to pending with delay)

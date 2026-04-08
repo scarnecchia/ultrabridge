@@ -15,6 +15,12 @@ type Embedder interface {
 	Embed(ctx context.Context, text string) ([]float32, error)
 }
 
+// EmbedStore persists embeddings for pages.
+// Implemented by *Store.
+type EmbedStore interface {
+	Save(ctx context.Context, notePath string, page int, embedding []float32, model string) error
+}
+
 // OllamaEmbedder calls Ollama's /api/embed endpoint.
 type OllamaEmbedder struct {
 	baseURL string

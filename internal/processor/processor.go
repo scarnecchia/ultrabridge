@@ -41,7 +41,7 @@ type WorkerConfig struct {
 	CatalogUpdater CatalogUpdater // nil = SPC catalog sync disabled
 	Embedder       rag.Embedder   // nil = embedding disabled
 	EmbedModel     string         // model name for note_embeddings.model column
-	EmbedStore     *rag.Store     // nil = embedding disabled
+	EmbedStore     rag.EmbedStore // nil = embedding disabled
 }
 
 // EnqueueOption configures optional behavior for Enqueue.

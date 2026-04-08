@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	gocaldav "github.com/emersion/go-webdav/caldav"
@@ -166,6 +168,7 @@ func main() {
 	// Initialize embedding pipeline if enabled
 	var embedder rag.Embedder
 	var embedStore *rag.Store
+	var backfillCancel context.CancelFunc
 	if cfg.EmbedEnabled {
 		embedder = rag.NewOllamaEmbedder(cfg.OllamaURL, cfg.OllamaEmbedModel, logger)
 		embedStore = rag.NewStore(noteDB, logger)
@@ -178,9 +181,11 @@ func main() {
 			logger.Info("loaded embeddings into memory", "count", n)
 		}
 
-		// Startup backfill (AC1.4) — runs in background
+		// Startup backfill (AC1.4) — runs in background with cancellable context
+		var backfillCtx context.Context
+		backfillCtx, backfillCancel = context.WithCancel(context.Background())
 		go func() {
-			n, err := rag.Backfill(context.Background(), embedStore, embedder, cfg.OllamaEmbedModel, logger)
+			n, err := rag.Backfill(backfillCtx, embedStore, embedder, cfg.OllamaEmbedModel, logger)
 			if err != nil {
 				logger.Warn("startup backfill failed", "err", err)
 			} else if n > 0 {
@@ -346,9 +351,31 @@ func main() {
 	}
 
 	handler := logging.RequestID(logger)(mux)
-	logger.Info("ultrabridge starting", "addr", cfg.ListenAddr)
-	if err := http.ListenAndServe(cfg.ListenAddr, handler); err != nil {
-		logger.Error("server error", "error", err)
-		os.Exit(1)
+
+	// Setup graceful shutdown with signal handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start HTTP server in a goroutine so we can wait for signals
+	serverErr := make(chan error, 1)
+	go func() {
+		logger.Info("ultrabridge starting", "addr", cfg.ListenAddr)
+		serverErr <- http.ListenAndServe(cfg.ListenAddr, handler)
+	}()
+
+	// Wait for shutdown signal or server error
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			logger.Error("server error", "error", err)
+			os.Exit(1)
+		}
+	case sig := <-sigChan:
+		logger.Info("shutdown signal received", "signal", sig)
+
+		// Cancel the backfill goroutine
+		if backfillCancel != nil {
+			backfillCancel()
+		}
 	}
 }

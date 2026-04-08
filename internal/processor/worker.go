@@ -17,7 +17,6 @@ import (
 
 	gosnote "github.com/jdkruzr/go-sn/note"
 	"github.com/sysop/ultrabridge/internal/notestore"
-	"github.com/sysop/ultrabridge/internal/rag"
 )
 
 // processJob executes the full pipeline for one job.
