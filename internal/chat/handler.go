@@ -134,11 +134,14 @@ func (h *Handler) buildPrompt(ctx context.Context, sessionID int64, question str
 
 If the provided notes don't contain enough information to answer the question, say so clearly.`
 
-	// Add retrieved context
+	// Add retrieved context (skip pages with trivially short text)
 	if len(results) > 0 {
 		var contextBuilder strings.Builder
 		contextBuilder.WriteString("\n\n--- Retrieved Notes ---\n")
 		for _, r := range results {
+			if len(strings.TrimSpace(r.BodyText)) < 10 {
+				continue
+			}
 			filename := filepath.Base(r.NotePath)
 			contextBuilder.WriteString(fmt.Sprintf("\n[%s, p.%d]", filename, r.Page))
 			if r.Device != "" {
@@ -182,6 +185,9 @@ func (h *Handler) streamFromVLLM(ctx context.Context, w http.ResponseWriter, mes
 		"messages":    messages,
 		"stream":      true,
 		"temperature": 0.7,
+		"chat_template_kwargs": map[string]interface{}{
+			"enable_thinking": false,
+		},
 		"max_tokens":  2048,
 	}
 	body, _ := json.Marshal(reqBody)
