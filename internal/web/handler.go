@@ -1236,9 +1236,7 @@ func (h *Handler) handleFilesMigrateImports(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
-	defer cancel()
-
+	ctx := context.Background() // detached — survives browser redirect
 	importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
 	if importPath == "" || h.booxNotesPath == "" {
 		h.logger.Warn("migrate: import path or notes path not configured")
@@ -1246,13 +1244,17 @@ func (h *Handler) handleFilesMigrateImports(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	result := h.booxImporter.MigrateImportedFiles(ctx, importPath, h.booxNotesPath, h.logger)
-	h.logger.Info("migrate complete",
-		"migrated", result.Migrated,
-		"skipped", result.Skipped,
-		"errors", result.Errors,
-	)
+	// Run in background so the browser redirect doesn't cancel it.
+	go func() {
+		result := h.booxImporter.MigrateImportedFiles(ctx, importPath, h.booxNotesPath, h.logger)
+		h.logger.Info("migrate complete",
+			"migrated", result.Migrated,
+			"skipped", result.Skipped,
+			"errors", result.Errors,
+		)
+	}()
 
+	h.logger.Info("migrate started in background")
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
