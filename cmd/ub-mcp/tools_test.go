@@ -545,8 +545,6 @@ func testCallSearchNotesTool(server *mcp.Server, client *apiClient, input Search
 
 	// Create an in-process client-server connection
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-	defer clientTransport.Close()
-	defer serverTransport.Close()
 
 	// Connect server to its transport
 	go func() {
@@ -554,8 +552,8 @@ func testCallSearchNotesTool(server *mcp.Server, client *apiClient, input Search
 	}()
 
 	// Create client and connect to transport
-	mcpClient := mcp.NewClient(&mcp.ClientOptions{})
-	clientSession, err := mcpClient.Connect(ctx, clientTransport)
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
+	clientSession, err := mcpClient.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect client: %w", err)
 	}
@@ -571,7 +569,7 @@ func testCallSearchNotesTool(server *mcp.Server, client *apiClient, input Search
 	}
 
 	// Call the tool via the MCP client
-	result, err := clientSession.CallTool(ctx, &mcp.CallToolRequest{
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "search_notes",
 		Arguments: inputMap,
 	})
@@ -588,8 +586,6 @@ func testCallGetNotePagesTool(server *mcp.Server, client *apiClient, input GetNo
 
 	// Create an in-process client-server connection
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-	defer clientTransport.Close()
-	defer serverTransport.Close()
 
 	// Connect server to its transport
 	go func() {
@@ -597,8 +593,8 @@ func testCallGetNotePagesTool(server *mcp.Server, client *apiClient, input GetNo
 	}()
 
 	// Create client and connect to transport
-	mcpClient := mcp.NewClient(&mcp.ClientOptions{})
-	clientSession, err := mcpClient.Connect(ctx, clientTransport)
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
+	clientSession, err := mcpClient.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect client: %w", err)
 	}
@@ -614,7 +610,7 @@ func testCallGetNotePagesTool(server *mcp.Server, client *apiClient, input GetNo
 	}
 
 	// Call the tool via the MCP client
-	result, err := clientSession.CallTool(ctx, &mcp.CallToolRequest{
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "get_note_pages",
 		Arguments: inputMap,
 	})
@@ -631,8 +627,6 @@ func testCallGetNoteImageTool(server *mcp.Server, client *apiClient, input GetNo
 
 	// Create an in-process client-server connection
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-	defer clientTransport.Close()
-	defer serverTransport.Close()
 
 	// Connect server to its transport
 	go func() {
@@ -640,8 +634,8 @@ func testCallGetNoteImageTool(server *mcp.Server, client *apiClient, input GetNo
 	}()
 
 	// Create client and connect to transport
-	mcpClient := mcp.NewClient(&mcp.ClientOptions{})
-	clientSession, err := mcpClient.Connect(ctx, clientTransport)
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
+	clientSession, err := mcpClient.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect client: %w", err)
 	}
@@ -657,7 +651,7 @@ func testCallGetNoteImageTool(server *mcp.Server, client *apiClient, input GetNo
 	}
 
 	// Call the tool via the MCP client
-	result, err := clientSession.CallTool(ctx, &mcp.CallToolRequest{
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "get_note_image",
 		Arguments: inputMap,
 	})
