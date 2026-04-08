@@ -368,6 +368,24 @@ if [[ "${enable_boox,,}" == "y" ]]; then
 fi
 
 echo
+info "── RAG Pipeline ──"
+info "Embedding pipeline generates search vectors via Ollama."
+info "Chat tab uses vLLM for local text generation."
+info ""
+
+prompt UB_EMBED_ENABLED "Enable embedding pipeline? (true/false)" "${UB_EMBED_ENABLED:-false}"
+if [[ "$UB_EMBED_ENABLED" == "true" ]]; then
+    prompt UB_OLLAMA_URL "Ollama API URL" "${UB_OLLAMA_URL:-http://localhost:11434}"
+    prompt UB_OLLAMA_EMBED_MODEL "Embedding model" "${UB_OLLAMA_EMBED_MODEL:-nomic-embed-text:v1.5}"
+fi
+
+prompt UB_CHAT_ENABLED "Enable chat tab? (true/false)" "${UB_CHAT_ENABLED:-false}"
+if [[ "$UB_CHAT_ENABLED" == "true" ]]; then
+    prompt UB_CHAT_API_URL "vLLM API URL" "${UB_CHAT_API_URL:-http://localhost:8000}"
+    prompt UB_CHAT_MODEL "Chat model name" "${UB_CHAT_MODEL:-Qwen/Qwen3-8B}"
+fi
+
+echo
 
 # --- build image first (needed for password hashing) ---
 
@@ -440,6 +458,10 @@ UB_SN_SYNC_ENABLED=${UB_SN_SYNC_ENABLED}
 
 # Boox Device Integration
 UB_BOOX_ENABLED=${UB_BOOX_ENABLED}
+
+# RAG Pipeline
+UB_EMBED_ENABLED=${UB_EMBED_ENABLED}
+UB_CHAT_ENABLED=${UB_CHAT_ENABLED}
 EOF
 
 chmod 600 "$SUPERNOTE_DIR/.ultrabridge.env"
@@ -461,6 +483,18 @@ if [[ "$UB_BOOX_ENABLED" == "true" ]]; then
     if [[ -n "$UB_BOOX_IMPORT_PATH" ]]; then
         echo "UB_BOOX_IMPORT_PATH=${UB_BOOX_IMPORT_PATH}" >> "$SUPERNOTE_DIR/.ultrabridge.env"
     fi
+fi
+
+# Conditionally append embedding config when enabled
+if [[ "$UB_EMBED_ENABLED" == "true" ]]; then
+    echo "UB_OLLAMA_URL=${UB_OLLAMA_URL}" >> "$SUPERNOTE_DIR/.ultrabridge.env"
+    echo "UB_OLLAMA_EMBED_MODEL=${UB_OLLAMA_EMBED_MODEL}" >> "$SUPERNOTE_DIR/.ultrabridge.env"
+fi
+
+# Conditionally append chat config when enabled
+if [[ "$UB_CHAT_ENABLED" == "true" ]]; then
+    echo "UB_CHAT_API_URL=${UB_CHAT_API_URL}" >> "$SUPERNOTE_DIR/.ultrabridge.env"
+    echo "UB_CHAT_MODEL=${UB_CHAT_MODEL}" >> "$SUPERNOTE_DIR/.ultrabridge.env"
 fi
 
 # --- write docker-compose.override.yml ---
