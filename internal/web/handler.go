@@ -27,6 +27,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/notedb"
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/processor"
+	"github.com/sysop/ultrabridge/internal/rag"
 	"github.com/sysop/ultrabridge/internal/search"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
@@ -96,6 +97,9 @@ type Handler struct {
 	mux             *http.ServeMux
 	logger          *slog.Logger
 	broadcaster     *logging.LogBroadcaster
+	embedder        rag.Embedder
+	embedStore      *rag.Store
+	embedModel      string
 }
 
 // formatDueTime converts a millisecond Unix timestamp to a formatted date string.
@@ -117,7 +121,7 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string) *Handler {
 	h := &Handler{
 		store:         store,
 		notifier:      notifier,
@@ -135,6 +139,9 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		logger:        logger,
 		mux:           http.NewServeMux(),
 		broadcaster:   broadcaster,
+		embedder:      embedder,
+		embedStore:    embedStore,
+		embedModel:    embedModel,
 	}
 
 	// Cache the import path for the noteSource template function.
@@ -210,6 +217,9 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("GET /logs", h.handleLogs)
 	h.mux.HandleFunc("GET /settings", h.handleSettings)
 	h.mux.HandleFunc("POST /settings/save", h.handleSettingsSave)
+	if h.embedder != nil && h.embedStore != nil {
+		h.mux.HandleFunc("POST /settings/backfill-embeddings", h.handleBackfillEmbeddings)
+	}
 	h.mux.HandleFunc("GET /files", h.handleFiles)
 	h.mux.HandleFunc("GET /search", h.handleSearch)
 	h.mux.HandleFunc("POST /files/queue", h.handleFilesQueue)
@@ -630,6 +640,21 @@ func safeRelPath(relPath string) (string, bool) {
 		return "", false
 	}
 	return cleaned, true
+}
+
+// handleBackfillEmbeddings triggers embedding backfill in the background.
+func (h *Handler) handleBackfillEmbeddings(w http.ResponseWriter, r *http.Request) {
+	go func() {
+		ctx := context.Background() // independent of request lifecycle
+		n, err := rag.Backfill(ctx, h.embedStore, h.embedder, h.embedModel, h.logger)
+		if err != nil {
+			h.logger.Error("backfill failed", "err", err)
+			return
+		}
+		h.logger.Info("backfill triggered via settings", "embedded", n)
+	}()
+
+	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
 func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {

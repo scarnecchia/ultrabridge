@@ -16,6 +16,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/processor"
+	"github.com/sysop/ultrabridge/internal/rag"
 	"github.com/sysop/ultrabridge/internal/search"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
@@ -1136,5 +1137,68 @@ func TestHandleSyncStatus_NilSafe(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("POST /sync/trigger status = %d, want 404", w.Code)
+	}
+}
+
+// mockEmbedder is a simple embedder for testing
+type mockEmbedder struct {
+	embedFn func(ctx context.Context, text string) ([]float32, error)
+}
+
+func (m *mockEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	if m.embedFn != nil {
+		return m.embedFn(ctx, text)
+	}
+	return []float32{0.1, 0.2, 0.3}, nil
+}
+
+// TestHandleBackfillEmbeddings verifies POST /settings/backfill-embeddings returns 303 redirect.
+func TestHandleBackfillEmbeddings(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("Open test db: %v", err)
+	}
+	defer db.Close()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+
+	embedder := &mockEmbedder{}
+	embedStore := rag.NewStore(db, logger)
+
+	// Create handler with embedder and embedStore
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, embedder, embedStore, "test-model")
+
+	req := httptest.NewRequest("POST", "/settings/backfill-embeddings", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	// Should return 303 See Other redirect
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("POST /settings/backfill-embeddings status = %d, want %d", w.Code, http.StatusSeeOther)
+	}
+
+	// Should redirect to /settings
+	location := w.Header().Get("Location")
+	if location != "/settings" {
+		t.Errorf("redirect location = %q, want /settings", location)
+	}
+}
+
+// TestHandleBackfillEmbeddings_NotRegisteredWhenDisabled verifies route is not registered when embedder is nil.
+func TestHandleBackfillEmbeddings_NotRegisteredWhenDisabled(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+
+	// Create handler with nil embedder and embedStore (embedding disabled)
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "")
+
+	req := httptest.NewRequest("POST", "/settings/backfill-embeddings", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	// Should return 404 since route is not registered
+	if w.Code != http.StatusNotFound {
+		t.Errorf("POST /settings/backfill-embeddings status = %d, want 404", w.Code)
 	}
 }
