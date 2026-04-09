@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/sysop/ultrabridge/internal/logging"
+	"github.com/sysop/ultrabridge/internal/mcpauth"
+	"github.com/sysop/ultrabridge/internal/notedb"
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/processor"
 	"github.com/sysop/ultrabridge/internal/rag"
@@ -1200,5 +1202,248 @@ func TestHandleBackfillEmbeddings_NotRegisteredWhenDisabled(t *testing.T) {
 	// Should return 404 since route is not registered
 	if w.Code != http.StatusNotFound {
 		t.Errorf("POST /settings/backfill-embeddings status = %d, want 404", w.Code)
+	}
+}
+
+// TestHandleMCPTokenCreate_Success verifies AC3.1: POST to create token displays raw token once
+func TestHandleMCPTokenCreate_Success(t *testing.T) {
+	ctx := context.Background()
+	testDB, err := notedb.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("notedb open failed: %v", err)
+	}
+	defer testDB.Close()
+
+	// Ensure mcp_tokens table exists
+	if err := mcpauth.Migrate(ctx, testDB); err != nil {
+		t.Fatalf("mcpauth migrate failed: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+
+	// POST to create token
+	form := url.Values{}
+	form.Set("label", "test-client")
+	req := httptest.NewRequest("POST", "/settings/mcp-tokens/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	// Should redirect with 303 to /settings?new_token=...#mcp-tokens
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("POST /settings/mcp-tokens/create status = %d, want 303", w.Code)
+	}
+
+	location := w.Header().Get("Location")
+	if !strings.Contains(location, "/settings?new_token=") || !strings.Contains(location, "#mcp-tokens") {
+		t.Errorf("unexpected redirect location: %s", location)
+	}
+
+	// Extract the raw token from the query param
+	u, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("failed to parse redirect location: %v", err)
+	}
+	rawToken := u.Query().Get("new_token")
+	if rawToken == "" {
+		t.Fatalf("new_token query param not found in redirect")
+	}
+
+	// Verify token is 43 chars (URL-safe base64 of 32 bytes)
+	if len(rawToken) != 43 {
+		t.Errorf("raw token length = %d, want 43 (base64url of 32 bytes)", len(rawToken))
+	}
+
+	// Verify the token is valid by validating it
+	label, err := mcpauth.ValidateToken(ctx, testDB, rawToken)
+	if err != nil {
+		t.Errorf("ValidateToken failed: %v", err)
+	}
+	if label != "test-client" {
+		t.Errorf("token label = %s, want test-client", label)
+	}
+
+	// Verify the token appears in settings page when flash param is provided
+	req2 := httptest.NewRequest("GET", "/settings?new_token="+url.QueryEscape(rawToken), nil)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Errorf("GET /settings?new_token=... status = %d, want 200", w2.Code)
+	}
+
+	// Verify the raw token is in the response HTML
+	body := w2.Body.String()
+	if !strings.Contains(body, rawToken) {
+		t.Errorf("raw token not found in settings response body")
+	}
+}
+
+// TestHandleSettings_TokenList verifies AC3.2: token list shows label, hash prefix, dates
+func TestHandleSettings_TokenList(t *testing.T) {
+	ctx := context.Background()
+	testDB, err := notedb.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("notedb open failed: %v", err)
+	}
+	defer testDB.Close()
+
+	// Ensure mcp_tokens table exists and create two tokens
+	if err := mcpauth.Migrate(ctx, testDB); err != nil {
+		t.Fatalf("mcpauth migrate failed: %v", err)
+	}
+
+	rawToken1, hash1, err := mcpauth.CreateToken(ctx, testDB, "token-1")
+	if err != nil {
+		t.Fatalf("CreateToken failed: %v", err)
+	}
+
+	rawToken2, hash2, err := mcpauth.CreateToken(ctx, testDB, "token-2")
+	if err != nil {
+		t.Fatalf("CreateToken failed: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+
+	// GET /settings
+	req := httptest.NewRequest("GET", "/settings", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /settings status = %d, want 200", w.Code)
+	}
+
+	body := w.Body.String()
+
+	// Verify both labels are present
+	if !strings.Contains(body, "token-1") {
+		t.Errorf("token label 'token-1' not found in response")
+	}
+	if !strings.Contains(body, "token-2") {
+		t.Errorf("token label 'token-2' not found in response")
+	}
+
+	// Verify truncated hashes (first 8 chars) are present
+	hash1Prefix := hash1[:8]
+	hash2Prefix := hash2[:8]
+	if !strings.Contains(body, hash1Prefix) {
+		t.Errorf("token hash prefix for token-1 (%s) not found in response", hash1Prefix)
+	}
+	if !strings.Contains(body, hash2Prefix) {
+		t.Errorf("token hash prefix for token-2 (%s) not found in response", hash2Prefix)
+	}
+
+	// Verify "Never" appears for last_used (since tokens haven't been validated)
+	// Count occurrences — should have at least 2 for the two tokens
+	neverCount := strings.Count(body, "Never")
+	if neverCount < 2 {
+		t.Errorf("'Never' appears %d times, want at least 2 for last_used dates", neverCount)
+	}
+
+	_ = rawToken1
+	_ = rawToken2
+}
+
+// TestHandleMCPTokenRevoke_Success verifies AC3.3: revoke removes token and invalidates it
+func TestHandleMCPTokenRevoke_Success(t *testing.T) {
+	ctx := context.Background()
+	testDB, err := notedb.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("notedb open failed: %v", err)
+	}
+	defer testDB.Close()
+
+	// Ensure mcp_tokens table exists
+	if err := mcpauth.Migrate(ctx, testDB); err != nil {
+		t.Fatalf("mcpauth migrate failed: %v", err)
+	}
+
+	// Create a token
+	rawToken, tokenHash, err := mcpauth.CreateToken(ctx, testDB, "test-revoke")
+	if err != nil {
+		t.Fatalf("CreateToken failed: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+
+	// POST to revoke token
+	form := url.Values{}
+	form.Set("token_hash", tokenHash)
+	req := httptest.NewRequest("POST", "/settings/mcp-tokens/revoke", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	// Should redirect with 303 to /settings#mcp-tokens
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("POST /settings/mcp-tokens/revoke status = %d, want 303", w.Code)
+	}
+
+	location := w.Header().Get("Location")
+	if location != "/settings#mcp-tokens" {
+		t.Errorf("unexpected redirect location: %s, want /settings#mcp-tokens", location)
+	}
+
+	// Verify the token is now invalid
+	_, err = mcpauth.ValidateToken(ctx, testDB, rawToken)
+	if err != mcpauth.ErrInvalidToken {
+		t.Errorf("ValidateToken after revoke returned %v, want ErrInvalidToken", err)
+	}
+}
+
+// TestHandleMCPTokenCreate_EmptyLabel verifies AC3.4: empty label is rejected
+func TestHandleMCPTokenCreate_EmptyLabel(t *testing.T) {
+	ctx := context.Background()
+	testDB, err := notedb.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("notedb open failed: %v", err)
+	}
+	defer testDB.Close()
+
+	// Ensure mcp_tokens table exists
+	if err := mcpauth.Migrate(ctx, testDB); err != nil {
+		t.Fatalf("mcpauth migrate failed: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+
+	// POST with empty label
+	form := url.Values{}
+	form.Set("label", "")
+	req := httptest.NewRequest("POST", "/settings/mcp-tokens/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	// Should return 400
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("POST with empty label status = %d, want 400", w.Code)
+	}
+
+	// Verify error message
+	body := w.Body.String()
+	if !strings.Contains(body, "token label is required") {
+		t.Errorf("error message not found in response: %s", body)
+	}
+
+	// Also test with whitespace-only label
+	form2 := url.Values{}
+	form2.Set("label", "   ")
+	req2 := httptest.NewRequest("POST", "/settings/mcp-tokens/create", strings.NewReader(form2.Encode()))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusBadRequest {
+		t.Errorf("POST with whitespace-only label status = %d, want 400", w2.Code)
 	}
 }
