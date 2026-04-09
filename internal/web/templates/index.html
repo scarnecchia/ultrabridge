@@ -702,6 +702,66 @@
             {{end}}
           </div>
 
+          <div class="card" id="mcp-tokens">
+            <h2>MCP Tokens</h2>
+            {{if not .MCPTokensEnabled}}
+              <p class="settings-inactive-note">Database not configured. Set UB_DB_PATH to enable MCP token management.</p>
+            {{else}}
+
+              {{if .NewMCPToken}}
+              <div style="background:#e6f9e6; border:1px solid #2d7a2d; border-radius:4px; padding:0.75rem; margin-bottom:1rem;">
+                <p style="font-weight:bold; margin:0 0 0.3rem 0;">✔ Token created — copy it now, it won't be shown again:</p>
+                <code style="display:block; background:#fff; padding:0.5rem; border:1px solid #ccc; border-radius:3px; font-size:13px; word-break:break-all; user-select:all;">{{.NewMCPToken}}</code>
+              </div>
+              {{end}}
+
+              {{if .MCPTokens}}
+              <table style="width:100%; border-collapse:collapse; margin-bottom:1rem; font-size:13px;">
+                <thead>
+                  <tr style="border-bottom:2px solid #e5e7eb; text-align:left;">
+                    <th style="padding:0.4rem;">Label</th>
+                    <th style="padding:0.4rem;">Token (prefix)</th>
+                    <th style="padding:0.4rem;">Created</th>
+                    <th style="padding:0.4rem;">Last Used</th>
+                    <th style="padding:0.4rem;"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{range .MCPTokens}}
+                  <tr style="border-bottom:1px solid #f0f0f0;">
+                    <td style="padding:0.4rem;">{{.Label}}</td>
+                    <td style="padding:0.4rem;"><code>{{slice .TokenHash 0 8}}…</code></td>
+                    <td style="padding:0.4rem;">{{formatTimestamp .CreatedAt}}</td>
+                    <td style="padding:0.4rem;">{{formatTimestamp .LastUsed}}</td>
+                    <td style="padding:0.4rem;">
+                      <form method="POST" action="/settings/mcp-tokens/revoke" style="margin:0;">
+                        <input type="hidden" name="token_hash" value="{{.TokenHash}}">
+                        <button type="submit" class="btn-small"
+                          onclick="return confirm('Revoke token \'{{.Label}}\'? Any client using it will immediately lose access.')"
+                          style="color:#c0392b;">✕ Revoke</button>
+                      </form>
+                    </td>
+                  </tr>
+                  {{end}}
+                </tbody>
+              </table>
+              {{else}}
+              <p class="device-info" style="margin-bottom:0.75rem;">No tokens created yet.</p>
+              {{end}}
+
+              <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+
+              <form method="POST" action="/settings/mcp-tokens/create">
+                <label for="mcp-token-label" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Create Token</label>
+                <p class="device-info" style="margin:0 0 0.5rem 0;">Generate a bearer token for MCP clients (e.g., claude.ai).</p>
+                <input id="mcp-token-label" name="label" type="text" placeholder="Token label (e.g., claude.ai)"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-size:13px; margin-bottom:0.5rem;" required>
+                <button type="submit" style="padding:0.3rem 0.8rem;">Create Token</button>
+              </form>
+
+            {{end}}
+          </div>
+
         </div>
 
         <!-- Chat Tab -->
