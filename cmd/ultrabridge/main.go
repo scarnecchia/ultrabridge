@@ -22,6 +22,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
 	"github.com/sysop/ultrabridge/internal/logging"
+	"github.com/sysop/ultrabridge/internal/mcpauth"
 	"github.com/sysop/ultrabridge/internal/notedb"
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/pipeline"
@@ -161,6 +162,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer noteDB.Close()
+
+	// Run mcpauth migration to ensure mcp_tokens table exists
+	if err := mcpauth.Migrate(context.Background(), noteDB); err != nil {
+		logger.Error("mcpauth migrate", "error", err)
+		os.Exit(1)
+	}
 
 	// Notes pipeline components
 	ns := notestore.New(noteDB, cfg.NotesPath)
