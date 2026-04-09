@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Last verified: 2026-04-08
+Last verified: 2026-04-09
 
 Go sidecar service for Supernote Private Cloud. Six subsystems:
 1. **CalDAV task sync** -- CalDAV VTODO over local SQLite task store
@@ -32,7 +32,8 @@ Instead: `git -C /path`, `go -C /path build`, or absolute paths.
 - `internal/config/` -- env vars (UB_ prefix) + .dbenv file loading + pipeline config + sync config + boox config + RAG/chat config
 - `internal/db/` -- MariaDB pool + single-user discovery
 - `internal/logging/` -- structured slog, file rotation, syslog, WebSocket broadcast
-- `internal/web/` -- HTML UI: task list, Files tab, Search tab, Chat tab, processor C&C, sync status, Boox render/versions, JSON API, SSE log stream (see domain CLAUDE.md)
+- `internal/mcpauth/` -- MCP bearer token store: SHA-256 hashed tokens in SQLite, CRUD + validation (see domain CLAUDE.md)
+- `internal/web/` -- HTML UI: task list, Files tab, Search tab, Chat tab, processor C&C, sync status, Boox render/versions, JSON API, MCP token management, SSE log stream (see domain CLAUDE.md)
 - `internal/rag/` -- RAG embedding infrastructure: Ollama embedder, embedding store with in-memory cache, hybrid FTS5+vector retriever, backfill (see domain CLAUDE.md)
 - `internal/chat/` -- Chat subsystem: session/message store (SQLite), vLLM streaming handler with RAG context injection (see domain CLAUDE.md)
 - `internal/booxnote/` -- Boox .note ZIP parser: protobuf pages, nested shape ZIPs, binary point files (see domain CLAUDE.md)
@@ -152,7 +153,14 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 - Config: UB_CHAT_ENABLED (feature flag), UB_CHAT_API_URL (default http://localhost:8000), UB_CHAT_MODEL (default Qwen/Qwen3-8B)
 
 ### MCP Server (cmd/ub-mcp)
-- Separate binary that calls UltraBridge JSON API endpoints via HTTP with Basic Auth
+- Separate binary that calls UltraBridge JSON API endpoints via HTTP
+- Auth chain: DB-backed bearer token (SHA-256 validated against notedb) -> static bearer token (UB_MCP_STATIC_TOKEN) -> Basic Auth fallback
 - Tools: `search_notes` (hybrid search), `get_note_pages` (page content), `get_note_image` (JPEG rendering)
 - Transport: stdio (default) or HTTP SSE (`--http :8081`)
-- Config: UB_MCP_API_URL (default http://localhost:8443), UB_MCP_API_USER, UB_MCP_API_PASS
+- Config: UB_MCP_API_URL (default http://localhost:8443), UB_MCP_API_USER, UB_MCP_API_PASS, UB_DB_PATH (shared notedb for token validation)
+
+### MCP Token Management (internal/mcpauth)
+- Bearer tokens for MCP clients stored as SHA-256 hashes in `mcp_tokens` table (shared notedb)
+- Raw token shown once at creation, never stored; only hash persisted
+- Schema migrated at ultrabridge startup via `mcpauth.Migrate` (idempotent)
+- Web UI settings card for create/revoke (internal/web)

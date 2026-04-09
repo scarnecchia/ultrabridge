@@ -1,6 +1,6 @@
 # Note Database
 
-Last verified: 2026-04-08
+Last verified: 2026-04-09
 
 ## Purpose
 Opens and migrates the SQLite database used by the Supernote pipeline, Boox pipeline, RAG embeddings, and chat subsystem.
@@ -13,7 +13,7 @@ Centralizes schema ownership so all packages share one DB connection.
 
 ## Dependencies
 - **Uses**: `modernc.org/sqlite` (pure-Go, no CGO)
-- **Used by**: `cmd/ultrabridge` (startup), indirectly by `notestore`, `processor`, `search`, `booxpipeline`, `rag`, `chat`
+- **Used by**: `cmd/ultrabridge` (startup), indirectly by `notestore`, `processor`, `search`, `booxpipeline`, `rag`, `chat`, `mcpauth`
 - **Boundary**: Only owns schema DDL. No CRUD logic -- that lives in domain packages.
 
 ## Key Decisions
@@ -51,3 +51,6 @@ Centralizes schema ownership so all packages share one DB connection.
 ### Chat Subsystem
 - `chat_sessions` -- conversation sessions (id, title, created_at, updated_at; millisecond timestamps)
 - `chat_messages` -- messages within sessions (id, session_id FK, role, content, created_at; millisecond timestamps)
+
+### MCP Auth
+- `mcp_tokens` -- bearer token hashes for MCP clients (token_hash TEXT PK, label, created_at, last_used; migrated by `mcpauth.Migrate`, not by notedb.Open)
