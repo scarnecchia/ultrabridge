@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1393,7 +1394,7 @@ func TestHandleMCPTokenRevoke_Success(t *testing.T) {
 
 	// Verify the token is now invalid
 	_, err = mcpauth.ValidateToken(ctx, testDB, rawToken)
-	if err != mcpauth.ErrInvalidToken {
+	if !errors.Is(err, mcpauth.ErrInvalidToken) {
 		t.Errorf("ValidateToken after revoke returned %v, want ErrInvalidToken", err)
 	}
 }
