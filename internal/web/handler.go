@@ -25,6 +25,7 @@ import (
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/chat"
 	"github.com/sysop/ultrabridge/internal/logging"
+	"github.com/sysop/ultrabridge/internal/mcpauth"
 	"github.com/sysop/ultrabridge/internal/notedb"
 	"github.com/sysop/ultrabridge/internal/notestore"
 	"github.com/sysop/ultrabridge/internal/processor"
@@ -177,6 +178,12 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	funcMap := template.FuncMap{
 		"formatDueTime": formatDueTime,
 		"formatCreated": formatCreated,
+		"formatTimestamp": func(ms int64) string {
+			if ms == 0 {
+				return "Never"
+			}
+			return time.UnixMilli(ms).UTC().Format("2006-01-02 15:04")
+		},
 		"fileTypeStr":   func(ft notestore.FileType) string { return string(ft) },
 		"noteSource": func(path string) string {
 			if h.booxStore != nil {
@@ -242,6 +249,10 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /settings/save", h.handleSettingsSave)
 	if h.embedder != nil && h.embedStore != nil {
 		h.mux.HandleFunc("POST /settings/backfill-embeddings", h.handleBackfillEmbeddings)
+	}
+	if h.noteDB != nil {
+		h.mux.HandleFunc("POST /settings/mcp-tokens/create", h.handleMCPTokenCreate)
+		h.mux.HandleFunc("POST /settings/mcp-tokens/revoke", h.handleMCPTokenRevoke)
 	}
 	h.mux.HandleFunc("GET /files", h.handleFiles)
 	h.mux.HandleFunc("GET /search", h.handleSearch)
@@ -396,6 +407,23 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	data["ChatEnabled"] = h.chatHandler != nil
 	data["ChatModel"] = h.chatModel
 	data["ChatAPIURL"] = h.chatAPIURL
+
+	// MCP Tokens (mcp_tokens table created at startup via mcpauth.Migrate in Task 1)
+	if h.noteDB != nil {
+		tokens, err := mcpauth.ListTokens(ctx, h.noteDB)
+		if err != nil {
+			h.logger.Error("list mcp tokens", "error", err)
+		}
+		data["MCPTokens"] = tokens
+		data["MCPTokensEnabled"] = true
+	} else {
+		data["MCPTokensEnabled"] = false
+	}
+
+	// One-time flash: display raw token after creation
+	if newToken := r.URL.Query().Get("new_token"); newToken != "" {
+		data["NewMCPToken"] = newToken
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -1488,4 +1516,55 @@ func (h *Handler) handleBooxVersions(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(versions)
+}
+
+// handleMCPTokenCreate creates a new MCP bearer token and redirects with one-time display.
+func (h *Handler) handleMCPTokenCreate(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	label := strings.TrimSpace(r.FormValue("label"))
+	if label == "" {
+		http.Error(w, "token label is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	rawToken, _, err := mcpauth.CreateToken(ctx, h.noteDB, label)
+	if err != nil {
+		h.logger.Error("create mcp token", "error", err)
+		http.Error(w, "failed to create token", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/settings?new_token="+url.QueryEscape(rawToken)+"#mcp-tokens", http.StatusSeeOther)
+}
+
+// handleMCPTokenRevoke revokes an MCP token by its hash.
+func (h *Handler) handleMCPTokenRevoke(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	tokenHash := r.FormValue("token_hash")
+	if tokenHash == "" {
+		http.Error(w, "token hash is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	if err := mcpauth.RevokeToken(ctx, h.noteDB, tokenHash); err != nil {
+		h.logger.Error("revoke mcp token", "error", err)
+		http.Error(w, "failed to revoke token", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/settings#mcp-tokens", http.StatusSeeOther)
 }
