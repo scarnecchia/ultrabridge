@@ -14,7 +14,7 @@ as MCP tools for AI agents (Claude Desktop, Cursor, etc.).
 ## Dependencies
 - **Uses**: `github.com/modelcontextprotocol/go-sdk/mcp` (MCP server framework), UltraBridge JSON API (`/api/search`, `/api/notes/pages`, `/api/notes/pages/image`)
 - **Used by**: AI agents via MCP protocol
-- **Boundary**: Separate binary -- does NOT import any internal packages. Communicates with UltraBridge solely via HTTP API.
+- **Boundary**: Separate binary. Imports `internal/mcpauth` and `internal/notedb` for direct bearer token validation against shared SQLite. All note data access still via HTTP API.
 
 ## Key Decisions
 - Separate binary (not embedded in ultrabridge): allows independent deployment, different lifecycle
@@ -25,6 +25,7 @@ as MCP tools for AI agents (Claude Desktop, Cursor, etc.).
 - `UB_MCP_API_URL` -- UltraBridge API base URL (default http://localhost:8443)
 - `UB_MCP_API_USER` -- Basic Auth username
 - `UB_MCP_API_PASS` -- Basic Auth password
+- `UB_DB_PATH` -- Path to shared notedb SQLite file (enables DB-backed bearer tokens)
 
 ## Key Files
 - `main.go` -- Entry point, transport selection, API client setup
@@ -34,4 +35,4 @@ as MCP tools for AI agents (Claude Desktop, Cursor, etc.).
 ## Gotchas
 - MCP SDK uses generics for tool input types (SearchNotesInput, GetNotePagesInput, GetNoteImageInput)
 - Image responses encode JPEG as base64 with embedded image content type
-- This binary has no access to SQLite or internal state -- it is purely an API client
+- Opens shared notedb for bearer token validation only — all note data access remains via HTTP API

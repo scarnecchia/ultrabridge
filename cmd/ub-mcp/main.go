@@ -2,18 +2,37 @@ package main // FCIS: Imperative Shell
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sysop/ultrabridge/internal/mcpauth"
+	"github.com/sysop/ultrabridge/internal/notedb"
 )
 
 func main() {
 	httpAddr := flag.String("http", "", "HTTP SSE address (e.g., :8081). If empty, uses stdio transport.")
 	flag.Parse()
+
+	// Open shared notedb for bearer token validation (if configured).
+	dbPath := os.Getenv("UB_DB_PATH")
+	var db *sql.DB
+	if dbPath != "" {
+		var err error
+		db, err = notedb.Open(context.Background(), dbPath)
+		if err != nil {
+			log.Fatalf("notedb open: %v", err)
+		}
+		defer db.Close()
+		if err := mcpauth.Migrate(context.Background(), db); err != nil {
+			log.Fatalf("mcpauth migrate: %v", err)
+		}
+	}
 
 	apiURL := os.Getenv("UB_MCP_API_URL")
 	if apiURL == "" {
@@ -38,11 +57,13 @@ func main() {
 		}, nil)
 
 		var handler http.Handler = mcpHandler
-		if token := os.Getenv("UB_MCP_AUTH_TOKEN"); token != "" {
-			handler = bearerAuth(token, mcpHandler)
+		staticToken := os.Getenv("UB_MCP_AUTH_TOKEN")
+
+		if db != nil || staticToken != "" || (apiUser != "" && apiPass != "") {
+			handler = authMiddleware(db, staticToken, apiUser, apiPass, mcpHandler)
 			log.Printf("ub-mcp listening on %s (HTTP SSE, auth enabled)", *httpAddr)
 		} else {
-			log.Printf("ub-mcp listening on %s (HTTP SSE, no auth — set UB_MCP_AUTH_TOKEN to secure)", *httpAddr)
+			log.Printf("ub-mcp listening on %s (HTTP SSE, WARNING: no auth configured — set UB_DB_PATH or UB_MCP_AUTH_TOKEN)", *httpAddr)
 		}
 		if err := http.ListenAndServe(*httpAddr, handler); err != nil {
 			log.Fatalf("HTTP server failed: %v", err)
@@ -73,15 +94,40 @@ func newAPIClient(baseURL, user, pass string) *apiClient {
 	}
 }
 
-// bearerAuth wraps an http.Handler with Bearer token authentication.
-func bearerAuth(token string, next http.Handler) http.Handler {
+// authMiddleware implements the auth chain: DB token → static token → Basic Auth.
+func authMiddleware(db *sql.DB, staticToken, basicUser, basicPass string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
-		if auth != "Bearer "+token {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+
+		// 1. Bearer token path
+		if strings.HasPrefix(auth, "Bearer ") {
+			token := auth[len("Bearer "):]
+
+			// 1a. DB-backed token validation
+			if db != nil {
+				if _, err := mcpauth.ValidateToken(r.Context(), db, token); err == nil {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+
+			// 1b. Static token fallback (deprecated)
+			if staticToken != "" && token == staticToken {
+				next.ServeHTTP(w, r)
+				return
+			}
 		}
-		next.ServeHTTP(w, r)
+
+		// 2. Basic Auth fallback
+		if basicUser != "" {
+			user, pass, ok := r.BasicAuth()
+			if ok && user == basicUser && pass == basicPass {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	})
 }
 
