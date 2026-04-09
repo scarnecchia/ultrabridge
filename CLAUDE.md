@@ -154,7 +154,7 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 
 ### MCP Server (cmd/ub-mcp)
 - Separate binary that calls UltraBridge JSON API endpoints via HTTP
-- Auth chain: DB-backed bearer token (SHA-256 validated against notedb) -> static bearer token (UB_MCP_STATIC_TOKEN) -> Basic Auth fallback
+- Auth chain: DB-backed bearer token (SHA-256 validated against notedb) -> static bearer token (UB_MCP_AUTH_TOKEN) -> Basic Auth fallback
 - Tools: `search_notes` (hybrid search), `get_note_pages` (page content), `get_note_image` (JPEG rendering)
 - Transport: stdio (default) or HTTP SSE (`--http :8081`)
 - Config: UB_MCP_API_URL (default http://localhost:8443), UB_MCP_API_USER, UB_MCP_API_PASS, UB_DB_PATH (shared notedb for token validation)
