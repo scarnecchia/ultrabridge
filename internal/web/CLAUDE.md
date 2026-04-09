@@ -1,6 +1,6 @@
 # internal/web
 
-Last verified: 2026-04-08
+Last verified: 2026-04-08 (updated for Phase 3 MCP OAuth web UI)
 
 HTTP handler and HTML templates for the UltraBridge web UI.
 
@@ -52,6 +52,8 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 | GET | `/api/search` | `handleAPISearch` | JSON: hybrid search results (requires retriever) |
 | GET | `/api/notes/pages` | `handleAPIGetPages` | JSON: indexed page content for a note (requires retriever) |
 | GET | `/api/notes/pages/image` | `handleAPIGetImage` | JPEG image for a note page (requires retriever) |
+| POST | `/settings/mcp-tokens/create` | `handleMCPTokenCreate` | Create new MCP bearer token; redirect with one-time display (requires noteDB) |
+| POST | `/settings/mcp-tokens/revoke` | `handleMCPTokenRevoke` | Revoke MCP token by hash (requires noteDB) |
 
 ## Interfaces
 
@@ -93,6 +95,7 @@ Auth: All API routes use the same Basic Auth middleware as the web UI (authMW in
 Custom `template.FuncMap` functions registered in `NewHandler`:
 - `formatDueTime(t time.Time) string`
 - `formatCreated(t time.Time) string`
+- `formatTimestamp(ms int64) string` — formats millisecond UTC unix timestamp to "2006-01-02 15:04"; returns "Never" if 0
 - `fileTypeStr(ft notestore.FileType) string` — converts FileType to its string value for template conditionals
 - `noteSource(path string) string` — returns "Boox" if path starts with booxNotesPath, else "Supernote"
 
@@ -101,6 +104,18 @@ Custom `template.FuncMap` functions registered in `NewHandler`:
 Shared data in `baseTemplateData`:
 - `tasks` — list of tasks for the task list page
 - `BooxNotesPath` — the Boox notes root directory path (may be empty if disabled); used by JavaScript to detect Boox notes
+
+## MCP Token Management (Phase 3c)
+
+Settings page includes an MCP Tokens card (rendered when noteDB is present):
+- Lists all active tokens with label, hash prefix (first 8 chars), creation timestamp, and last-used timestamp
+- One-time display of raw token after creation via `?new_token=` query parameter (redirect-after-POST pattern)
+- Creates bearer tokens for MCP clients via POST `/settings/mcp-tokens/create` with form field `label`
+- Revokes tokens via POST `/settings/mcp-tokens/revoke` with form field `token_hash`
+- Both endpoints are **nil-safe**: only registered if `noteDB != nil`
+- Handler methods: `handleMCPTokenCreate`, `handleMCPTokenRevoke`
+- Uses `mcpauth.CreateToken`, `mcpauth.ListTokens`, `mcpauth.RevokeToken` (Phase 1)
+- Data keys: `MCPTokensEnabled` (bool), `MCPTokens` ([]mcpauth.TokenInfo), `NewMCPToken` (raw token string, one-time flash)
 
 ## Error handling pattern
 
