@@ -626,3 +626,301 @@ func TestSearchPage_FolderDropdown(t *testing.T) {
 	// Page should render without error even with no folders
 }
 
+// --- Setup Mode ---
+
+func openTestDB(t *testing.T) *sql.DB {
+	ctx := context.Background()
+	db, err := notedb.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open test DB: %v", err)
+	}
+	return db
+}
+
+// TestSetupPage_RendersWithEmptyDB verifies that GET /setup returns the setup form
+// when DB is empty.
+// Covers: platform-neutral-config.AC3.3
+func TestSetupPage_RendersWithEmptyDB(t *testing.T) {
+	db := openTestDB(t)
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+	})
+
+	req := httptest.NewRequest("GET", "/setup", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /setup returned %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Welcome to UltraBridge") {
+		t.Error("Setup page missing title")
+	}
+	if !strings.Contains(body, "username") {
+		t.Error("Setup page missing username field")
+	}
+	if !strings.Contains(body, "password") {
+		t.Error("Setup page missing password field")
+	}
+}
+
+// TestSetupPage_RedirectsWhenCredentialsExist verifies that GET /setup redirects to /
+// when credentials already exist.
+func TestSetupPage_RedirectsWhenCredentialsExist(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Pre-populate credentials
+	if err := notedb.SetSetting(ctx, db, appconfig.KeyUsername, "alice"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+	if err := notedb.SetSetting(ctx, db, appconfig.KeyPasswordHash, "hashed"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+	})
+
+	req := httptest.NewRequest("GET", "/setup", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTemporaryRedirect {
+		t.Errorf("GET /setup returned %d, want 307", w.Code)
+	}
+	if w.Header().Get("Location") != "/" {
+		t.Errorf("Expected redirect to /, got %s", w.Header().Get("Location"))
+	}
+}
+
+// TestSetupSave_SavesCredentials verifies that POST /setup/save saves credentials
+// and transitions to requiring auth.
+// Covers: platform-neutral-config.AC3.4
+func TestSetupSave_SavesCredentials(t *testing.T) {
+	db := openTestDB(t)
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+	})
+
+	// POST form with valid credentials
+	form := url.Values{}
+	form.Set("username", "alice")
+	form.Set("password", "SecurePass123")
+	form.Set("confirm", "SecurePass123")
+
+	req := httptest.NewRequest("POST", "/setup/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("POST /setup/save returned %d, want 303", w.Code)
+	}
+
+	// Verify credentials saved to DB
+	ctx := context.Background()
+	username, err := notedb.GetSetting(ctx, db, appconfig.KeyUsername)
+	if err != nil {
+		t.Fatalf("GetSetting failed: %v", err)
+	}
+	if username != "alice" {
+		t.Errorf("Expected username=alice, got %q", username)
+	}
+
+	hash, err := notedb.GetSetting(ctx, db, appconfig.KeyPasswordHash)
+	if err != nil {
+		t.Fatalf("GetSetting failed: %v", err)
+	}
+	if hash == "" {
+		t.Errorf("Expected password hash to be saved, got empty")
+	}
+}
+
+// TestSetupSave_ValidatesPasswordMatch verifies that mismatched passwords are rejected.
+func TestSetupSave_ValidatesPasswordMatch(t *testing.T) {
+	db := openTestDB(t)
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+	})
+
+	form := url.Values{}
+	form.Set("username", "alice")
+	form.Set("password", "SecurePass123")
+	form.Set("confirm", "DifferentPass123")
+
+	req := httptest.NewRequest("POST", "/setup/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("POST /setup/save with mismatched passwords returned %d, want 400", w.Code)
+	}
+
+	// Verify credentials were NOT saved
+	ctx := context.Background()
+	username, err := notedb.GetSetting(ctx, db, appconfig.KeyUsername)
+	if err != nil {
+		t.Fatalf("GetSetting failed: %v", err)
+	}
+	if username != "" {
+		t.Errorf("Expected username to not be saved, got %q", username)
+	}
+}
+
+// TestSetupSave_ValidatesPasswordLength verifies that short passwords are rejected.
+func TestSetupSave_ValidatesPasswordLength(t *testing.T) {
+	db := openTestDB(t)
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+	})
+
+	form := url.Values{}
+	form.Set("username", "alice")
+	form.Set("password", "Short1")
+	form.Set("confirm", "Short1")
+
+	req := httptest.NewRequest("POST", "/setup/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("POST /setup/save with short password returned %d, want 400", w.Code)
+	}
+}
+
+// TestSetupSave_ValidatesUsername verifies that empty usernames are rejected.
+func TestSetupSave_ValidatesUsername(t *testing.T) {
+	db := openTestDB(t)
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+	})
+
+	form := url.Values{}
+	form.Set("username", "")
+	form.Set("password", "SecurePass123")
+	form.Set("confirm", "SecurePass123")
+
+	req := httptest.NewRequest("POST", "/setup/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("POST /setup/save with empty username returned %d, want 400", w.Code)
+	}
+}
+
+// TestSetupSave_RejectsWhenSetupComplete verifies that /setup/save returns 403
+// when credentials already exist.
+func TestSetupSave_RejectsWhenSetupComplete(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Pre-populate credentials
+	if err := notedb.SetSetting(ctx, db, appconfig.KeyUsername, "alice"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+	if err := notedb.SetSetting(ctx, db, appconfig.KeyPasswordHash, "hashed"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+	})
+
+	form := url.Values{}
+	form.Set("username", "bob")
+	form.Set("password", "SecurePass123")
+	form.Set("confirm", "SecurePass123")
+
+	req := httptest.NewRequest("POST", "/setup/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("POST /setup/save when setup complete returned %d, want 403", w.Code)
+	}
+}
+
+// TestSetupMiddleware_RedirectsToSetup verifies that SetupMiddleware redirects
+// all requests to /setup when credentials don't exist.
+// Covers: platform-neutral-config.AC3.3
+func TestSetupMiddleware_RedirectsToSetup(t *testing.T) {
+	db := openTestDB(t)
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+	})
+
+	// Wrap handler with setup middleware
+	middlewareHandler := SetupMiddleware(db, handler)
+
+	// Request to / should redirect to /setup
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	middlewareHandler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTemporaryRedirect {
+		t.Errorf("GET / in setup mode returned %d, want 307", w.Code)
+	}
+	if w.Header().Get("Location") != "/setup" {
+		t.Errorf("Expected redirect to /setup, got %s", w.Header().Get("Location"))
+	}
+}
+
+// TestSetupMiddleware_AllowsSetupEndpoints verifies that /setup and /setup/save
+// are accessible without auth even when setup is required.
+// Covers: platform-neutral-config.AC3.6
+func TestSetupMiddleware_AllowsSetupEndpoints(t *testing.T) {
+	db := openTestDB(t)
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+	})
+
+	middlewareHandler := SetupMiddleware(db, handler)
+
+	// Request to /setup should NOT redirect
+	req := httptest.NewRequest("GET", "/setup", nil)
+	w := httptest.NewRecorder()
+	middlewareHandler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /setup in setup mode returned %d, want 200", w.Code)
+	}
+}
+
+// TestSetupMiddleware_DisabledAfterSetup verifies that middleware allows requests
+// to other endpoints after credentials are saved.
+func TestSetupMiddleware_DisabledAfterSetup(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Pre-populate credentials
+	if err := notedb.SetSetting(ctx, db, appconfig.KeyUsername, "alice"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+	if err := notedb.SetSetting(ctx, db, appconfig.KeyPasswordHash, "hashed"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+	})
+
+	middlewareHandler := SetupMiddleware(db, handler)
+
+	// Request to / should NOT redirect (setup complete)
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	middlewareHandler.ServeHTTP(w, req)
+
+	// Will get 401 from auth middleware, not 307 from setup middleware
+	if w.Code == http.StatusTemporaryRedirect {
+		t.Errorf("GET / after setup complete redirected to setup (should proceed to auth check)")
+	}
+}
+

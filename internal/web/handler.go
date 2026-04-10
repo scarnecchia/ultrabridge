@@ -245,6 +245,8 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.tmpl = tmpl
 
 	// Register routes
+	h.mux.HandleFunc("GET /setup", h.handleSetup)
+	h.mux.HandleFunc("POST /setup/save", h.handleSetupSave)
 	h.mux.HandleFunc("GET /", h.handleIndex)
 	h.mux.HandleFunc("POST /tasks", h.handleCreateTask)
 	h.mux.HandleFunc("POST /tasks/{id}/complete", h.handleCompleteTask)
