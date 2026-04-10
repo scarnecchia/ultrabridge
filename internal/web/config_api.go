@@ -46,10 +46,6 @@ type RedactedConfig struct {
 	DBPort                string `json:"db_port"`
 	DBEnvPath             string `json:"db_env_path"`
 	UserID                int64  `json:"user_id"`
-	NotesPath             string `json:"notes_path"`
-	BackupPath            string `json:"backup_path"`
-	BooxEnabled           bool   `json:"boox_enabled"`
-	BooxNotesPath         string `json:"boox_notes_path"`
 }
 
 // redactConfig returns a copy of cfg with secrets replaced with "[set]" or "[not set]".
@@ -87,16 +83,12 @@ func redactConfig(cfg *appconfig.Config) *RedactedConfig {
 		LogSyslogAddr:        cfg.LogSyslogAddr,
 		CalDAVCollectionName: cfg.CalDAVCollectionName,
 		DueTimeMode:          cfg.DueTimeMode,
-		WebEnabled:           cfg.WebEnabled,
-		SocketIOURL:          cfg.SocketIOURL,
-		DBHost:               cfg.DBHost,
-		DBPort:               cfg.DBPort,
-		DBEnvPath:            cfg.DBEnvPath,
-		UserID:               cfg.UserID,
-		NotesPath:            cfg.NotesPath,
-		BackupPath:           cfg.BackupPath,
-		BooxEnabled:          cfg.BooxEnabled,
-		BooxNotesPath:        cfg.BooxNotesPath,
+		WebEnabled:  cfg.WebEnabled,
+		SocketIOURL: cfg.SocketIOURL,
+		DBHost:      cfg.DBHost,
+		DBPort:      cfg.DBPort,
+		DBEnvPath:   cfg.DBEnvPath,
+		UserID:      cfg.UserID,
 	}
 }
 
@@ -161,10 +153,6 @@ type IncomingConfig struct {
 	DBPort                string `json:"db_port"`
 	DBEnvPath             string `json:"db_env_path"`
 	UserID                int64  `json:"user_id"`
-	NotesPath             string `json:"notes_path"`
-	BackupPath            string `json:"backup_path"`
-	BooxEnabled           bool   `json:"boox_enabled"`
-	BooxNotesPath         string `json:"boox_notes_path"`
 }
 
 // handlePutConfig handles PUT /api/config — update config with password hashing.
@@ -211,13 +199,9 @@ func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		WebEnabled:           incoming.WebEnabled,
 		SocketIOURL:          incoming.SocketIOURL,
 		DBHost:               incoming.DBHost,
-		DBPort:               incoming.DBPort,
-		DBEnvPath:            incoming.DBEnvPath,
-		UserID:               incoming.UserID,
-		NotesPath:            incoming.NotesPath,
-		BackupPath:           incoming.BackupPath,
-		BooxEnabled:          incoming.BooxEnabled,
-		BooxNotesPath:        incoming.BooxNotesPath,
+		DBPort:    incoming.DBPort,
+		DBEnvPath: incoming.DBEnvPath,
+		UserID:    incoming.UserID,
 	}
 
 	// If plaintext password provided, hash it and set PasswordHash.

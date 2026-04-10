@@ -340,41 +340,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Backward compatibility: seed sources from env vars if DB is empty
-	if len(rows) == 0 {
-		if cfg.NotesPath != "" {
-			_, err := source.AddSource(context.Background(), noteDB, source.SourceRow{
-				Type:       "supernote",
-				Name:       "Supernote",
-				Enabled:    true,
-				ConfigJSON: fmt.Sprintf(`{"notes_path":%q,"backup_path":%q}`, cfg.NotesPath, cfg.BackupPath),
-				CreatedAt:  time.Now().UnixMilli(),
-				UpdatedAt:  time.Now().UnixMilli(),
-			})
-			if err != nil {
-				logger.Warn("failed to seed supernote source from env", "error", err)
-			}
-		}
-		if cfg.BooxEnabled && cfg.BooxNotesPath != "" {
-			_, err := source.AddSource(context.Background(), noteDB, source.SourceRow{
-				Type:       "boox",
-				Name:       "Boox",
-				Enabled:    true,
-				ConfigJSON: fmt.Sprintf(`{"notes_path":%q}`, cfg.BooxNotesPath),
-				CreatedAt:  time.Now().UnixMilli(),
-				UpdatedAt:  time.Now().UnixMilli(),
-			})
-			if err != nil {
-				logger.Warn("failed to seed boox source from env", "error", err)
-			}
-		}
-		// Re-read after seeding
-		rows, err = source.ListEnabledSources(context.Background(), noteDB)
-		if err != nil {
-			logger.Error("failed to re-read sources after seeding", "error", err)
-			os.Exit(1)
-		}
-	}
 
 	// Start sources
 	var sources []source.Source
@@ -399,6 +364,29 @@ func main() {
 	var pl web.FileScanner
 	var proc *processor.Store
 	var booxProc *booxpipeline.Processor
+	var booxNotesPath string
+	var snNotesPath string
+
+	// Build a map from source type to source row for extracting config
+	sourceRowMap := make(map[string]source.SourceRow)
+	for _, row := range rows {
+		sourceRowMap[row.Type] = row
+	}
+
+	// Extract configs from source rows
+	if snRow, hasSupernote := sourceRowMap["supernote"]; hasSupernote {
+		var snCfg supernote.Config
+		if err := json.Unmarshal([]byte(snRow.ConfigJSON), &snCfg); err == nil {
+			snNotesPath = snCfg.NotesPath
+		}
+	}
+	if booxRow, hasBoox := sourceRowMap["boox"]; hasBoox {
+		var booxCfg boox.Config
+		if err := json.Unmarshal([]byte(booxRow.ConfigJSON), &booxCfg); err == nil {
+			booxNotesPath = booxCfg.NotesPath
+		}
+	}
+
 	for _, s := range sources {
 		switch s.Type() {
 		case "supernote":
@@ -475,18 +463,16 @@ func main() {
 		})).ServeHTTP(w, r)
 	})
 
-	// Wire Boox WebDAV server if enabled
-	if cfg.BooxEnabled && cfg.BooxNotesPath != "" {
-		davHandler := ubwebdav.NewHandler(cfg.BooxNotesPath, func(absPath string) {
+	// Wire Boox WebDAV server if Boox source is active
+	if booxProc != nil && booxNotesPath != "" {
+		davHandler := ubwebdav.NewHandler(booxNotesPath, func(absPath string) {
 			logger.Info("boox note uploaded", "path", absPath)
-			if booxProc != nil {
-				if err := booxProc.Enqueue(context.Background(), absPath); err != nil {
-					logger.Error("enqueue boox job", "error", err, "path", absPath)
-				}
+			if err := booxProc.Enqueue(context.Background(), absPath); err != nil {
+				logger.Error("enqueue boox job", "error", err, "path", absPath)
 			}
 		})
 		mux.Handle("/webdav/", authMW.Wrap(davHandler))
-		logger.Info("boox webdav enabled", "path", cfg.BooxNotesPath)
+		logger.Info("boox webdav enabled", "path", booxNotesPath)
 	}
 
 	// Wire web UI if enabled
@@ -512,7 +498,7 @@ func main() {
 			chatHandler = chat.NewHandler(chatStore, retriever, cfg.ChatAPIURL, cfg.ChatModel, logger)
 		}
 
-		webHandler = web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel, retriever, chatHandler, chatStore, web.RAGDisplayConfig{
+		webHandler = web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, booxNotesPath, snNotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel, retriever, chatHandler, chatStore, web.RAGDisplayConfig{
 			OllamaURL:   cfg.OllamaURL,
 			OllamaModel: cfg.OllamaEmbedModel,
 			ChatAPIURL:  cfg.ChatAPIURL,

@@ -70,6 +70,8 @@ const (
 
 // envVarForKey maps each setting key to its UB_ env var name.
 // Only keys that have a corresponding env var are listed.
+// Note: Per-source env vars (UB_NOTES_PATH, UB_BACKUP_PATH, UB_BOOX_ENABLED, UB_BOOX_NOTES_PATH) are no longer recognized.
+// Configure sources via the Settings UI instead.
 var envVarForKey = map[string]string{
 	KeyUsername:             "UB_USERNAME",
 	KeyPasswordHash:         "UB_PASSWORD_HASH",

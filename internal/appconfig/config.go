@@ -64,13 +64,6 @@ type Config struct {
 	DBPort    string
 	DBEnvPath string
 	UserID    int64
-
-	// Transitional per-source fields (used for backward-compat seeding in Phase 5,
-	// removed in Phase 8 when sources own their paths via config_json)
-	NotesPath     string
-	BackupPath    string
-	BooxEnabled   bool
-	BooxNotesPath string
 }
 
 // SaveResult reports the outcome of a Save operation.
@@ -105,21 +98,6 @@ func Load(ctx context.Context, db *sql.DB) (*Config, error) {
 		KeyBooxImportOnyxPaths,
 	}
 	for _, key := range runtimeKeys {
-		val, err := notedb.GetSetting(ctx, db, key)
-		if err != nil {
-			return nil, err
-		}
-		dbVals[key] = val
-	}
-
-	// Load per-source keys.
-	sourceKeys := []string{
-		"notes_path",
-		"backup_path",
-		"boox_enabled",
-		"boox_notes_path",
-	}
-	for _, key := range sourceKeys {
 		val, err := notedb.GetSetting(ctx, db, key)
 		if err != nil {
 			return nil, err
@@ -174,10 +152,6 @@ func Load(ctx context.Context, db *sql.DB) (*Config, error) {
 		DBPort:               dbVals[KeyDBPort],
 		DBEnvPath:            dbVals[KeyDBEnvPath],
 		UserID:               parseInt64(dbVals[KeyUserID]),
-		NotesPath:            dbVals["notes_path"],
-		BackupPath:           dbVals["backup_path"],
-		BooxEnabled:          parseBool(dbVals["boox_enabled"]),
-		BooxNotesPath:        dbVals["boox_notes_path"],
 	}
 
 	return cfg, nil
@@ -346,10 +320,6 @@ func loadDBOnly(ctx context.Context, db *sql.DB) (*Config, error) {
 		DBPort:               dbVals[KeyDBPort],
 		DBEnvPath:            dbVals[KeyDBEnvPath],
 		UserID:               parseInt64(dbVals[KeyUserID]),
-		NotesPath:            dbVals["notes_path"],
-		BackupPath:           dbVals["backup_path"],
-		BooxEnabled:          parseBool(dbVals["boox_enabled"]),
-		BooxNotesPath:        dbVals["boox_notes_path"],
 	}
 
 	return cfg, nil
@@ -389,14 +359,10 @@ func configToMap(cfg *Config) map[string]string {
 		KeyDueTimeMode:          cfg.DueTimeMode,
 		KeyWebEnabled:           boolToString(cfg.WebEnabled),
 		KeySocketIOURL:          cfg.SocketIOURL,
-		KeyDBHost:               cfg.DBHost,
-		KeyDBPort:               cfg.DBPort,
-		KeyDBEnvPath:            cfg.DBEnvPath,
-		KeyUserID:               strconv.FormatInt(cfg.UserID, 10),
-		"notes_path":            cfg.NotesPath,
-		"backup_path":           cfg.BackupPath,
-		"boox_enabled":          boolToString(cfg.BooxEnabled),
-		"boox_notes_path":       cfg.BooxNotesPath,
+		KeyDBHost:    cfg.DBHost,
+		KeyDBPort:    cfg.DBPort,
+		KeyDBEnvPath: cfg.DBEnvPath,
+		KeyUserID:    strconv.FormatInt(cfg.UserID, 10),
 	}
 	return m
 }
