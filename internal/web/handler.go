@@ -375,8 +375,24 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	data := h.baseTemplateData(ctx)
 	data["activeTab"] = "settings"
-	data["SNPipelineActive"] = h.noteStore != nil
-	data["BooxActive"] = h.booxStore != nil
+	// Pipeline active = running now OR configured in sources table (not yet started after add)
+	snActive := h.noteStore != nil
+	booxActive := h.booxStore != nil
+	if h.noteDB != nil && (!snActive || !booxActive) {
+		sources, err := source.ListSources(ctx, h.noteDB)
+		if err == nil {
+			for _, s := range sources {
+				if s.Type == "supernote" {
+					snActive = true
+				}
+				if s.Type == "boox" {
+					booxActive = true
+				}
+			}
+		}
+	}
+	data["SNPipelineActive"] = snActive
+	data["BooxActive"] = booxActive
 
 	// Load current config and detect if restart is required.
 	if h.noteDB != nil {
