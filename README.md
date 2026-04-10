@@ -31,51 +31,56 @@ UltraBridge is a note management and task synchronization platform supporting mu
 
 ## Quick Start
 
-### Before you run the installer
-
-Have the following ready:
-
-- **Username and password** for CalDAV/web access (you choose these)
-- **Port number** (default: 8443)
-
-That's it! The installer prompts for just these three pieces of information, then builds and starts the container. All other configuration happens via the **Settings** tab in the web UI after the container starts.
-
-### Run the installer
+### Option A: Use the installer (recommended)
 
 ```bash
 ./install.sh
 ```
 
-After the container is running, navigate to the URL shown (e.g., `http://localhost:8443`) and complete first-boot setup in the **Settings** tab:
-- Configure device sources (Supernote, Boox, or both)
-- Set paths for note files and backups
-- Enable OCR with API credentials
-- Configure RAG search and chat (optional)
+The installer prompts for **3 things**: port (default 8443), username, and password. It builds the Docker image, generates a minimal `docker-compose.yml`, starts the container, and seeds your credentials.
 
-Safe to re-run the installer to change the port:
+Open the URL shown (e.g., `http://localhost:8443`), log in, and configure everything else via the **Settings** tab: device sources, OCR, RAG search, chat.
+
+To rebuild after pulling changes:
 
 ```bash
 ./rebuild.sh
 ```
 
-### Manual setup (Docker Compose)
+### Option B: Docker Compose (manual)
 
-1. Copy `.ultrabridge.env.example` to `.ultrabridge.env` with bootstrap settings:
-   ```bash
-   cp .ultrabridge.env.example .ultrabridge.env
-   ```
-   Edit to set `UB_DB_PATH`, `UB_TASK_DB_PATH`, and `UB_LISTEN_ADDR` if needed.
+```bash
+docker build -t ultrabridge:latest .
 
-2. Create a `docker-compose.yml` (see the repo's compose file as a template)
+docker run -d --name ultrabridge \
+  -p 8443:8443 \
+  -e UB_DB_PATH=/data/ultrabridge.db \
+  -e UB_LISTEN_ADDR=:8443 \
+  -e UB_TASK_DB_PATH=/data/ultrabridge-tasks.db \
+  -v ./ultrabridge-data:/data \
+  ultrabridge:latest
+```
 
-3. Start the service:
-   ```bash
-   docker compose up -d
-   ```
-
-4. Open the web UI at `http://localhost:8443` and complete setup via the Settings tab.
+Open `http://localhost:8443` — the **setup page** appears (no auth required on first boot). Enter a username and password, then configure sources and services via **Settings**.
 
 Verify with: `curl http://localhost:8443/health` → `{"status":"ok","config_dirty":false}`
+
+### Option C: Local development (no Docker)
+
+```bash
+go build -o /tmp/ultrabridge ./cmd/ultrabridge/
+
+UB_DB_PATH=/tmp/ub-test.db \
+UB_TASK_DB_PATH=/tmp/ub-tasks.db \
+UB_LISTEN_ADDR=:8443 \
+/tmp/ultrabridge
+```
+
+Opens on `:8443` with the setup page. Configure from there.
+
+### Upgrading from env-var-based installs
+
+Existing deployments using `UB_USERNAME`, `UB_PASSWORD_HASH`, and other `UB_*` env vars continue to work — `appconfig.Load()` falls back to env vars when the database has no stored values. The one change: `UB_NOTES_PATH` and `UB_BOOX_NOTES_PATH` no longer auto-create source entries. After upgrading, add your sources via **Settings > Sources** or the `/api/sources` API.
 
 ## Web UI
 
@@ -107,14 +112,14 @@ UltraBridge exposes a single CalDAV collection at `https://your-host:8443/caldav
 ### DAVx5 (Android)
 1. **Add account** → DAVx5 settings → Add account → CalDAV
 2. **Server URL:** `https://your-host:8443/.well-known/caldav`
-3. **Login:** Username and password from `.ultrabridge.env`
+3. **Login:** Your UltraBridge username and password
 4. **Accept SSL:** If using a self-signed certificate, enable "SSL / TLS: Custom CA"
 5. **Sync:** Select "Supernote Tasks" collection
 
 ### GNOME Evolution (Linux)
 1. **Calendar** → **New Calendar** → Remote
 2. **Type:** CalDAV, **URL:** `https://your-host:8443/caldav/tasks/`
-3. **Login:** Username and password from `.ultrabridge.env`
+3. **Login:** Your UltraBridge username and password
 
 ### OpenTasks / 2Do
 Use `https://your-host:8443/.well-known/caldav` as the server URL with your credentials.
@@ -154,11 +159,6 @@ Configure sources in Settings → Sources:
 
 Each source can be enabled/disabled independently.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `UB_BOOX_ENABLED` | `false` | Enable Boox WebDAV uploads and processing |
-| `UB_BOOX_NOTES_PATH` | (empty) | Root directory for Boox note uploads (WebDAV root) |
-
 On the Boox device, configure WebDAV sync under Settings > Cloud Storage with `http://<host>:<port>/webdav/` as the server URL and your UltraBridge credentials. Uploaded notes appear in the Files tab with a "B" badge.
 
 Re-uploaded notes are versioned automatically — the previous version is archived under `.versions/` before the new file is written.
@@ -169,17 +169,11 @@ When enabled, UltraBridge generates vector embeddings for each OCR'd page using 
 
 Embeddings are stored in SQLite and loaded into an in-memory cache on startup. A background backfill runs at startup to embed any pages that were indexed before the feature was enabled. You can also trigger a backfill manually from the Settings page.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `UB_EMBED_ENABLED` | `false` | Enable embedding pipeline |
-| `UB_OLLAMA_URL` | `http://localhost:11434` | Ollama API base URL |
-| `UB_OLLAMA_EMBED_MODEL` | `nomic-embed-text:v1.5` | Embedding model name |
-
-**Setup:** Install [Ollama](https://ollama.com), pull the model, and enable the feature:
+**Setup:** Install [Ollama](https://ollama.com), pull the model, and enable the feature via Settings:
 
 ```bash
 ollama pull nomic-embed-text:v1.5
-# Then set UB_EMBED_ENABLED=true in .ultrabridge.env and restart
+# Then enable embeddings in Settings > Embedding
 ```
 
 If Ollama is unreachable, embedding silently skips — OCR indexing continues normally. You won't lose data, just vector search capability until Ollama comes back.
@@ -252,50 +246,20 @@ When enabled, a Chat tab appears in the web UI. Type a question, and UltraBridge
 
 The model is instructed to cite sources using `[filename, p.N]` format. These citations render as clickable links back to the source note page. Chat history is persisted in SQLite — conversations survive page refreshes and restarts.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `UB_CHAT_ENABLED` | `false` | Enable chat tab |
-| `UB_CHAT_API_URL` | `http://localhost:8000` | vLLM API base URL (OpenAI-compatible `/v1/chat/completions`) |
-| `UB_CHAT_MODEL` | `Qwen/Qwen3-8B` | Model name passed to the API |
-
 **Setup:** Run vLLM (or any OpenAI-compatible API) with your model of choice:
 
 ```bash
 vllm serve Qwen/Qwen3-8B
-# Then set UB_CHAT_ENABLED=true in .ultrabridge.env and restart
+# Then enable chat in Settings > Chat
 ```
 
 If vLLM is unreachable when you send a message, the chat UI shows an error instead of crashing. Previous conversations remain accessible.
 
-### Task Store
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `UB_TASK_DB_PATH` | `/data/ultrabridge-tasks.db` | Path to SQLite database for task storage |
-
 ### Supernote Sync
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `UB_SN_SYNC_ENABLED` | `false` | Enable task sync with Supernote device via SPC |
-| `UB_SN_ACCOUNT` | _(none)_ | Supernote account email (used for SPC auth) |
-| `UB_SN_SYNC_INTERVAL` | `300` | Sync interval in seconds |
-| `UB_SN_API_URL` | `http://supernote-service:8080` | SPC REST API URL |
-| `UB_SN_PASSWORD` | _(none)_ | SPC password for challenge-response auth |
+When sync is enabled (via Settings > Supernote Sync), tasks are bidirectionally synced between UltraBridge and the Supernote device via SPC. UltraBridge is authoritative on conflicts.
 
 When sync is disabled, UltraBridge runs in standalone mode with tasks stored locally in SQLite. CalDAV and the web UI work normally. MariaDB connection failure is non-fatal in this mode.
-
-When sync is enabled, tasks are bidirectionally synced between UltraBridge and the Supernote device. UltraBridge is authoritative on conflicts.
-
-### Infrastructure (rarely need to change)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `UB_DB_HOST` | `mariadb` | MariaDB hostname |
-| `UB_DB_PORT` | `3306` | MariaDB port |
-| `UB_SUPERNOTE_DBENV_PATH` | `/run/secrets/dbenv` | Path to `.dbenv` credentials file |
-| `UB_SOCKETIO_URL` | `ws://supernote-service:8080/socket.io/` | Engine.IO URL for device notifications |
-| `UB_USER_ID` | (auto-discover) | Explicit user ID if multiple users exist |
 
 ## Architecture
 
@@ -473,26 +437,26 @@ docker ps | grep mariadb
 - **"no users found"** — No users in the database yet. Sync your Supernote device first.
 - **"multiple users found"** — Set `UB_USER_ID` in `.ultrabridge.env`.
 
-### Files tab shows "UB_NOTES_PATH is not configured"
+### Files tab shows "No Supernote source configured"
 
-Set `UB_NOTES_PATH` in `.ultrabridge.env` to the directory containing your `.note` files.
+Add a Supernote source in **Settings > Sources** with the path to your `.note` files.
 
 ### OCR jobs stuck in "in_progress"
 
-The watchdog reclaims stuck jobs after 10 minutes. If jobs consistently get stuck, check `UB_OCR_API_URL` and `UB_OCR_API_KEY` are correct and the API is reachable from inside the container.
+The watchdog reclaims stuck jobs after 10 minutes. If jobs consistently get stuck, check that your OCR API URL and API key are correct in **Settings > OCR** and the API is reachable from inside the container.
 
 ### Boox WebDAV sync fails
 
-1. Verify `UB_BOOX_ENABLED=true` in `.ultrabridge.env`
+1. Verify a Boox source is added and enabled in **Settings > Sources**
 2. Check the WebDAV URL is `http://<host>:<port>/webdav/` (trailing slash required for some Boox firmware)
 3. Confirm credentials match your UltraBridge username/password
 4. Check container logs: `docker logs ultrabridge | grep boox`
 
 ### Boox notes not appearing in Files tab
 
-1. Verify `UB_BOOX_NOTES_PATH` is set and the directory exists inside the container
-2. Check the Docker volume mount includes the Boox notes path in `docker-compose.override.yml`
-3. Uploaded files should appear at `{UB_BOOX_NOTES_PATH}/onyx/{model}/...`
+1. Verify a Boox source exists in **Settings > Sources** with a valid notes path
+2. Check the Docker volume mount includes the Boox notes path
+3. Uploaded files should appear at `{notes_path}/onyx/{model}/...`
 
 ### CalDAV client shows empty collection
 
