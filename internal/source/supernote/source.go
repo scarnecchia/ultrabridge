@@ -1,0 +1,103 @@
+package supernote
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+
+	"github.com/sysop/ultrabridge/internal/notedb"
+	"github.com/sysop/ultrabridge/internal/notestore"
+	"github.com/sysop/ultrabridge/internal/pipeline"
+	"github.com/sysop/ultrabridge/internal/processor"
+	"github.com/sysop/ultrabridge/internal/source"
+)
+
+// Source implements source.Source for the Supernote notes pipeline.
+type Source struct {
+	name   string
+	cfg    Config
+	db     *sql.DB
+	deps   source.SharedDeps
+
+	// Supernote-specific dependencies (not in SharedDeps)
+	mariaDB *sql.DB       // nil = SPC catalog sync disabled
+	events  <-chan []byte // nil = Engine.IO listener disabled
+
+	proc *processor.Store
+	pl   *pipeline.Pipeline
+}
+
+// NewSource constructs a Supernote source from a source row and dependencies.
+// mariaDB and events are Supernote-specific: mariaDB enables SPC catalog sync
+// after OCR injection, events enables Engine.IO file-change notifications.
+func NewSource(db *sql.DB, row source.SourceRow, deps source.SharedDeps, mariaDB *sql.DB, events <-chan []byte) (*Source, error) {
+	var cfg Config
+	if err := json.Unmarshal([]byte(row.ConfigJSON), &cfg); err != nil {
+		return nil, fmt.Errorf("parse supernote config: %w", err)
+	}
+	return &Source{
+		name:    row.Name,
+		cfg:     cfg,
+		db:      db,
+		deps:    deps,
+		mariaDB: mariaDB,
+		events:  events,
+	}, nil
+}
+
+func (s *Source) Type() string { return "supernote" }
+func (s *Source) Name() string { return s.name }
+
+func (s *Source) Start(ctx context.Context) error {
+	ns := notestore.New(s.db, s.cfg.NotesPath)
+
+	workerCfg := processor.WorkerConfig{
+		OCREnabled: s.deps.OCRClient != nil,
+		BackupPath: s.cfg.BackupPath,
+		Indexer:    s.deps.Indexer,
+		Embedder:   s.deps.Embedder,
+		EmbedModel: s.deps.EmbedModel,
+		EmbedStore: s.deps.EmbedStore,
+		OCRPrompt: func() string {
+			v, _ := notedb.GetSetting(context.Background(), s.db, "sn_ocr_prompt")
+			return v
+		},
+		InjectEnabled: func() bool {
+			v, _ := notedb.GetSetting(context.Background(), s.db, "sn_inject_enabled")
+			return v != "false"
+		},
+	}
+	if s.mariaDB != nil {
+		workerCfg.CatalogUpdater = processor.NewSPCCatalog(s.mariaDB)
+	}
+	if s.deps.OCRClient != nil {
+		workerCfg.OCRClient = s.deps.OCRClient
+	}
+
+	s.proc = processor.New(s.db, workerCfg)
+	if workerCfg.OCREnabled {
+		if err := s.proc.Start(ctx); err != nil {
+			return fmt.Errorf("start processor: %w", err)
+		}
+	}
+
+	s.pl = pipeline.New(pipeline.Config{
+		NotesPath: s.cfg.NotesPath,
+		Store:     ns,
+		Proc:      s.proc,
+		Events:    s.events,
+		Logger:    s.deps.Logger,
+	})
+	s.pl.Start(ctx)
+	return nil
+}
+
+func (s *Source) Stop() {
+	if s.pl != nil {
+		s.pl.Close()
+	}
+	if s.proc != nil {
+		s.proc.Stop() // error logged internally
+	}
+}
