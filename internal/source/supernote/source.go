@@ -24,6 +24,7 @@ type Source struct {
 	mariaDB *sql.DB       // nil = SPC catalog sync disabled
 	events  <-chan []byte // nil = Engine.IO listener disabled
 
+	ns   *notestore.Store  // created in Start()
 	proc *processor.Store
 	pl   *pipeline.Pipeline
 }
@@ -50,7 +51,7 @@ func (s *Source) Type() string { return "supernote" }
 func (s *Source) Name() string { return s.name }
 
 func (s *Source) Start(ctx context.Context) error {
-	ns := notestore.New(s.db, s.cfg.NotesPath)
+	s.ns = notestore.New(s.db, s.cfg.NotesPath)
 
 	workerCfg := processor.WorkerConfig{
 		OCREnabled: s.deps.OCRClient != nil,
@@ -84,7 +85,7 @@ func (s *Source) Start(ctx context.Context) error {
 
 	s.pl = pipeline.New(pipeline.Config{
 		NotesPath: s.cfg.NotesPath,
-		Store:     ns,
+		Store:     s.ns,
 		Proc:      s.proc,
 		Events:    s.events,
 		Logger:    s.deps.Logger,
@@ -100,4 +101,25 @@ func (s *Source) Stop() {
 	if s.proc != nil {
 		s.proc.Stop() // error logged internally
 	}
+}
+
+// Processor returns the internal processor for backward compatibility (Phase 5).
+// This allows main.go to extract the processor for use in the web handler.
+// TODO: Phase 6 will refactor the web handler to work directly with sources.
+func (s *Source) Processor() *processor.Store {
+	return s.proc
+}
+
+// Pipeline returns the internal pipeline for backward compatibility (Phase 5).
+// This allows main.go to extract the pipeline (FileScanner) for use in the web handler.
+// TODO: Phase 6 will refactor the web handler to work directly with sources.
+func (s *Source) Pipeline() *pipeline.Pipeline {
+	return s.pl
+}
+
+// NoteStore returns the internal note store for backward compatibility (Phase 5).
+// This allows main.go to extract the note store for use in the web handler.
+// TODO: Phase 6 will refactor the web handler to work directly with sources.
+func (s *Source) NoteStore() *notestore.Store {
+	return s.ns
 }

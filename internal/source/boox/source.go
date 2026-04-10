@@ -90,3 +90,10 @@ func (s *Source) Stop() {
 		s.proc.Stop()
 	}
 }
+
+// Processor returns the internal processor for backward compatibility (Phase 5).
+// This allows main.go to extract the processor for use in the web handler.
+// TODO: Phase 6 will refactor the web handler to work directly with sources.
+func (s *Source) Processor() *booxpipeline.Processor {
+	return s.proc
+}

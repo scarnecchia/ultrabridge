@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -29,14 +28,16 @@ import (
 	"github.com/sysop/ultrabridge/internal/mcpauth"
 	"github.com/sysop/ultrabridge/internal/notedb"
 	"github.com/sysop/ultrabridge/internal/notestore"
-	"github.com/sysop/ultrabridge/internal/pipeline"
 	"github.com/sysop/ultrabridge/internal/processor"
 	"github.com/sysop/ultrabridge/internal/rag"
 	"github.com/sysop/ultrabridge/internal/search"
+	"github.com/sysop/ultrabridge/internal/source"
+	"github.com/sysop/ultrabridge/internal/source/boox"
+	"github.com/sysop/ultrabridge/internal/source/supernote"
 	"github.com/sysop/ultrabridge/internal/sync"
 	"github.com/sysop/ultrabridge/internal/taskdb"
 	"github.com/sysop/ultrabridge/internal/tasksync"
-	"github.com/sysop/ultrabridge/internal/tasksync/supernote"
+	snsync "github.com/sysop/ultrabridge/internal/tasksync/supernote"
 	"github.com/sysop/ultrabridge/internal/web"
 )
 
@@ -179,12 +180,12 @@ func main() {
 			snAPIURL := envOrDefault("UB_SN_API_URL", "http://supernote-service:8080")
 			snAccount := os.Getenv("UB_SN_ACCOUNT")
 			snPassword := os.Getenv("UB_SN_PASSWORD")
-			migClient := supernote.NewClient(snAPIURL, snAccount, snPassword, logger)
+			migClient := snsync.NewClient(snAPIURL, snAccount, snPassword, logger)
 			if err := migClient.Login(context.Background()); err != nil {
 				logger.Warn("SPC login failed for migration, starting with empty store", "error", err)
 			} else {
 				sm := tasksync.NewSyncMap(taskDB)
-				count, err := supernote.MigrateFromSPC(context.Background(), migClient, store, sm, logger)
+				count, err := snsync.MigrateFromSPC(context.Background(), migClient, store, sm, logger)
 				if err != nil {
 					logger.Warn("migration from SPC failed", "error", err)
 				} else {
@@ -230,8 +231,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Notes pipeline components
-	ns := notestore.New(noteDB, cfg.NotesPath)
+	// Shared infrastructure (not per-source)
 	si := search.New(noteDB)
 
 	// Initialize embedding pipeline if enabled
@@ -272,90 +272,113 @@ func main() {
 		retriever = rag.NewRetriever(noteDB, si, nil, nil, logger)
 	}
 
-	workerCfg := processor.WorkerConfig{
-		OCREnabled: cfg.OCREnabled,
-		BackupPath: cfg.BackupPath,
-		MaxFileMB:  cfg.OCRMaxFileMB,
-		Indexer:    si,
-		Embedder:   embedder,
-		EmbedModel: cfg.OllamaEmbedModel,
-		EmbedStore: embedStore,
-		OCRPrompt: func() string {
-			v, _ := notedb.GetSetting(context.Background(), noteDB, "sn_ocr_prompt")
-			return v
-		},
-		InjectEnabled: func() bool {
-			v, _ := notedb.GetSetting(context.Background(), noteDB, "sn_inject_enabled")
-			return v != "false" // default true
-		},
-	}
-	if database != nil {
-		workerCfg.CatalogUpdater = processor.NewSPCCatalog(database)
-	}
-	if cfg.OCREnabled && cfg.OCRAPIURL != "" {
-		workerCfg.OCRClient = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel, cfg.OCRFormat)
-	}
-	proc := processor.New(noteDB, workerCfg)
-	if cfg.OCREnabled {
-		if err := proc.Start(context.Background()); err != nil {
-			logger.Warn("processor start failed", "err", err)
-		}
-		defer proc.Stop()
-	}
-
-	pl := pipeline.New(pipeline.Config{
-		NotesPath: cfg.NotesPath,
-		Store:     ns,
-		Proc:      proc,
-		Events:    notifier.Events(),
-		Logger:    logger,
+	// Set up source registry with factory closures
+	registry := source.NewRegistry()
+	registry.Register("supernote", func(db *sql.DB, row source.SourceRow, deps source.SharedDeps) (source.Source, error) {
+		return supernote.NewSource(db, row, deps, database, notifier.Events())
 	})
-	pl.Start(context.Background())
-	defer pl.Close()
-
-	// Wire Boox pipeline if enabled
-	var booxProc *booxpipeline.Processor
-	if cfg.BooxEnabled && cfg.BooxNotesPath != "" {
-		booxCfg := booxpipeline.WorkerConfig{
-			Indexer:        si,  // shared search.Store (same as Supernote)
-			ContentDeleter: si,  // search.Store also satisfies ContentDeleter
-			CachePath:      filepath.Join(cfg.BooxNotesPath, ".cache"),
-			Embedder:       embedder,
-			EmbedModel:     cfg.OllamaEmbedModel,
-			EmbedStore:     embedStore,
-			OCRPrompt: func() string {
-				v, _ := notedb.GetSetting(context.Background(), noteDB, "boox_ocr_prompt")
-				return v
-			},
-			TodoEnabled: func() bool {
-				v, _ := notedb.GetSetting(context.Background(), noteDB, "boox_todo_enabled")
-				return v == "true"
-			},
-			TodoPrompt: func() string {
-				v, _ := notedb.GetSetting(context.Background(), noteDB, "boox_todo_prompt")
-				return v
-			},
+	registry.Register("boox", func(db *sql.DB, row source.SourceRow, deps source.SharedDeps) (source.Source, error) {
+		return boox.NewSource(db, row, deps, boox.BooxDeps{
+			ContentDeleter: si,
 			OnTodosFound: func(ctx context.Context, notePath string, todos []booxpipeline.TodoItem) {
 				created := booxpipeline.CreateTasksFromTodos(ctx, store, notePath, todos, logger)
 				if created > 0 && notifier != nil {
 					notifier.Notify(ctx)
 				}
 			},
+		})
+	})
+
+	// Create shared dependencies for sources
+	var ocrClient *processor.OCRClient
+	if cfg.OCREnabled && cfg.OCRAPIURL != "" {
+		ocrClient = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel, cfg.OCRFormat)
+	}
+
+	deps := source.SharedDeps{
+		Indexer:    si,
+		Embedder:   embedder,
+		EmbedModel: cfg.OllamaEmbedModel,
+		EmbedStore: embedStore,
+		OCRClient:  ocrClient,
+		Logger:     logger,
+	}
+
+	// List enabled sources from DB
+	rows, err := source.ListEnabledSources(context.Background(), noteDB)
+	if err != nil {
+		logger.Error("list sources failed", "err", err)
+		os.Exit(1)
+	}
+
+	// Backward compatibility: seed sources from env vars if DB is empty
+	if len(rows) == 0 {
+		if cfg.NotesPath != "" {
+			source.AddSource(context.Background(), noteDB, source.SourceRow{
+				Type:       "supernote",
+				Name:       "Supernote",
+				Enabled:    true,
+				ConfigJSON: fmt.Sprintf(`{"notes_path":%q,"backup_path":%q}`, cfg.NotesPath, cfg.BackupPath),
+				CreatedAt:  time.Now().UnixMilli(),
+				UpdatedAt:  time.Now().UnixMilli(),
+			})
 		}
-		if cfg.OCREnabled && cfg.OCRAPIURL != "" {
-			booxCfg.OCR = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel, cfg.OCRFormat)
+		if cfg.BooxEnabled && cfg.BooxNotesPath != "" {
+			source.AddSource(context.Background(), noteDB, source.SourceRow{
+				Type:       "boox",
+				Name:       "Boox",
+				Enabled:    true,
+				ConfigJSON: fmt.Sprintf(`{"notes_path":%q}`, cfg.BooxNotesPath),
+				CreatedAt:  time.Now().UnixMilli(),
+				UpdatedAt:  time.Now().UnixMilli(),
+			})
 		}
-		booxProc = booxpipeline.New(noteDB, cfg.BooxNotesPath, booxCfg, logger)
-		if err := booxProc.Start(context.Background()); err != nil {
-			logger.Warn("boox processor start failed", "err", err)
-		} else {
-			defer booxProc.Stop()
+		// Re-read after seeding
+		rows, _ = source.ListEnabledSources(context.Background(), noteDB)
+	}
+
+	// Start sources
+	var sources []source.Source
+	for _, row := range rows {
+		s, err := registry.Create(noteDB, row, deps)
+		if err != nil {
+			logger.Warn("skipping source", "type", row.Type, "name", row.Name, "err", err)
+			continue // AC2.7 + AC2.8: unknown type or bad config → skip, don't crash
 		}
-		// Sync import path from env var to settings DB so the web handler can read it.
-		booxImportPath := os.Getenv("UB_BOOX_IMPORT_PATH")
-		if booxImportPath != "" {
-			notedb.SetSetting(context.Background(), noteDB, "boox_import_path", booxImportPath)
+		if err := s.Start(context.Background()); err != nil {
+			logger.Warn("source start failed", "type", row.Type, "name", row.Name, "err", err)
+			continue
 		}
+		defer s.Stop()
+		sources = append(sources, s)
+		logger.Info("source started", "type", s.Type(), "name", s.Name())
+	}
+
+	// Extract components for web handler backward compatibility (Phase 5)
+	// TODO: Phase 6 will refactor handler to work directly with sources
+	var ns notestore.NoteStore
+	var pl web.FileScanner
+	var proc *processor.Store
+	var booxProc *booxpipeline.Processor
+	for _, s := range sources {
+		switch s.Type() {
+		case "supernote":
+			if snSource, ok := s.(*supernote.Source); ok {
+				ns = snSource.NoteStore()
+				pl = snSource.Pipeline()
+				proc = snSource.Processor()
+			}
+		case "boox":
+			if booxSource, ok := s.(*boox.Source); ok {
+				booxProc = booxSource.Processor()
+			}
+		}
+	}
+
+	// Sync import path from env var to settings DB so the web handler can read it.
+	booxImportPath := os.Getenv("UB_BOOX_IMPORT_PATH")
+	if booxImportPath != "" {
+		notedb.SetSetting(context.Background(), noteDB, "boox_import_path", booxImportPath)
 	}
 
 	// Start sync engine if enabled
@@ -365,7 +388,7 @@ func main() {
 			store, taskDB, logger,
 			time.Duration(cfg.SNSyncInterval)*time.Second,
 		)
-		snAdapter := supernote.NewAdapter(cfg.SNAPIURL, cfg.SNAccount, cfg.SNPassword, notifier, logger)
+		snAdapter := snsync.NewAdapter(cfg.SNAPIURL, cfg.SNAccount, cfg.SNPassword, notifier, logger)
 		syncEngine.RegisterAdapter(snAdapter)
 		if err := syncEngine.Start(context.Background()); err != nil {
 			logger.Warn("sync engine start failed", "error", err)
