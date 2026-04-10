@@ -237,7 +237,7 @@ fi
 
 info "Seeding initial user credentials..."
 
-docker exec ultrabridge /ultrabridge seed-user "$UB_USERNAME" "$UB_PASSWORD" || fail "Failed to seed user credentials"
+docker exec ultrabridge ultrabridge seed-user "$UB_USERNAME" "$UB_PASSWORD" || fail "Failed to seed user credentials"
 
 ok "User credentials saved"
 
