@@ -341,6 +341,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 // Settings keys for per-pipeline OCR prompts.
 const (
+	SettingKeySNInjectEnabled = "sn_inject_enabled"
 	SettingKeySNOCRPrompt     = "sn_ocr_prompt"
 	SettingKeyBooxOCRPrompt   = "boox_ocr_prompt"
 	SettingKeyBooxTodoEnabled = "boox_todo_enabled"
@@ -366,6 +367,9 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Load OCR prompts from DB, falling back to default.
 	if h.noteDB != nil {
+		snInject, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeySNInjectEnabled)
+		data["SNInjectEnabled"] = snInject != "false" // default true
+
 		snPrompt, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeySNOCRPrompt)
 		if snPrompt == "" {
 			snPrompt = processor.DefaultOCRPrompt
@@ -447,6 +451,13 @@ func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	if h.noteDB != nil {
 		switch section {
 		case "supernote":
+			injectEnabled := "true"
+			if r.FormValue("inject_enabled") == "false" {
+				injectEnabled = "false"
+			}
+			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeySNInjectEnabled, injectEnabled); err != nil {
+				h.logger.Error("save setting", "key", SettingKeySNInjectEnabled, "error", err)
+			}
 			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeySNOCRPrompt, ocrPrompt); err != nil {
 				h.logger.Error("save setting", "key", SettingKeySNOCRPrompt, "error", err)
 			}

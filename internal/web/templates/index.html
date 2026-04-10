@@ -621,6 +621,15 @@
             {{else}}
               <form method="POST" action="/settings/save">
                 <input type="hidden" name="section" value="supernote">
+
+                <label for="sn-inject-enabled" style="font-weight:bold; display:block; margin-bottom:0.3rem;">JIIX Text Injection</label>
+                <p class="device-info" style="margin-bottom:0.5rem;">When enabled, OCR'd text is injected back into .note files as RECOGNTEXT (JIIX format). Disable to OCR and index without modifying note files.</p>
+                <select id="sn-inject-enabled" name="inject_enabled"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:1rem;">
+                  <option value="true"{{if .SNInjectEnabled}} selected{{end}}>Enabled</option>
+                  <option value="false"{{if not .SNInjectEnabled}} selected{{end}}>Disabled</option>
+                </select>
+
                 <label for="sn-ocr-prompt" style="font-weight:bold; display:block; margin-bottom:0.3rem;">OCR Prompt</label>
                 <p class="device-info" style="margin-bottom:0.5rem;">Sent to the vision API with each rendered page image.</p>
                 <textarea id="sn-ocr-prompt" name="ocr_prompt" rows="3"

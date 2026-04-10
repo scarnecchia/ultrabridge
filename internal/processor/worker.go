@@ -162,8 +162,10 @@ func (s *Store) executeJob(ctx context.Context, job *Job) error {
 			return fmt.Errorf("OCR page %d: %w", pageIdx, err)
 		}
 
-		// Only inject and write for Standard notes; RTR notes skip file modification
-		if !isRTR {
+		// Only inject and write for Standard notes; RTR notes skip file modification.
+		// InjectEnabled closure allows runtime toggle via Settings UI.
+		injectEnabled := s.cfg.InjectEnabled == nil || s.cfg.InjectEnabled()
+		if !isRTR && injectEnabled {
 			// Compute stroke bounds for bounding box
 			strokes, err := gosnote.DecodeTotalPath(tp, pageW, pageH)
 			if err != nil {

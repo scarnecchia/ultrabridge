@@ -223,6 +223,10 @@ func main() {
 			v, _ := notedb.GetSetting(context.Background(), noteDB, "sn_ocr_prompt")
 			return v
 		},
+		InjectEnabled: func() bool {
+			v, _ := notedb.GetSetting(context.Background(), noteDB, "sn_inject_enabled")
+			return v != "false" // default true
+		},
 	}
 	if database != nil {
 		workerCfg.CatalogUpdater = processor.NewSPCCatalog(database)
