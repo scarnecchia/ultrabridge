@@ -740,6 +740,40 @@
 
             <button type="button" onclick="showAddSourceForm()" style="padding:0.3rem 0.8rem;">+ Add Source</button>
             <span id="sources-status" style="margin-left:1rem; font-size:0.9rem;"></span>
+
+            <div id="source-form" style="display:none; margin-top:1rem; padding:1rem; border:1px solid #e5e7eb; border-radius:6px; background:#fafafa;">
+              <h3 id="source-form-title" style="margin-bottom:0.75rem;">Add Source</h3>
+              <input type="hidden" id="source-form-id" value="">
+              <div style="margin-bottom:0.5rem;">
+                <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Type</label>
+                <select id="source-type" onchange="updateSourceConfigFields()" style="padding:0.3rem; width:100%; max-width:300px;">
+                  <option value="supernote">Supernote</option>
+                  <option value="boox">Boox</option>
+                </select>
+              </div>
+              <div style="margin-bottom:0.5rem;">
+                <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Name</label>
+                <input type="text" id="source-name" placeholder="e.g. My Supernote" style="padding:0.3rem; width:100%; max-width:300px;">
+              </div>
+              <div style="margin-bottom:0.5rem;">
+                <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Enabled</label>
+                <input type="checkbox" id="source-enabled" checked>
+              </div>
+              <div id="source-config-fields">
+                <div style="margin-bottom:0.5rem;" id="field-notes-path">
+                  <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Notes Path</label>
+                  <input type="text" id="source-notes-path" placeholder="/data/notes" style="padding:0.3rem; width:100%; max-width:300px;">
+                </div>
+                <div style="margin-bottom:0.5rem;" id="field-backup-path">
+                  <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Backup Path</label>
+                  <input type="text" id="source-backup-path" placeholder="/data/backup" style="padding:0.3rem; width:100%; max-width:300px;">
+                </div>
+              </div>
+              <div style="margin-top:0.75rem;">
+                <button type="button" onclick="saveSource()" style="padding:0.3rem 0.8rem;">Save</button>
+                <button type="button" onclick="cancelSourceForm()" style="padding:0.3rem 0.8rem; margin-left:0.5rem; background:#6c757d;">Cancel</button>
+              </div>
+            </div>
           </div>
           {{end}}
 
@@ -1622,30 +1656,26 @@
 
         // Sources API functions
         function toggleSourceEnabled(sourceId, enabled) {
-          // Would need to implement full update; for now just toggle in UI
-          console.log('Toggle source', sourceId, 'to', enabled);
-        }
-
-        function editSource(sourceId) {
-          // TODO: implement edit modal
-          console.log('Edit source', sourceId);
-        }
-
-        function deleteSource(sourceId) {
-          if (!confirm('Delete this source?')) return;
-
           var statusEl = document.getElementById('sources-status');
-          statusEl.textContent = 'Deleting...';
-
-          fetch('/api/sources/' + sourceId, { method: 'DELETE' })
+          statusEl.textContent = 'Updating...';
+          // Fetch current source, toggle enabled, PUT back
+          fetch('/api/sources')
+          .then(r => r.json())
+          .then(sources => {
+            var src = sources.find(s => s.ID === sourceId);
+            if (!src) throw new Error('Source not found');
+            src.enabled = enabled;
+            return fetch('/api/sources/' + sourceId, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(src)
+            });
+          })
           .then(r => {
             if (!r.ok) throw new Error('HTTP ' + r.status);
-            // Remove row from table
-            var row = document.querySelector('[data-source-id="' + sourceId + '"]');
-            if (row) row.remove();
-            statusEl.textContent = 'Deleted.';
+            statusEl.textContent = enabled ? 'Enabled. Restart to apply.' : 'Disabled. Restart to apply.';
             statusEl.style.color = '#090';
-            setTimeout(() => { statusEl.textContent = ''; }, 2000);
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
           })
           .catch(e => {
             statusEl.textContent = 'Error: ' + e.message;
@@ -1653,9 +1683,125 @@
           });
         }
 
+        function updateSourceConfigFields() {
+          var type = document.getElementById('source-type').value;
+          var backupField = document.getElementById('field-backup-path');
+          backupField.style.display = (type === 'supernote') ? 'block' : 'none';
+        }
+
         function showAddSourceForm() {
-          // TODO: implement add source modal
-          console.log('Show add source form');
+          document.getElementById('source-form').style.display = 'block';
+          document.getElementById('source-form-title').textContent = 'Add Source';
+          document.getElementById('source-form-id').value = '';
+          document.getElementById('source-type').value = 'supernote';
+          document.getElementById('source-type').disabled = false;
+          document.getElementById('source-name').value = '';
+          document.getElementById('source-enabled').checked = true;
+          document.getElementById('source-notes-path').value = '';
+          document.getElementById('source-backup-path').value = '';
+          updateSourceConfigFields();
+        }
+
+        function editSource(sourceId) {
+          var statusEl = document.getElementById('sources-status');
+          statusEl.textContent = 'Loading...';
+          fetch('/api/sources')
+          .then(r => r.json())
+          .then(sources => {
+            var src = sources.find(s => s.ID === sourceId);
+            if (!src) throw new Error('Source not found');
+            statusEl.textContent = '';
+            document.getElementById('source-form').style.display = 'block';
+            document.getElementById('source-form-title').textContent = 'Edit Source';
+            document.getElementById('source-form-id').value = src.ID;
+            document.getElementById('source-type').value = src.Type;
+            document.getElementById('source-type').disabled = true;
+            document.getElementById('source-name').value = src.Name;
+            document.getElementById('source-enabled').checked = src.Enabled;
+            var cfg = {};
+            try { cfg = JSON.parse(src.ConfigJSON || '{}'); } catch(e) {}
+            document.getElementById('source-notes-path').value = cfg.notes_path || '';
+            document.getElementById('source-backup-path').value = cfg.backup_path || '';
+            updateSourceConfigFields();
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
+        }
+
+        function cancelSourceForm() {
+          document.getElementById('source-form').style.display = 'none';
+        }
+
+        function saveSource() {
+          var statusEl = document.getElementById('sources-status');
+          var id = document.getElementById('source-form-id').value;
+          var type = document.getElementById('source-type').value;
+          var name = document.getElementById('source-name').value.trim();
+          var enabled = document.getElementById('source-enabled').checked;
+          var notesPath = document.getElementById('source-notes-path').value.trim();
+          var backupPath = document.getElementById('source-backup-path').value.trim();
+
+          if (!name) { statusEl.textContent = 'Name is required.'; statusEl.style.color = '#c00'; return; }
+          if (!notesPath) { statusEl.textContent = 'Notes path is required.'; statusEl.style.color = '#c00'; return; }
+
+          var configObj = { notes_path: notesPath };
+          if (type === 'supernote' && backupPath) {
+            configObj.backup_path = backupPath;
+          }
+
+          var body = {
+            type: type,
+            name: name,
+            enabled: enabled,
+            config_json: JSON.stringify(configObj)
+          };
+
+          var method = id ? 'PUT' : 'POST';
+          var url = id ? '/api/sources/' + id : '/api/sources';
+
+          statusEl.textContent = 'Saving...';
+          fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          })
+          .then(r => {
+            if (!r.ok) return r.json().then(j => { throw new Error(j.error || 'HTTP ' + r.status); });
+            return r.json();
+          })
+          .then(() => {
+            statusEl.textContent = 'Saved. Reload to see changes.';
+            statusEl.style.color = '#090';
+            document.getElementById('source-form').style.display = 'none';
+            setTimeout(() => location.reload(), 500);
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
+        }
+
+        function deleteSource(sourceId) {
+          if (!confirm('Delete this source? Requires restart to take effect.')) return;
+
+          var statusEl = document.getElementById('sources-status');
+          statusEl.textContent = 'Deleting...';
+
+          fetch('/api/sources/' + sourceId, { method: 'DELETE' })
+          .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            var row = document.querySelector('[data-source-id="' + sourceId + '"]');
+            if (row) row.remove();
+            statusEl.textContent = 'Deleted. Restart to apply.';
+            statusEl.style.color = '#090';
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
         }
     </script>
 </body>
