@@ -198,6 +198,9 @@ echo
 
 info "Starting UltraBridge..."
 
+# Remove any existing container with this name (from prior install or manual docker run)
+docker rm -f ultrabridge 2>/dev/null || true
+
 docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --force-recreate ultrabridge || fail "Failed to start container"
 
 # --- verify ---
