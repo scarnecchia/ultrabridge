@@ -1,0 +1,464 @@
+package appconfig
+
+import (
+	"context"
+	"database/sql"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/sysop/ultrabridge/internal/notedb"
+)
+
+// openTestDB opens an in-memory SQLite database for testing.
+func openTestDB(t *testing.T) *sql.DB {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	db, err := notedb.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open test DB: %v", err)
+	}
+	return db
+}
+
+// TestLoadReadsFromDB verifies that Load reads config keys from the DB.
+// Covers: platform-neutral-config.AC1.1
+func TestLoadReadsFromDB(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Pre-populate some settings.
+	if err := notedb.SetSetting(ctx, db, KeyUsername, "alice"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+	if err := notedb.SetSetting(ctx, db, KeyOCREnabled, "true"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+	if err := notedb.SetSetting(ctx, db, KeyOCRConcurrency, "4"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+	if err := notedb.SetSetting(ctx, db, KeyLogLevel, "debug"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	// Load the config.
+	cfg, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Verify typed fields match DB values.
+	if cfg.Username != "alice" {
+		t.Errorf("expected Username=alice, got %q", cfg.Username)
+	}
+	if !cfg.OCREnabled {
+		t.Errorf("expected OCREnabled=true, got false")
+	}
+	if cfg.OCRConcurrency != 4 {
+		t.Errorf("expected OCRConcurrency=4, got %d", cfg.OCRConcurrency)
+	}
+	if cfg.LogLevel != "debug" {
+		t.Errorf("expected LogLevel=debug, got %q", cfg.LogLevel)
+	}
+}
+
+// TestLoadAppliesDefaults verifies that missing keys get default values.
+func TestLoadAppliesDefaults(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Load with empty DB.
+	cfg, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Verify defaults are applied.
+	if cfg.OCRFormat != "anthropic" {
+		t.Errorf("expected OCRFormat=anthropic (default), got %q", cfg.OCRFormat)
+	}
+	if cfg.OllamaURL != "http://localhost:11434" {
+		t.Errorf("expected OllamaURL=http://localhost:11434 (default), got %q", cfg.OllamaURL)
+	}
+	if cfg.LogLevel != "info" {
+		t.Errorf("expected LogLevel=info (default), got %q", cfg.LogLevel)
+	}
+	if cfg.WebEnabled != true {
+		t.Errorf("expected WebEnabled=true (default), got false")
+	}
+}
+
+// TestLoadEnvVarOverride verifies that env vars override DB values.
+// Covers: platform-neutral-config.AC1.3
+func TestLoadEnvVarOverride(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Set a value in DB.
+	if err := notedb.SetSetting(ctx, db, KeyOCRFormat, "openai"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	// Set an env var to override it.
+	t.Cleanup(func() { os.Unsetenv("UB_OCR_FORMAT") })
+	os.Setenv("UB_OCR_FORMAT", "anthropic")
+
+	cfg, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Env var should win.
+	if cfg.OCRFormat != "anthropic" {
+		t.Errorf("expected OCRFormat=anthropic (from env), got %q", cfg.OCRFormat)
+	}
+}
+
+// TestLoadFirstBootFallsBackToEnv verifies that with no DB values, env vars are used.
+// Covers: platform-neutral-config.AC1.8
+func TestLoadFirstBootFallsBackToEnv(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Set env vars but leave DB empty.
+	t.Cleanup(func() {
+		os.Unsetenv("UB_USERNAME")
+		os.Unsetenv("UB_LOG_LEVEL")
+	})
+	os.Setenv("UB_USERNAME", "bob")
+	os.Setenv("UB_LOG_LEVEL", "warn")
+
+	cfg, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Env vars should be used.
+	if cfg.Username != "bob" {
+		t.Errorf("expected Username=bob (from env), got %q", cfg.Username)
+	}
+	if cfg.LogLevel != "warn" {
+		t.Errorf("expected LogLevel=warn (from env), got %q", cfg.LogLevel)
+	}
+}
+
+// TestSaveWritesChangedKeys verifies that Save writes changed keys to DB.
+// Covers: platform-neutral-config.AC1.2
+func TestSaveWritesChangedKeys(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Set initial values.
+	if err := notedb.SetSetting(ctx, db, KeyUsername, "alice"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+	if err := notedb.SetSetting(ctx, db, KeyLogLevel, "info"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	// Load the config.
+	cfg, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Modify it.
+	cfg.Username = "bob"
+	cfg.LogLevel = "debug"
+
+	// Save it.
+	result, err := Save(ctx, db, cfg)
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Verify changed keys are reported.
+	if len(result.ChangedKeys) != 2 {
+		t.Errorf("expected 2 changed keys, got %d: %v", len(result.ChangedKeys), result.ChangedKeys)
+	}
+
+	// Verify DB has new values.
+	username, err := notedb.GetSetting(ctx, db, KeyUsername)
+	if err != nil {
+		t.Fatalf("GetSetting failed: %v", err)
+	}
+	if username != "bob" {
+		t.Errorf("expected DB Username=bob, got %q", username)
+	}
+
+	logLevel, err := notedb.GetSetting(ctx, db, KeyLogLevel)
+	if err != nil {
+		t.Fatalf("GetSetting failed: %v", err)
+	}
+	if logLevel != "debug" {
+		t.Errorf("expected DB LogLevel=debug, got %q", logLevel)
+	}
+}
+
+// TestSaveDetectsRestartRequired verifies that Save detects restart-required keys.
+func TestSaveDetectsRestartRequired(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Load initial config.
+	cfg, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Modify a restart-required key.
+	cfg.OCREnabled = true
+
+	result, err := Save(ctx, db, cfg)
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// RestartRequired should be true.
+	if !result.RestartRequired {
+		t.Errorf("expected RestartRequired=true, got false")
+	}
+}
+
+// TestSaveNoChanges verifies that Save with no changes returns empty ChangedKeys.
+func TestSaveNoChanges(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Set some initial values.
+	if err := notedb.SetSetting(ctx, db, KeyUsername, "alice"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	// Load and save without changes.
+	cfg, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	result, err := Save(ctx, db, cfg)
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// No changes should be reported.
+	if len(result.ChangedKeys) != 0 {
+		t.Errorf("expected 0 changed keys, got %d: %v", len(result.ChangedKeys), result.ChangedKeys)
+	}
+	if result.RestartRequired {
+		t.Errorf("expected RestartRequired=false when no changes, got true")
+	}
+}
+
+// TestBoolParsing verifies that bool fields are parsed correctly.
+func TestBoolParsing(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		dbValue   string
+		expected  bool
+	}{
+		{"true", "true", true},
+		{"false", "false", false},
+		{"1", "1", true},
+		{"0", "0", false},
+		{"True", "True", true},
+		{"FALSE", "FALSE", false},
+		{"empty", "", true}, // Empty gets the default: true
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear DB for this test.
+			testDB := openTestDB(t)
+
+			if tt.dbValue != "" {
+				if err := notedb.SetSetting(ctx, testDB, KeyWebEnabled, tt.dbValue); err != nil {
+					t.Fatalf("SetSetting failed: %v", err)
+				}
+			}
+
+			cfg, err := Load(ctx, testDB)
+			if err != nil {
+				t.Fatalf("Load failed: %v", err)
+			}
+
+			if cfg.WebEnabled != tt.expected {
+				t.Errorf("expected WebEnabled=%v for %q, got %v", tt.expected, tt.dbValue, cfg.WebEnabled)
+			}
+		})
+	}
+}
+
+// TestIntParsing verifies that int fields are parsed correctly.
+func TestIntParsing(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Set int values.
+	if err := notedb.SetSetting(ctx, db, KeyOCRConcurrency, "42"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+	if err := notedb.SetSetting(ctx, db, KeyLogFileMaxMB, "123"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	cfg, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if cfg.OCRConcurrency != 42 {
+		t.Errorf("expected OCRConcurrency=42, got %d", cfg.OCRConcurrency)
+	}
+	if cfg.LogFileMaxMB != 123 {
+		t.Errorf("expected LogFileMaxMB=123, got %d", cfg.LogFileMaxMB)
+	}
+}
+
+// TestIntParsingFallsBackToDefault verifies that invalid ints fall back to default.
+func TestIntParsingFallsBackToDefault(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Set an invalid int value.
+	if err := notedb.SetSetting(ctx, db, KeyOCRConcurrency, "not_a_number"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	cfg, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Should fall back to default (1).
+	if cfg.OCRConcurrency != 1 {
+		t.Errorf("expected OCRConcurrency=1 (default), got %d", cfg.OCRConcurrency)
+	}
+}
+
+// TestRoundtrip verifies that Save followed by Load preserves all values.
+func TestRoundtrip(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Create a config with non-default values.
+	original := &Config{
+		Username:         "alice",
+		PasswordHash:     "hashed_password",
+		OCREnabled:       true,
+		OCRAPIURL:        "https://api.anthropic.com",
+		OCRAPIKey:        "secret_key",
+		OCRModel:         "claude-3",
+		OCRConcurrency:   8,
+		OCRMaxFileMB:     100,
+		OCRFormat:        "openai",
+		EmbedEnabled:     true,
+		OllamaURL:        "http://custom:11434",
+		OllamaEmbedModel: "custom-model",
+		ChatEnabled:      true,
+		ChatAPIURL:       "http://custom-chat:8000",
+		ChatModel:        "custom-chat-model",
+		SNSyncEnabled:    true,
+		SNSyncInterval:   600,
+		SNAPIURL:         "http://custom-sn:8080",
+		SNAccount:        "account123",
+		SNPassword:       "password123",
+		LogLevel:         "debug",
+		LogFormat:        "text",
+		LogFile:          "/var/log/app.log",
+		LogFileMaxMB:     100,
+		LogFileMaxAge:    60,
+		LogFileMaxBackup: 10,
+		LogSyslogAddr:    "localhost:514",
+		CalDAVCollectionName: "My Tasks",
+		DueTimeMode:      "date_only",
+		WebEnabled:       false,
+		SocketIOURL:      "ws://custom:8080/socket.io/",
+		DBHost:           "custom-db",
+		DBPort:           "5432",
+		DBEnvPath:        "/custom/.dbenv",
+		UserID:           999,
+		NotesPath:        "/notes",
+		BackupPath:       "/backup",
+		BooxEnabled:      true,
+		BooxNotesPath:    "/boox",
+	}
+
+	// Save it.
+	if _, err := Save(ctx, db, original); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Load it back.
+	loaded, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Verify all fields match.
+	if loaded.Username != original.Username {
+		t.Errorf("Username mismatch: expected %q, got %q", original.Username, loaded.Username)
+	}
+	if loaded.PasswordHash != original.PasswordHash {
+		t.Errorf("PasswordHash mismatch: expected %q, got %q", original.PasswordHash, loaded.PasswordHash)
+	}
+	if loaded.OCREnabled != original.OCREnabled {
+		t.Errorf("OCREnabled mismatch: expected %v, got %v", original.OCREnabled, loaded.OCREnabled)
+	}
+	if loaded.OCRAPIURL != original.OCRAPIURL {
+		t.Errorf("OCRAPIURL mismatch: expected %q, got %q", original.OCRAPIURL, loaded.OCRAPIURL)
+	}
+	if loaded.OCRConcurrency != original.OCRConcurrency {
+		t.Errorf("OCRConcurrency mismatch: expected %d, got %d", original.OCRConcurrency, loaded.OCRConcurrency)
+	}
+	if loaded.ChatEnabled != original.ChatEnabled {
+		t.Errorf("ChatEnabled mismatch: expected %v, got %v", original.ChatEnabled, loaded.ChatEnabled)
+	}
+	if loaded.DBPort != original.DBPort {
+		t.Errorf("DBPort mismatch: expected %q, got %q", original.DBPort, loaded.DBPort)
+	}
+	if loaded.UserID != original.UserID {
+		t.Errorf("UserID mismatch: expected %d, got %d", original.UserID, loaded.UserID)
+	}
+	if loaded.WebEnabled != original.WebEnabled {
+		t.Errorf("WebEnabled mismatch: expected %v, got %v", original.WebEnabled, loaded.WebEnabled)
+	}
+}
+
+// TestEnvironmentVariableOverride verifies complex env var scenarios.
+func TestEnvironmentVariableOverride(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Pre-set DB values.
+	if err := notedb.SetSetting(ctx, db, KeyOCREnabled, "false"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+	if err := notedb.SetSetting(ctx, db, KeyOCRConcurrency, "2"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	// Set env vars.
+	t.Cleanup(func() {
+		os.Unsetenv("UB_OCR_ENABLED")
+		os.Unsetenv("UB_OCR_CONCURRENCY")
+	})
+	os.Setenv("UB_OCR_ENABLED", "true")
+	os.Setenv("UB_OCR_CONCURRENCY", "4")
+
+	cfg, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Env vars should override DB values.
+	if !cfg.OCREnabled {
+		t.Errorf("expected OCREnabled=true (from env), got false")
+	}
+	if cfg.OCRConcurrency != 4 {
+		t.Errorf("expected OCRConcurrency=4 (from env), got %d", cfg.OCRConcurrency)
+	}
+}
