@@ -17,10 +17,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	gosnote "github.com/jdkruzr/go-sn/note"
 
+	"github.com/sysop/ultrabridge/internal/appconfig"
 	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/chat"
@@ -117,6 +119,8 @@ type Handler struct {
 	ollamaModel     string
 	chatAPIURL      string
 	chatModel       string
+	runningConfig   *appconfig.Config  // config loaded at startup for drift detection
+	configDirty     atomic.Bool          // set to true when config changes require restart
 }
 
 // formatDueTime converts a millisecond Unix timestamp to a formatted date string.
@@ -138,7 +142,7 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string, retriever rag.SearchRetriever, chatHandler *chat.Handler, chatStore *chat.Store, ragDisplay RAGDisplayConfig) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string, retriever rag.SearchRetriever, chatHandler *chat.Handler, chatStore *chat.Store, ragDisplay RAGDisplayConfig, runningConfig *appconfig.Config) *Handler {
 	h := &Handler{
 		store:         store,
 		notifier:      notifier,
@@ -166,6 +170,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		ollamaModel:   ragDisplay.OllamaModel,
 		chatAPIURL:    ragDisplay.ChatAPIURL,
 		chatModel:     ragDisplay.ChatModel,
+		runningConfig: runningConfig,
 	}
 
 	// Cache the import path for the noteSource template function.
@@ -285,6 +290,16 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		h.mux.HandleFunc("GET /api/notes/pages/image", h.handleAPIGetImage)
 	}
 
+	// Config and sources API endpoints
+	if h.noteDB != nil {
+		h.mux.HandleFunc("GET /api/config", h.handleGetConfig)
+		h.mux.HandleFunc("PUT /api/config", h.handlePutConfig)
+		h.mux.HandleFunc("GET /api/sources", h.handleListSources)
+		h.mux.HandleFunc("POST /api/sources", h.handleAddSource)
+		h.mux.HandleFunc("PUT /api/sources/{id}", h.handleUpdateSource)
+		h.mux.HandleFunc("DELETE /api/sources/{id}", h.handleDeleteSource)
+	}
+
 	// Chat routes (requires chatHandler)
 	if h.chatHandler != nil {
 		h.mux.HandleFunc("GET /chat", h.handleChat)
@@ -299,6 +314,14 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 // ServeHTTP implements http.Handler
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
+}
+
+// IsConfigDirty returns true if config has changed and restart is required.
+func (h *Handler) IsConfigDirty() bool {
+	if h == nil {
+		return false
+	}
+	return h.configDirty.Load()
 }
 
 // baseTemplateData returns shared data needed by all routes that render index.html.

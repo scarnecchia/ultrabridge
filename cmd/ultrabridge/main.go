@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -424,9 +425,21 @@ func main() {
 	logger = slog.New(broadcastHandler)
 
 	mux := http.NewServeMux()
+	var webHandler *web.Handler // will be set later if web is enabled
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		configDirty := false
+		if webHandler != nil {
+			configDirty = webHandler.IsConfigDirty()
+		}
+		type healthResp struct {
+			Status       string `json:"status"`
+			ConfigDirty  bool   `json:"config_dirty"`
+		}
+		json.NewEncoder(w).Encode(healthResp{
+			Status:      "ok",
+			ConfigDirty: configDirty,
+		})
 	})
 	mux.Handle("/caldav/", authMW.Wrap(caldavHandler))
 	mux.HandleFunc("/.well-known/caldav", func(w http.ResponseWriter, r *http.Request) {
@@ -472,12 +485,12 @@ func main() {
 			chatHandler = chat.NewHandler(chatStore, retriever, cfg.ChatAPIURL, cfg.ChatModel, logger)
 		}
 
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel, retriever, chatHandler, chatStore, web.RAGDisplayConfig{
+		webHandler = web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel, retriever, chatHandler, chatStore, web.RAGDisplayConfig{
 			OllamaURL:   cfg.OllamaURL,
 			OllamaModel: cfg.OllamaEmbedModel,
 			ChatAPIURL:  cfg.ChatAPIURL,
 			ChatModel:   cfg.ChatModel,
-		})
+		}, cfg)
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 

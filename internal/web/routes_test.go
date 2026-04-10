@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sysop/ultrabridge/internal/appconfig"
 	"github.com/sysop/ultrabridge/internal/chat"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/notedb"
@@ -52,7 +53,7 @@ func testHandler(t *testing.T, opts ...func(*testHandlerOpts)) *Handler {
 		newMockTaskStore(), nil, ns, si,
 		proc, nil, nil, bs, nil, o.booxNotesPath, "",
 		o.noteDB, logger, broadcaster, nil, nil, "", nil, nil, nil,
-		RAGDisplayConfig{},
+		RAGDisplayConfig{}, &appconfig.Config{},
 	)
 }
 
@@ -449,7 +450,7 @@ func TestPurgeCompleted_DeletesCompletedTasks(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("POST", "/tasks/purge-completed", nil)
 	w := httptest.NewRecorder()

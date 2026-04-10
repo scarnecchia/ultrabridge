@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sysop/ultrabridge/internal/appconfig"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/search"
 )
@@ -78,6 +79,7 @@ func TestSearchPage_SourceBadges(t *testing.T) {
 		nil, // chatHandler
 		nil, // chatStore
 		RAGDisplayConfig{},
+		&appconfig.Config{},
 	)
 
 	// Execute GET /search?q=test
