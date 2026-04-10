@@ -2,7 +2,7 @@ package web
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -97,7 +97,7 @@ func (h *Handler) handleUpdateSource(w http.ResponseWriter, r *http.Request) {
 
 	row.ID = id
 	if err := source.UpdateSource(ctx, h.noteDB, row); err != nil {
-		if err.Error() == fmt.Sprintf("%s", source.ErrSourceNotFound) {
+		if errors.Is(err, source.ErrSourceNotFound) {
 			apiError(w, http.StatusNotFound, "source not found")
 		} else {
 			h.logger.Error("update source", "error", err)
@@ -107,7 +107,6 @@ func (h *Handler) handleUpdateSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
@@ -124,7 +123,7 @@ func (h *Handler) handleDeleteSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := source.RemoveSource(ctx, h.noteDB, id); err != nil {
-		if err.Error() == fmt.Sprintf("%s", source.ErrSourceNotFound) {
+		if errors.Is(err, source.ErrSourceNotFound) {
 			apiError(w, http.StatusNotFound, "source not found")
 		} else {
 			h.logger.Error("delete source", "error", err)
@@ -134,6 +133,5 @@ func (h *Handler) handleDeleteSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }

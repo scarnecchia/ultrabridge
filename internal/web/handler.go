@@ -363,10 +363,6 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Settings keys for per-pipeline OCR prompts.
-const (
-)
-
 // DefaultBooxTodoPrompt is the default prompt for red ink to-do extraction.
 const DefaultBooxTodoPrompt = `Find any passages on this page written in RED ink. For each red passage, return a JSON object on its own line like: {"type":"todo","text":"the red text content"}. If there are no red passages, return nothing.`
 

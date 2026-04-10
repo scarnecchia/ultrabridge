@@ -234,8 +234,9 @@ func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		current, err := appconfig.Load(ctx, h.noteDB)
 		if err == nil {
 			cfg.PasswordHash = current.PasswordHash
+		} else {
+			h.logger.Warn("failed to load existing config for password preservation", "error", err)
 		}
-		// If Load fails, we continue with empty PasswordHash (old one will be preserved in DB)
 	}
 
 	// Save to DB.
