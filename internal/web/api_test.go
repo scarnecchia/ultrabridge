@@ -311,7 +311,7 @@ func TestAPIGetImageNotAvailable(t *testing.T) {
 	retriever := &mockRetriever{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	// Handler with no snNotesPath and no booxStore, so images aren't available
+	// Handler with no notesPathPrefix and no booxStore, so images aren't available
 	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", retriever, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("GET", "/api/notes/pages/image?path=/home/user/test.note&page=0", nil)

@@ -102,7 +102,7 @@ type Handler struct {
 	syncProvider    SyncStatusProvider
 	booxStore       BooxStore
 	booxImporter    BooxImporter
-	snNotesPath     string // UB_NOTES_PATH for Supernote device path mapping
+	notesPathPrefix string // device file path prefix for rendering note page images
 	booxNotesPath   string
 	booxCachePath   string
 	noteDB          *sql.DB // shared SQLite DB for settings
@@ -143,19 +143,19 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string, retriever rag.SearchRetriever, chatHandler *chat.Handler, chatStore *chat.Store, ragDisplay RAGDisplayConfig, runningConfig *appconfig.Config) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, notesPathPrefix string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string, retriever rag.SearchRetriever, chatHandler *chat.Handler, chatStore *chat.Store, ragDisplay RAGDisplayConfig, runningConfig *appconfig.Config) *Handler {
 	h := &Handler{
-		store:         store,
-		notifier:      notifier,
-		noteStore:     noteStore,
-		searchIndex:   searchIndex,
-		proc:          proc,
-		scanner:       scanner,
-		syncProvider:  syncProvider,
-		snNotesPath:   snNotesPath,
-		booxStore:     booxStore,
-		booxImporter:  booxImporter,
-		booxNotesPath: booxNotesPath,
+		store:           store,
+		notifier:        notifier,
+		noteStore:       noteStore,
+		searchIndex:     searchIndex,
+		proc:            proc,
+		scanner:         scanner,
+		syncProvider:    syncProvider,
+		notesPathPrefix: notesPathPrefix,
+		booxStore:       booxStore,
+		booxImporter:    booxImporter,
+		booxNotesPath:   booxNotesPath,
 		booxCachePath: filepath.Join(booxNotesPath, ".cache"),
 		noteDB:        noteDB,
 		logger:        logger,
@@ -226,11 +226,11 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 				return nil
 			}
 			// Map device path to local path.
-			// Device: /storage/emulated/0/Note/... → local: {snNotesPath}/...
+			// Device: /storage/emulated/0/Note/... → local: {notesPathPrefix}/...
 			const devicePrefix = "/storage/emulated/0/Note/"
 			localPath := link.FilePath
-			if h.snNotesPath != "" && strings.HasPrefix(link.FilePath, devicePrefix) {
-				localPath = filepath.Join(h.snNotesPath, link.FilePath[len(devicePrefix):])
+			if h.notesPathPrefix != "" && strings.HasPrefix(link.FilePath, devicePrefix) {
+				localPath = filepath.Join(h.notesPathPrefix, link.FilePath[len(devicePrefix):])
 			}
 			return map[string]interface{}{
 				"Path": localPath,

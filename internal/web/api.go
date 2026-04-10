@@ -181,7 +181,7 @@ func (h *Handler) handleAPIGetImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try Supernote note rendering
-	if h.snNotesPath != "" && strings.HasPrefix(notePath, h.snNotesPath) {
+	if h.notesPathPrefix != "" && strings.HasPrefix(notePath, h.notesPathPrefix) {
 		f, err := os.Open(notePath)
 		if err != nil {
 			apiError(w, http.StatusNotFound, "note file not found")

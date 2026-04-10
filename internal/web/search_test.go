@@ -68,7 +68,7 @@ func TestSearchPage_SourceBadges(t *testing.T) {
 		nil, // booxStore not needed for this test
 		nil, // booxImporter not needed for this test
 		booxNotesPath,
-		"",  // snNotesPath
+		"",  // notesPathPrefix
 		nil, // noteDB
 		logger,
 		broadcaster,

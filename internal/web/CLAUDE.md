@@ -6,13 +6,13 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 
 ## Handler contract
 
-`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, syncProvider, booxStore, booxImporter, booxNotesPath, snNotesPath, noteDB, logger, broadcaster, embedder, embedStore, embedModel, retriever) *Handler`
+`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, syncProvider, booxStore, booxImporter, booxNotesPath, notesPathPrefix, noteDB, logger, broadcaster, embedder, embedStore, embedModel, retriever) *Handler`
 
 - All domain dependencies (`noteStore`, `searchIndex`, `proc`, `scanner`, `notifier`, `syncProvider`) are **nil-safe** — passing nil disables the corresponding feature gracefully (no crash, renders an informative state).
 - `booxStore` is **nil-safe** — when nil, Boox-specific routes return empty lists and the UI shows only Supernote notes.
 - `booxImporter` is **nil-safe** — when nil, bulk import routes return an error response.
 - `booxNotesPath` is a string path (may be empty if Boox is disabled).
-- `snNotesPath` is the Supernote notes directory path for rendering pages.
+- `notesPathPrefix` is the device file path prefix for rendering note page images in the API.
 - `noteDB` is the shared SQLite DB for settings and notes (may be nil).
 - `embedder` is the RAG embedder implementation (nil-safe, feature disabled when nil).
 - `embedStore` is the embedding store for backfill and vector search (nil-safe).
