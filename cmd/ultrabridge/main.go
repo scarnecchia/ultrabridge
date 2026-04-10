@@ -70,6 +70,33 @@ func main() {
 		return
 	}
 
+	if len(os.Args) >= 4 && os.Args[1] == "seed-user" {
+		username, password := os.Args[2], os.Args[3]
+		dbPath := envOrDefault("UB_DB_PATH", "/data/ultrabridge.db")
+		db, err := notedb.Open(context.Background(), dbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to open database: %v\n", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to hash password: %v\n", err)
+			os.Exit(1)
+		}
+		ctx := context.Background()
+		if err := notedb.SetSetting(ctx, db, appconfig.KeyUsername, username); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to save username: %v\n", err)
+			os.Exit(1)
+		}
+		if err := notedb.SetSetting(ctx, db, appconfig.KeyPasswordHash, string(hash)); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to save password hash: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("User credentials saved.")
+		return
+	}
+
 	// Stage 1: Bootstrap config (needed before DB opens)
 	// Logging and database paths read directly from env vars
 	bootstrapCfg := &bootstrapConfig{
