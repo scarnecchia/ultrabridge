@@ -26,7 +26,7 @@ Instead: `git -C /path`, `go -C /path build`, or absolute paths.
 
 ### Configuration & Data Management
 - `internal/appconfig/` -- SQLite-backed application config with two-stage loading (bootstrap env vars + settings table), restart detection (see domain CLAUDE.md)
-- `internal/notedb/` -- SQLite DB opener + schema migrations for notes and settings (see domain CLAUDE.md)
+- `internal/notedb/` -- SQLite DB opener + schema migrations for notes, settings, and sources tables (see domain CLAUDE.md)
 - `internal/source/` -- Platform-neutral source abstraction: `Source` interface, `SourceRow` model, CRUD operations (see domain CLAUDE.md)
 - `internal/source/supernote/` -- Supernote source adapter: .note pipeline, Processor creation (see domain CLAUDE.md)
 - `internal/source/boox/` -- Boox source adapter: WebDAV receiver, Processor creation (see domain CLAUDE.md)
@@ -58,7 +58,7 @@ Instead: `git -C /path`, `go -C /path build`, or absolute paths.
 - `internal/chat/` -- Chat subsystem: session/message store (SQLite), vLLM streaming handler with RAG context injection (see domain CLAUDE.md)
 
 ### Web UI & API
-- `internal/web/` -- HTML UI: task list, Files tab, Search tab, Chat tab, processor C&C, sync status, Boox render/versions, JSON API, MCP token management, SSE log stream (see domain CLAUDE.md)
+- `internal/web/` -- HTML UI: setup wizard, settings, task list, Files tab, Search tab, Chat tab, processor C&C, sync status, Boox render/versions, JSON API, config/sources API, MCP token management, SSE log stream (see domain CLAUDE.md)
 - `internal/mcpauth/` -- MCP bearer token store: SHA-256 hashed tokens in SQLite, CRUD + validation (see domain CLAUDE.md)
 
 ### Infrastructure
@@ -107,6 +107,7 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 ## Subcommands
 
 - `ultrabridge hash-password "pw"` -- generate bcrypt hash for UB_PASSWORD_HASH
+- `ultrabridge seed-user <username> <password>` -- pre-provision credentials in settings DB (headless/Docker setup, skips setup wizard)
 - `ub-mcp` -- MCP server for AI agents (stdio by default, `--http :8081` for HTTP SSE)
 
 ## Configuration Architecture
@@ -173,7 +174,7 @@ All other configuration (auth, OCR, sources, logging, RAG, chat) is configured v
 - Standard-only injection: only notes with FILE_RECOGN_TYPE=0 (Standard) get RECOGNTEXT injection (JIIX v3 format); RTR notes (FILE_RECOGN_TYPE=1) are OCR'd and indexed but file is NOT modified
 - Requeue with delay: jobs can be set back to pending with a future `requeue_after` timestamp
 - Content hash dedup: SHA-256 stored on job completion; pipeline detects moved/renamed files and transfers job records instead of re-processing
-- Pipeline env vars: UB_NOTES_PATH, UB_DB_PATH, UB_BACKUP_PATH, UB_OCR_*
+- Pipeline config: notes path and backup path from source config_json; OCR settings from settings table
 
 ### Boox Notes Pipeline (WebDAV + shared SQLite notedb)
 - Boox .note format: ZIP containing protobuf metadata, nested shape ZIPs, binary point files
@@ -183,10 +184,10 @@ All other configuration (auth, OCR, sources, logging, RAG, chat) is configured v
 - Shares search index: same note_content/note_fts tables, unified search across both device types
 - Shares OCR client: same processor.Indexer and processor.OCRClient interfaces
 - File versioning: overwritten .note files archived to `.versions/` directory tree
-- Rendered page cache: JPEG images at `{UB_BOOX_NOTES_PATH}/.cache/{noteID}/page_{N}.jpg`
+- Rendered page cache: JPEG images at `{notesPath}/.cache/{noteID}/page_{N}.jpg`
 - Bulk import: filesystem paths can be imported in bulk via the web UI; importer scans for .note and .pdf files, enqueues each, and optionally migrates files to the Boox notes directory
 - PDF support: .pdf files accepted alongside .note files; pages rendered via pdftoppm (pdfrender package), then OCR'd and indexed identically to .note files
-- Config: UB_BOOX_ENABLED (feature flag), UB_BOOX_NOTES_PATH (filesystem root for uploads + cache), UB_BOOX_IMPORT_PATH (source directory for bulk imports)
+- Config: Boox sources configured via settings UI and sources table (NotesPath, ImportPath in config_json)
 
 ### RAG Retrieval Pipeline (Ollama + SQLite)
 - Embedding: Ollama `/api/embed` endpoint generates float32 vectors, stored as little-endian blobs in `note_embeddings` table
@@ -194,13 +195,13 @@ All other configuration (auth, OCR, sources, logging, RAG, chat) is configured v
 - Hybrid retriever: combines FTS5 keyword search with cosine-similarity vector search, fuses results via reciprocal rank fusion
 - Backfill: startup goroutine embeds unembedded pages; manual trigger via web UI for re-embedding after model upgrades
 - Integration: both Supernote and Boox workers embed OCR'd text as part of the processing pipeline (best-effort, failures logged not propagated)
-- Config: UB_EMBED_ENABLED (feature flag), UB_OLLAMA_URL (default http://localhost:11434), UB_OLLAMA_EMBED_MODEL (default nomic-embed-text:v1.5)
+- Config: embed_enabled, ollama_url, ollama_embed_model in settings table (defaults: http://localhost:11434, nomic-embed-text:v1.5)
 
 ### Chat Subsystem (vLLM + RAG)
 - RAG-powered chat: user question triggers hybrid search, top results injected as context into vLLM prompt
 - SSE streaming: handler proxies vLLM OpenAI-compatible streaming response to browser via Server-Sent Events
 - Session persistence: chat sessions and messages stored in SQLite (chat_sessions, chat_messages tables in notedb)
-- Config: UB_CHAT_ENABLED (feature flag), UB_CHAT_API_URL (default http://localhost:8000), UB_CHAT_MODEL (default Qwen/Qwen3-8B)
+- Config: chat_enabled, chat_api_url, chat_model in settings table (defaults: http://localhost:8000, Qwen/Qwen3-8B)
 
 ### MCP Server (cmd/ub-mcp)
 - Separate binary that calls UltraBridge JSON API endpoints via HTTP

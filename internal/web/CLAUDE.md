@@ -1,34 +1,42 @@
 # internal/web
 
-Last verified: 2026-04-08 (updated for Phase 3 MCP OAuth web UI)
+Last verified: 2026-04-10
 
 HTTP handler and HTML templates for the UltraBridge web UI.
 
 ## Handler contract
 
-`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, syncProvider, booxStore, booxImporter, booxNotesPath, notesPathPrefix, noteDB, logger, broadcaster, embedder, embedStore, embedModel, retriever) *Handler`
+`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, syncProvider, booxStore, booxImporter, booxNotesPath, notesPathPrefix, noteDB, logger, broadcaster, embedder, embedStore, embedModel, retriever, chatHandler, chatStore, ragDisplay, runningConfig) *Handler`
 
 - All domain dependencies (`noteStore`, `searchIndex`, `proc`, `scanner`, `notifier`, `syncProvider`) are **nil-safe** — passing nil disables the corresponding feature gracefully (no crash, renders an informative state).
 - `booxStore` is **nil-safe** — when nil, Boox-specific routes return empty lists and the UI shows only Supernote notes.
 - `booxImporter` is **nil-safe** — when nil, bulk import routes return an error response.
 - `booxNotesPath` is a string path (may be empty if Boox is disabled).
 - `notesPathPrefix` is the device file path prefix for rendering note page images in the API.
-- `noteDB` is the shared SQLite DB for settings and notes (may be nil).
+- `noteDB` is the shared SQLite DB for settings and notes (may be nil; when nil, config/sources API and MCP token routes are disabled).
 - `embedder` is the RAG embedder implementation (nil-safe, feature disabled when nil).
 - `embedStore` is the embedding store for backfill and vector search (nil-safe).
 - `embedModel` is the embedding model name.
 - `retriever` is the hybrid search retriever interface (nil-safe; when nil, JSON API endpoints are disabled).
+- `chatHandler` / `chatStore` are chat subsystem dependencies (nil-safe; when nil, chat routes are disabled).
+- `ragDisplay` is a `RAGDisplayConfig` struct with display URLs/models for the settings UI.
+- `runningConfig` is the `*appconfig.Config` loaded at startup; used for drift detection (restart banner).
 - `Handler` implements `http.Handler` via an internal `*http.ServeMux`.
 
 ## Routes
 
 | Method | Path | Handler | Notes |
 |--------|------|---------|-------|
+| GET | `/setup` | `handleSetup` | First-run setup page |
+| POST | `/setup/save` | `handleSetupSave` | Save initial credentials |
 | GET | `/` | `handleIndex` | Task list |
-| POST | `/tasks/create` | `handleCreateTask` | |
-| POST | `/tasks/complete` | `handleCompleteTask` | |
+| POST | `/tasks` | `handleCreateTask` | |
+| POST | `/tasks/{id}/complete` | `handleCompleteTask` | |
 | POST | `/tasks/bulk` | `handleBulkAction` | |
+| POST | `/tasks/purge-completed` | `handlePurgeCompleted` | |
 | GET | `/logs` | `handleLogs` (SSE) | Log stream |
+| GET | `/settings` | `handleSettings` | Settings page (config + MCP tokens) |
+| POST | `/settings/save` | `handleSettingsSave` | Save config changes |
 | GET | `/files` | `handleFiles` | File browser; path traversal guarded |
 | POST | `/files/queue` | `handleFilesQueue` | Enqueue file for OCR |
 | POST | `/files/skip` | `handleFilesSkip` | Mark skipped (manual) |
@@ -60,8 +68,8 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 ### BooxImporter
 ```go
 type BooxImporter interface {
-    ScanAndEnqueue(ctx context.Context, cfg ImportConfig) (ImportResult, error)
-    MigrateImportedFiles(ctx context.Context) error
+    ScanAndEnqueue(ctx context.Context, cfg ImportConfig, logger *slog.Logger) ImportResult
+    MigrateImportedFiles(ctx context.Context, importPath, notesPath string, logger *slog.Logger) MigrateResult
 }
 ```
 Implemented by `booxpipeline.Importer`. Handles bulk import of .note and .pdf files from a configured import path.
@@ -74,17 +82,32 @@ In addition to previously documented methods, `BooxStore` now includes:
 - `UnskipNote(ctx, path) error` — reset a skipped job to pending
 - `GetQueueStatus(ctx) (QueueStatus, error)` — return counts of jobs by status
 
-## JSON API Endpoints (Phase 3)
+## JSON API Endpoints
 
-Three new routes provide JSON API access for MCP servers and external tools:
+### Search & Notes API (requires retriever)
 
-- `GET /api/search?q=...&folder=...&device=...&from=...&to=...&limit=...` — hybrid search using SearchRetriever
-- `GET /api/notes/pages?path=...` — fetch indexed content for a note (all pages)
-- `GET /api/notes/pages/image?path=...&page=...` — render JPEG image for a page
+- `GET /api/search?q=...&folder=...&device=...&from=...&to=...&limit=...` -- hybrid search using SearchRetriever
+- `GET /api/notes/pages?path=...` -- fetch indexed content for a note (all pages)
+- `GET /api/notes/pages/image?path=...&page=...` -- render JPEG image for a page
 
-All API endpoints are **conditional**: they are only registered if `retriever` is non-nil. When retriever is nil (FTS-only or disabled), the API routes return 404.
+Conditional: only registered if `retriever` is non-nil.
+
+### Config & Sources API (requires noteDB)
+
+- `GET /api/config` -- returns RedactedConfig (secrets shown as "[set]"/"[not set]")
+- `PUT /api/config` -- accepts JSON config update, returns SaveResult with changed keys and restart flag
+- `GET /api/sources` -- list all source rows
+- `POST /api/sources` -- add source (validates type, name, config_json)
+- `PUT /api/sources/{id}` -- update source row
+- `DELETE /api/sources/{id}` -- remove source row
+
+Conditional: only registered if `noteDB` is non-nil.
 
 Auth: All API routes use the same Basic Auth middleware as the web UI (authMW in main.go).
+
+## Setup Mode
+
+`SetupMiddleware(db, next)` -- HTTP middleware that redirects all requests to `/setup` when no credentials are configured (username + password_hash missing from settings table). Uses atomic flag for fast path after setup completes. Setup page (`/setup`) accepts initial username and password, saves bcrypt hash via appconfig, then allows normal access.
 
 ## Path traversal guard
 

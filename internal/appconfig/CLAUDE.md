@@ -31,7 +31,7 @@ type SaveResult struct {
 ## Dependencies
 
 - **Uses**: `database/sql`, `internal/notedb` (GetSetting, SetSetting)
-- **Used by**: cmd/ultrabridge (future phases will use this to load config)
+- **Used by**: `cmd/ultrabridge` (two-stage config loading), `internal/web` (settings UI, config API, setup mode, drift detection)
 
 ## Key Decisions
 
@@ -91,8 +91,8 @@ Coverage includes:
 - Full roundtrip: Save followed by Load preserves values
 - Multiple env var override scenarios
 
-## Future Phases
+## Integration
 
-- Phase 2: Web UI for editing settings
-- Phase 3: Settings API endpoints
-- Phase 4+: Per-source configuration (sources.config_json)
+- **Setup mode**: `IsSetupRequired(ctx, db)` checks if username/password are configured; web.SetupMiddleware redirects to `/setup` when credentials are missing
+- **Drift detection**: `runningConfig` passed to web.Handler at startup; settings UI compares saved config against running config to show restart banner when restart-required keys change
+- **Settings UI**: `/settings` page renders current config; `/settings/save` calls `Save()` and reports changed/restart-required keys
