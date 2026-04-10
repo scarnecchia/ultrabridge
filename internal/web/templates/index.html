@@ -788,7 +788,7 @@
           <div class="card{{if not .SNPipelineActive}} settings-inactive{{end}}">
             <h2>Supernote</h2>
             {{if not .SNPipelineActive}}
-              <p class="settings-inactive-note">Supernote notes pipeline is not configured. Set UB_NOTES_PATH to enable.</p>
+              <p class="settings-inactive-note">Supernote notes pipeline is not configured. Add a Supernote source in Settings to enable.</p>
             {{else}}
               <form method="POST" action="/settings/save">
                 <input type="hidden" name="section" value="supernote">
@@ -814,7 +814,7 @@
           <div class="card{{if not .BooxActive}} settings-inactive{{end}}">
             <h2>Boox</h2>
             {{if not .BooxActive}}
-              <p class="settings-inactive-note">Boox integration is not enabled. Set UB_BOOX_ENABLED=true to enable.</p>
+              <p class="settings-inactive-note">Boox integration is not enabled. Add a Boox source in Settings to enable.</p>
             {{else}}
               <form method="POST" action="/settings/save">
                 <input type="hidden" name="section" value="boox">

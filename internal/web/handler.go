@@ -789,7 +789,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	data["activeTab"] = "files"
 
 	if h.noteStore == nil {
-		data["filesError"] = "UB_NOTES_PATH is not configured"
+		data["filesError"] = "No Supernote source configured. Add a source in Settings."
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
 			h.logger.Error("failed to render template", "error", err)

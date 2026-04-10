@@ -758,7 +758,7 @@ func TestBulkActionUnknown(t *testing.T) {
 	}
 }
 
-// TestHandleFiles_NoteStoreNil verifies AC1.6: missing UB_NOTES_PATH renders error, not crash
+// TestHandleFiles_NoteStoreNil verifies AC1.6: missing Supernote source renders error, not crash
 func TestHandleFiles_NoteStoreNil(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
@@ -771,8 +771,8 @@ func TestHandleFiles_NoteStoreNil(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "UB_NOTES_PATH") {
-		t.Error("expected UB_NOTES_PATH error message in response")
+	if !strings.Contains(w.Body.String(), "No Supernote source configured") {
+		t.Error("expected 'No Supernote source configured' error message in response")
 	}
 }
 

@@ -8,7 +8,7 @@ Exposes a WebDAV endpoint for Boox .note file uploads with Basic Auth and automa
 ## Contracts
 - **Exposes**: `FS` (implements `golang.org/x/net/webdav.FileSystem`), `NewHandler` (HTTP handler), `ExtractPathMetadata` (path parser), `OnNoteUpload` (callback type), `PathMetadata` (struct)
 - **Guarantees**: Writes preserve device path structure. On overwrite, old files move to `.versions/{dir}/{name}/{timestamp}.ext`. .note files trigger `OnNoteUpload` callback on successful close. Directory operations (MKCOL, PROPFIND) work. All requests require valid Basic Auth (handled by wrapping caller).
-- **Expects**: A valid writable filesystem root at `UB_BOOX_NOTES_PATH`. Caller wraps handler with `auth.Middleware` before mounting at `/webdav/`.
+- **Expects**: A valid writable filesystem root (configured via the Boox source settings). Caller wraps handler with `auth.Middleware` before mounting at `/webdav/`.
 
 ## Dependencies
 - **Uses**: `golang.org/x/net/webdav` (protocol handler, FileSystem interface, LockSystem)
