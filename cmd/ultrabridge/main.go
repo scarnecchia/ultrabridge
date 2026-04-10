@@ -18,6 +18,7 @@ import (
 	gocaldav "github.com/emersion/go-webdav/caldav"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sysop/ultrabridge/internal/appconfig"
 	"github.com/sysop/ultrabridge/internal/auth"
 	"github.com/sysop/ultrabridge/internal/booxpipeline"
@@ -523,6 +524,22 @@ func main() {
 			ChatModel:   cfg.ChatModel,
 		}, cfg)
 		mux.Handle("/", authMW.Wrap(webHandler))
+	}
+
+	// Wire MCP server at /mcp/ — speaks MCP protocol for Claude Web and other MCP clients.
+	// Tools proxy to the local JSON API using the same auth credentials.
+	{
+		mcpAPIClient := newMCPAPIClient("http://localhost"+bootstrapCfg.listenAddr, noteDB)
+		mcpServer := mcp.NewServer(&mcp.Implementation{
+			Name:    "ultrabridge-notes",
+			Version: "1.0.0",
+		}, nil)
+		registerMCPTools(mcpServer, mcpAPIClient)
+		mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+			return mcpServer
+		}, nil)
+		mux.Handle("/mcp/", authMW.Wrap(http.StripPrefix("/mcp", mcpHandler)))
+		logger.Info("mcp server enabled", "path", "/mcp/")
 	}
 
 	// Wire middleware layers: logging -> setup (outermost layer).
