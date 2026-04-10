@@ -7,16 +7,25 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// CredentialFunc returns the current username and bcrypt password hash.
+// Called on every request so credentials picked up from DB changes
+// (e.g., seed-user, setup page, Settings UI) take effect immediately.
+type CredentialFunc func() (username, passwordHash string)
+
 type Middleware struct {
-	username     string
-	passwordHash []byte
+	credsFn CredentialFunc
 }
 
+// New creates auth middleware with a static username and password hash.
 func New(username, passwordHash string) *Middleware {
 	return &Middleware{
-		username:     username,
-		passwordHash: []byte(passwordHash),
+		credsFn: func() (string, string) { return username, passwordHash },
 	}
+}
+
+// NewDynamic creates auth middleware that reads credentials on each request.
+func NewDynamic(fn CredentialFunc) *Middleware {
+	return &Middleware{credsFn: fn}
 }
 
 // Wrap returns an http.Handler that requires Basic Auth before delegating to next.
@@ -33,7 +42,11 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 }
 
 func (m *Middleware) valid(user, password string) bool {
-	userOK := subtle.ConstantTimeCompare([]byte(user), []byte(m.username)) == 1
-	passOK := bcrypt.CompareHashAndPassword(m.passwordHash, []byte(password)) == nil
+	username, hash := m.credsFn()
+	if username == "" || hash == "" {
+		return false
+	}
+	userOK := subtle.ConstantTimeCompare([]byte(user), []byte(username)) == 1
+	passOK := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 	return userOK && passOK
 }

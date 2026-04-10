@@ -430,7 +430,20 @@ func main() {
 		Prefix:  "/caldav",
 	}
 
-	authMW := auth.New(cfg.Username, cfg.PasswordHash)
+	authMW := auth.NewDynamic(func() (string, string) {
+		// Read credentials from DB on each request so changes from
+		// seed-user, setup page, or Settings UI take effect immediately.
+		// Falls back to bootstrap env var values if DB has no credentials.
+		u, _ := notedb.GetSetting(context.Background(), noteDB, appconfig.KeyUsername)
+		h, _ := notedb.GetSetting(context.Background(), noteDB, appconfig.KeyPasswordHash)
+		if u == "" {
+			u = cfg.Username
+		}
+		if h == "" {
+			h = cfg.PasswordHash
+		}
+		return u, h
+	})
 
 	// Create log broadcaster for web UI
 	broadcaster := logging.NewLogBroadcaster()
