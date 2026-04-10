@@ -488,8 +488,8 @@ func main() {
 		logger.Info("boox webdav enabled", "path", booxNotesPath)
 	}
 
-	// Wire web UI if enabled
-	if cfg.WebEnabled {
+	// Wire web UI (always enabled — setup page, settings, and source config depend on it)
+	{
 		// If sync is enabled, wrap syncEngine for web UI; otherwise nil
 		var syncProvider web.SyncStatusProvider
 		if cfg.SNSyncEnabled && syncEngine != nil {
