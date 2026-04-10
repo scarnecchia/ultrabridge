@@ -507,7 +507,11 @@ func main() {
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 
-	handler := logging.RequestID(logger)(mux)
+	// Wire middleware layers: logging -> setup (outermost layer).
+	// Setup middleware allows /setup and /setup/save through, redirects other requests to /setup if credentials missing.
+	// Individual routes are wrapped with auth middleware at registration time.
+	logHandler := logging.RequestID(logger)(mux)
+	handler := web.SetupMiddleware(noteDB, logHandler)
 
 	// Setup graceful shutdown with signal handling
 	sigChan := make(chan os.Signal, 1)

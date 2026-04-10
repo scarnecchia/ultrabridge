@@ -10,6 +10,20 @@ import (
 	"github.com/sysop/ultrabridge/internal/notedb"
 )
 
+// runtimeKeys is the set of config keys that are runtime-configurable
+// (not in envVarForKey, read at job time via closures).
+var runtimeKeys = []string{
+	KeySNInjectEnabled,
+	KeySNOCRPrompt,
+	KeyBooxOCRPrompt,
+	KeyBooxTodoEnabled,
+	KeyBooxTodoPrompt,
+	KeyBooxImportPath,
+	KeyBooxImportNotes,
+	KeyBooxImportPDFs,
+	KeyBooxImportOnyxPaths,
+}
+
 // Config represents application configuration. Fields are grouped by concern.
 type Config struct {
 	// Auth
@@ -72,9 +86,10 @@ type SaveResult struct {
 	RestartRequired bool
 }
 
-// Load reads all config keys from the database, applies env var overrides,
-// and returns a typed Config struct.
-func Load(ctx context.Context, db *sql.DB) (*Config, error) {
+// loadConfigFromDB reads all config keys from the database, optionally applies env var overrides,
+// applies defaults, and returns a typed Config struct.
+// applyEnv controls whether environment variable overrides are applied.
+func loadConfigFromDB(ctx context.Context, db *sql.DB, applyEnv bool) (*Config, error) {
 	// Layer 1: Read all known keys from DB.
 	dbVals := make(map[string]string)
 	for key := range envVarForKey {
@@ -86,17 +101,6 @@ func Load(ctx context.Context, db *sql.DB) (*Config, error) {
 	}
 
 	// Also load the runtime-configurable keys (not in envVarForKey).
-	runtimeKeys := []string{
-		KeySNInjectEnabled,
-		KeySNOCRPrompt,
-		KeyBooxOCRPrompt,
-		KeyBooxTodoEnabled,
-		KeyBooxTodoPrompt,
-		KeyBooxImportPath,
-		KeyBooxImportNotes,
-		KeyBooxImportPDFs,
-		KeyBooxImportOnyxPaths,
-	}
 	for _, key := range runtimeKeys {
 		val, err := notedb.GetSetting(ctx, db, key)
 		if err != nil {
@@ -105,8 +109,10 @@ func Load(ctx context.Context, db *sql.DB) (*Config, error) {
 		dbVals[key] = val
 	}
 
-	// Layer 2: Apply env var overrides.
-	applyEnvOverrides(dbVals)
+	// Layer 2: Optionally apply env var overrides.
+	if applyEnv {
+		applyEnvOverrides(dbVals)
+	}
 
 	// Layer 3: Apply defaults for missing values.
 	for key, defaultVal := range defaultValues {
@@ -155,6 +161,12 @@ func Load(ctx context.Context, db *sql.DB) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// Load reads all config keys from the database, applies env var overrides,
+// and returns a typed Config struct.
+func Load(ctx context.Context, db *sql.DB) (*Config, error) {
+	return loadConfigFromDB(ctx, db, true)
 }
 
 // Save writes changed keys to the database and reports which keys changed
@@ -230,99 +242,7 @@ func IsSetupRequired(ctx context.Context, db *sql.DB) bool {
 // loadDBOnly loads config from DB without env var overlay.
 // Used by Save to detect changes.
 func loadDBOnly(ctx context.Context, db *sql.DB) (*Config, error) {
-	dbVals := make(map[string]string)
-
-	// Read all known keys from DB.
-	for key := range envVarForKey {
-		val, err := notedb.GetSetting(ctx, db, key)
-		if err != nil {
-			return nil, err
-		}
-		dbVals[key] = val
-	}
-
-	// Read runtime-configurable keys.
-	runtimeKeys := []string{
-		KeySNInjectEnabled,
-		KeySNOCRPrompt,
-		KeyBooxOCRPrompt,
-		KeyBooxTodoEnabled,
-		KeyBooxTodoPrompt,
-		KeyBooxImportPath,
-		KeyBooxImportNotes,
-		KeyBooxImportPDFs,
-		KeyBooxImportOnyxPaths,
-	}
-	for _, key := range runtimeKeys {
-		val, err := notedb.GetSetting(ctx, db, key)
-		if err != nil {
-			return nil, err
-		}
-		dbVals[key] = val
-	}
-
-	// Read per-source keys.
-	sourceKeys := []string{
-		"notes_path",
-		"backup_path",
-		"boox_enabled",
-		"boox_notes_path",
-	}
-	for _, key := range sourceKeys {
-		val, err := notedb.GetSetting(ctx, db, key)
-		if err != nil {
-			return nil, err
-		}
-		dbVals[key] = val
-	}
-
-	// Apply defaults only (no env var overlay).
-	for key, defaultVal := range defaultValues {
-		if dbVals[key] == "" {
-			dbVals[key] = defaultVal
-		}
-	}
-
-	// Parse into Config.
-	cfg := &Config{
-		Username:             dbVals[KeyUsername],
-		PasswordHash:         dbVals[KeyPasswordHash],
-		OCREnabled:           parseBool(dbVals[KeyOCREnabled]),
-		OCRAPIURL:            dbVals[KeyOCRAPIURL],
-		OCRAPIKey:            dbVals[KeyOCRAPIKey],
-		OCRModel:             dbVals[KeyOCRModel],
-		OCRConcurrency:       parseIntWithDefault(dbVals[KeyOCRConcurrency], 1),
-		OCRMaxFileMB:         parseIntWithDefault(dbVals[KeyOCRMaxFileMB], 0),
-		OCRFormat:            dbVals[KeyOCRFormat],
-		EmbedEnabled:         parseBool(dbVals[KeyEmbedEnabled]),
-		OllamaURL:            dbVals[KeyOllamaURL],
-		OllamaEmbedModel:     dbVals[KeyOllamaEmbedModel],
-		ChatEnabled:          parseBool(dbVals[KeyChatEnabled]),
-		ChatAPIURL:           dbVals[KeyChatAPIURL],
-		ChatModel:            dbVals[KeyChatModel],
-		SNSyncEnabled:        parseBool(dbVals[KeySNSyncEnabled]),
-		SNSyncInterval:       parseIntWithDefault(dbVals[KeySNSyncInterval], 300),
-		SNAPIURL:             dbVals[KeySNAPIURL],
-		SNAccount:            dbVals[KeySNAccount],
-		SNPassword:           dbVals[KeySNPassword],
-		LogLevel:             dbVals[KeyLogLevel],
-		LogFormat:            dbVals[KeyLogFormat],
-		LogFile:              dbVals[KeyLogFile],
-		LogFileMaxMB:         parseIntWithDefault(dbVals[KeyLogFileMaxMB], 50),
-		LogFileMaxAge:        parseIntWithDefault(dbVals[KeyLogFileMaxAge], 30),
-		LogFileMaxBackup:     parseIntWithDefault(dbVals[KeyLogFileMaxBackup], 5),
-		LogSyslogAddr:        dbVals[KeyLogSyslogAddr],
-		CalDAVCollectionName: dbVals[KeyCalDAVCollectionName],
-		DueTimeMode:          dbVals[KeyDueTimeMode],
-		WebEnabled:           parseBool(dbVals[KeyWebEnabled]),
-		SocketIOURL:          dbVals[KeySocketIOURL],
-		DBHost:               dbVals[KeyDBHost],
-		DBPort:               dbVals[KeyDBPort],
-		DBEnvPath:            dbVals[KeyDBEnvPath],
-		UserID:               parseInt64(dbVals[KeyUserID]),
-	}
-
-	return cfg, nil
+	return loadConfigFromDB(ctx, db, false)
 }
 
 // configToMap converts a Config struct to a map for comparison.
