@@ -1,25 +1,29 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	gocaldav "github.com/emersion/go-webdav/caldav"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/sysop/ultrabridge/internal/appconfig"
 	"github.com/sysop/ultrabridge/internal/auth"
 	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/chat"
 	ubwebdav "github.com/sysop/ultrabridge/internal/webdav"
-	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/mcpauth"
@@ -64,34 +68,71 @@ func main() {
 		return
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ultrabridge: %v\n", err)
-		os.Exit(1)
+	// Stage 1: Bootstrap config (needed before DB opens)
+	// Logging and database paths read directly from env vars
+	bootstrapCfg := &bootstrapConfig{
+		logLevel:         envOrDefault("UB_LOG_LEVEL", "info"),
+		logFormat:        envOrDefault("UB_LOG_FORMAT", "json"),
+		logFile:          os.Getenv("UB_LOG_FILE"),
+		logFileMaxMB:     envIntOrDefault("UB_LOG_FILE_MAX_MB", 50),
+		logFileMaxAge:    envIntOrDefault("UB_LOG_FILE_MAX_AGE_DAYS", 30),
+		logFileMaxBackup: envIntOrDefault("UB_LOG_FILE_MAX_BACKUPS", 5),
+		logSyslogAddr:    os.Getenv("UB_LOG_SYSLOG_ADDR"),
+		dbPath:           envOrDefault("UB_DB_PATH", "/data/ultrabridge.db"),
+		taskDBPath:       envOrDefault("UB_TASK_DB_PATH", "/data/ultrabridge-tasks.db"),
+		listenAddr:       envOrDefault("UB_LISTEN_ADDR", ":8443"),
+		dbEnvPath:        envOrDefault("UB_SUPERNOTE_DBENV_PATH", "/run/secrets/dbenv"),
+		passwordHashPath: envOrDefault("UB_PASSWORD_HASH_PATH", "/run/secrets/ub_password_hash"),
 	}
 
 	logger := logging.Setup(logging.Config{
-		Level:         cfg.LogLevel,
-		Format:        cfg.LogFormat,
-		File:          cfg.LogFile,
-		FileMaxMB:     cfg.LogFileMaxMB,
-		FileMaxAge:    cfg.LogFileMaxAge,
-		FileMaxBackup: cfg.LogFileMaxBackup,
-		SyslogAddr:    cfg.LogSyslogAddr,
+		Level:         bootstrapCfg.logLevel,
+		Format:        bootstrapCfg.logFormat,
+		File:          bootstrapCfg.logFile,
+		FileMaxMB:     bootstrapCfg.logFileMaxMB,
+		FileMaxAge:    bootstrapCfg.logFileMaxAge,
+		FileMaxBackup: bootstrapCfg.logFileMaxBackup,
+		SyslogAddr:    bootstrapCfg.logSyslogAddr,
 	})
 
-	// Connect to Supernote MariaDB.
-	// Required when SN sync is enabled or notes pipeline uses catalog sync.
-	// Non-fatal when sync is disabled — task store is SQLite-only.
-	database, err := db.Connect(cfg.DSN())
+	// Load MariaDB credentials from env or .dbenv file
+	dbName, dbUser, dbPassword, err := loadDBEnv(bootstrapCfg.dbEnvPath)
 	if err != nil {
-		if cfg.SNSyncEnabled {
-			logger.Error("database connection failed (required for sync)", "error", err)
-			os.Exit(1)
-		}
-		logger.Warn("database connection failed, notes catalog sync disabled", "error", err)
-		// database is nil — catalog updater won't be set, which is nil-guarded below
+		logger.Warn("failed to load MariaDB credentials", "error", err)
+		// Non-fatal — catalog sync will be skipped
 	}
+
+	// Load password hash from env or secrets file
+	passwordHash := os.Getenv("UB_PASSWORD_HASH")
+	if passwordHash == "" {
+		if data, err := os.ReadFile(bootstrapCfg.passwordHashPath); err == nil {
+			passwordHash = strings.TrimSpace(string(data))
+		}
+	}
+
+	// Connect to Supernote MariaDB (optional — required only if sync is enabled)
+	// Build DSN from credentials we loaded
+	var database *sql.DB
+	if dbUser != "" && dbPassword != "" && dbName != "" {
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true",
+			dbUser, dbPassword,
+			envOrDefault("UB_DB_HOST", "mariadb"),
+			envOrDefault("UB_DB_PORT", "3306"),
+			dbName)
+		database, err = db.Connect(dsn)
+		if err != nil {
+			// Check if sync is enabled
+			if envBoolOrDefault("UB_SN_SYNC_ENABLED", false) {
+				logger.Error("database connection failed (required for sync)", "error", err)
+				os.Exit(1)
+			}
+			logger.Warn("database connection failed, notes catalog sync disabled", "error", err)
+			// database remains nil — catalog updater won't be set, which is nil-guarded below
+		}
+	} else {
+		logger.Warn("MariaDB credentials incomplete, skipping connection")
+	}
+
 	if database != nil {
 		defer database.Close()
 	}
@@ -101,14 +142,15 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		userID, err = db.ResolveUserID(ctx, database, cfg.UserID)
+		userIDVal := int64(envIntOrDefault("UB_USER_ID", 0))
+		userID, err = db.ResolveUserID(ctx, database, userIDVal)
 		if err != nil {
-			if cfg.SNSyncEnabled {
+			if envBoolOrDefault("UB_SN_SYNC_ENABLED", false) {
 				logger.Error("user resolution failed (required for sync)", "error", err)
 				os.Exit(1)
 			}
 			logger.Warn("user resolution failed", "error", err)
-		} else if cfg.UserID != 0 {
+		} else if userIDVal != 0 {
 			logger.Info("using configured user_id", "user_id", userID)
 		} else {
 			logger.Info("discovered user_id", "user_id", userID)
@@ -116,9 +158,9 @@ func main() {
 	}
 
 	// Open the task SQLite DB
-	taskDB, err := taskdb.Open(context.Background(), cfg.TaskDBPath)
+	taskDB, err := taskdb.Open(context.Background(), bootstrapCfg.taskDBPath)
 	if err != nil {
-		logger.Error("taskdb open failed", "err", err, "path", cfg.TaskDBPath)
+		logger.Error("taskdb open failed", "err", err, "path", bootstrapCfg.taskDBPath)
 		os.Exit(1)
 	}
 	defer taskDB.Close()
@@ -126,7 +168,7 @@ func main() {
 	store := taskdb.NewStore(taskDB)
 
 	// Run migration if task DB is empty and SPC sync is enabled
-	if cfg.SNSyncEnabled {
+	if envBoolOrDefault("UB_SN_SYNC_ENABLED", false) {
 		isEmpty, err := store.IsEmpty(context.Background())
 		if err != nil {
 			logger.Error("taskdb empty check failed", "err", err)
@@ -134,7 +176,10 @@ func main() {
 		}
 		if isEmpty {
 			logger.Info("empty task DB detected, attempting migration from SPC")
-			migClient := supernote.NewClient(cfg.SNAPIURL, cfg.SNAccount, cfg.SNPassword, logger)
+			snAPIURL := envOrDefault("UB_SN_API_URL", "http://supernote-service:8080")
+			snAccount := os.Getenv("UB_SN_ACCOUNT")
+			snPassword := os.Getenv("UB_SN_PASSWORD")
+			migClient := supernote.NewClient(snAPIURL, snAccount, snPassword, logger)
 			if err := migClient.Login(context.Background()); err != nil {
 				logger.Warn("SPC login failed for migration, starting with empty store", "error", err)
 			} else {
@@ -151,17 +196,33 @@ func main() {
 		}
 	}
 
-	notifier := sync.NewNotifier(cfg.SocketIOURL, logger)
+	socketIOURL := envOrDefault("UB_SOCKETIO_URL", "ws://supernote-service:8080/socket.io/")
+	notifier := sync.NewNotifier(socketIOURL, logger)
 	notifier.Connect(context.Background())
 	defer notifier.Close()
 
 	// Open the notes SQLite DB (separate from Supernote's MariaDB)
-	noteDB, err := notedb.Open(context.Background(), cfg.DBPath)
+	noteDB, err := notedb.Open(context.Background(), bootstrapCfg.dbPath)
 	if err != nil {
-		logger.Error("notedb open failed", "err", err, "path", cfg.DBPath)
+		logger.Error("notedb open failed", "err", err, "path", bootstrapCfg.dbPath)
 		os.Exit(1)
 	}
 	defer noteDB.Close()
+
+	// Stage 2: Load application config from DB (after notedb opens)
+	cfg, err := appconfig.Load(context.Background(), noteDB)
+	if err != nil {
+		logger.Error("appconfig load failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Override auth credentials from bootstrap (env vars take precedence)
+	if passwordHash != "" {
+		cfg.PasswordHash = passwordHash
+	}
+	if username := os.Getenv("UB_USERNAME"); username != "" {
+		cfg.Username = username
+	}
 
 	// Run mcpauth migration to ensure mcp_tokens table exists
 	if err := mcpauth.Migrate(context.Background(), noteDB); err != nil {
@@ -291,8 +352,9 @@ func main() {
 			defer booxProc.Stop()
 		}
 		// Sync import path from env var to settings DB so the web handler can read it.
-		if cfg.BooxImportPath != "" {
-			notedb.SetSetting(context.Background(), noteDB, "boox_import_path", cfg.BooxImportPath)
+		booxImportPath := os.Getenv("UB_BOOX_IMPORT_PATH")
+		if booxImportPath != "" {
+			notedb.SetSetting(context.Background(), noteDB, "boox_import_path", booxImportPath)
 		}
 	}
 
@@ -394,8 +456,8 @@ func main() {
 	// Start HTTP server in a goroutine so we can wait for signals
 	serverErr := make(chan error, 1)
 	go func() {
-		logger.Info("ultrabridge starting", "addr", cfg.ListenAddr)
-		serverErr <- http.ListenAndServe(cfg.ListenAddr, handler)
+		logger.Info("ultrabridge starting", "addr", bootstrapCfg.listenAddr)
+		serverErr <- http.ListenAndServe(bootstrapCfg.listenAddr, handler)
 	}()
 
 	// Wait for shutdown signal or server error
@@ -413,4 +475,102 @@ func main() {
 			backfillCancel()
 		}
 	}
+}
+
+// bootstrapConfig holds the minimal config needed before DB opens.
+type bootstrapConfig struct {
+	logLevel         string
+	logFormat        string
+	logFile          string
+	logFileMaxMB     int
+	logFileMaxAge    int
+	logFileMaxBackup int
+	logSyslogAddr    string
+	dbPath           string
+	taskDBPath       string
+	listenAddr       string
+	dbEnvPath        string
+	passwordHashPath string
+}
+
+// envOrDefault returns the value of an environment variable or a default.
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// envIntOrDefault returns the value of an environment variable as an int, or a default.
+func envIntOrDefault(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+// envBoolOrDefault returns the value of an environment variable as a bool, or a default.
+func envBoolOrDefault(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	return strings.EqualFold(v, "true") || v == "1"
+}
+
+// loadDBEnv loads MariaDB credentials from environment variables or a .dbenv file.
+// Returns (dbName, dbUser, dbPassword, error).
+// Env vars take precedence over file values.
+func loadDBEnv(dbEnvPath string) (string, string, string, error) {
+	dbName := os.Getenv("MYSQL_DATABASE")
+	dbUser := os.Getenv("MYSQL_USER")
+	dbPassword := os.Getenv("MYSQL_PASSWORD")
+
+	// If we got all three from env, we're done
+	if dbName != "" && dbUser != "" && dbPassword != "" {
+		return dbName, dbUser, dbPassword, nil
+	}
+
+	// Try file as fallback
+	f, err := os.Open(dbEnvPath)
+	if err != nil {
+		if dbName != "" || dbUser != "" {
+			// Got partial config from env, file is optional
+			return dbName, dbUser, dbPassword, nil
+		}
+		return "", "", "", fmt.Errorf("open %s: %w", dbEnvPath, err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "MYSQL_DATABASE":
+			if dbName == "" {
+				dbName = val
+			}
+		case "MYSQL_USER":
+			if dbUser == "" {
+				dbUser = val
+			}
+		case "MYSQL_PASSWORD":
+			if dbPassword == "" {
+				dbPassword = val
+			}
+		}
+	}
+	return dbName, dbUser, dbPassword, scanner.Err()
 }

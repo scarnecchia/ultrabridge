@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Last verified: 2026-04-09
+Last verified: 2026-04-10
 
 Go sidecar service for Supernote Private Cloud. Six subsystems:
 1. **CalDAV task sync** -- CalDAV VTODO over local SQLite task store
@@ -29,7 +29,7 @@ Instead: `git -C /path`, `go -C /path build`, or absolute paths.
 - `internal/tasksync/supernote/` -- Supernote SPC REST adapter: JWT auth, field mapping, migration (see domain CLAUDE.md)
 - `internal/sync/` -- Engine.IO v3 notifier: STARTSYNC push + inbound events (see domain CLAUDE.md)
 - `internal/auth/` -- Basic Auth middleware (bcrypt)
-- `internal/config/` -- env vars (UB_ prefix) + .dbenv file loading + pipeline config + sync config + boox config + RAG/chat config
+- `internal/appconfig/` -- SQLite-backed application config with env var overrides, restart detection (see domain CLAUDE.md)
 - `internal/db/` -- MariaDB pool + single-user discovery
 - `internal/logging/` -- structured slog, file rotation, syslog, WebSocket broadcast
 - `internal/mcpauth/` -- MCP bearer token store: SHA-256 hashed tokens in SQLite, CRUD + validation (see domain CLAUDE.md)
