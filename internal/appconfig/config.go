@@ -3,6 +3,7 @@ package appconfig
 import (
 	"context"
 	"database/sql"
+	"os"
 	"strconv"
 	"strings"
 
@@ -220,6 +221,36 @@ func Save(ctx context.Context, db *sql.DB, cfg *Config) (*SaveResult, error) {
 		ChangedKeys:     changedKeys,
 		RestartRequired: restartRequiredChanged,
 	}, nil
+}
+
+// IsSetupRequired returns true when no auth credentials exist in either
+// the settings DB or environment variables. This indicates first-boot setup
+// is needed before the application can enforce authentication.
+func IsSetupRequired(ctx context.Context, db *sql.DB) bool {
+	// Check DB first
+	username, _ := notedb.GetSetting(ctx, db, KeyUsername)
+	hash, _ := notedb.GetSetting(ctx, db, KeyPasswordHash)
+	if username != "" && hash != "" {
+		return false
+	}
+
+	// Check env vars (backward compatibility for existing installs)
+	if os.Getenv("UB_USERNAME") != "" && os.Getenv("UB_PASSWORD_HASH") != "" {
+		return false
+	}
+
+	// Also check password hash file
+	if os.Getenv("UB_USERNAME") != "" {
+		hashPath := os.Getenv("UB_PASSWORD_HASH_PATH")
+		if hashPath == "" {
+			hashPath = "/run/secrets/ub_password_hash"
+		}
+		if data, err := os.ReadFile(hashPath); err == nil && strings.TrimSpace(string(data)) != "" {
+			return false
+		}
+	}
+
+	return true
 }
 
 // loadDBOnly loads config from DB without env var overlay.

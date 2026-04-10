@@ -462,3 +462,151 @@ func TestEnvironmentVariableOverride(t *testing.T) {
 		t.Errorf("expected OCRConcurrency=4 (from env), got %d", cfg.OCRConcurrency)
 	}
 }
+
+// TestIsSetupRequiredWithEmptyDB verifies that IsSetupRequired returns true when
+// DB is empty and no env vars are set.
+// Covers: platform-neutral-config.AC3.3
+func TestIsSetupRequiredWithEmptyDB(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Clear any env vars that might interfere
+	t.Cleanup(func() {
+		os.Unsetenv("UB_USERNAME")
+		os.Unsetenv("UB_PASSWORD_HASH")
+		os.Unsetenv("UB_PASSWORD_HASH_PATH")
+	})
+	os.Unsetenv("UB_USERNAME")
+	os.Unsetenv("UB_PASSWORD_HASH")
+	os.Unsetenv("UB_PASSWORD_HASH_PATH")
+
+	// With empty DB and no env vars, setup is required.
+	if !IsSetupRequired(ctx, db) {
+		t.Errorf("expected IsSetupRequired=true for empty DB, got false")
+	}
+}
+
+// TestIsSetupRequiredWithDBCredentials verifies that IsSetupRequired returns false
+// when credentials are in the database.
+func TestIsSetupRequiredWithDBCredentials(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Set credentials in DB
+	if err := notedb.SetSetting(ctx, db, KeyUsername, "alice"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+	if err := notedb.SetSetting(ctx, db, KeyPasswordHash, "hashed_password"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	// With credentials in DB, setup is not required.
+	if IsSetupRequired(ctx, db) {
+		t.Errorf("expected IsSetupRequired=false when DB has credentials, got true")
+	}
+}
+
+// TestIsSetupRequiredWithEnvVars verifies that IsSetupRequired returns false
+// when env vars are set.
+// Covers: platform-neutral-config.AC3.5
+func TestIsSetupRequiredWithEnvVars(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Clear any env vars first
+	t.Cleanup(func() {
+		os.Unsetenv("UB_USERNAME")
+		os.Unsetenv("UB_PASSWORD_HASH")
+		os.Unsetenv("UB_PASSWORD_HASH_PATH")
+	})
+
+	// Set env vars (but leave DB empty)
+	os.Setenv("UB_USERNAME", "bob")
+	os.Setenv("UB_PASSWORD_HASH", "env_hashed_password")
+
+	// With env vars set, setup is not required even if DB is empty.
+	if IsSetupRequired(ctx, db) {
+		t.Errorf("expected IsSetupRequired=false with env vars set, got true")
+	}
+}
+
+// TestIsSetupRequiredWithPasswordHashFile verifies that IsSetupRequired returns false
+// when a password hash file exists.
+func TestIsSetupRequiredWithPasswordHashFile(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Create a temporary password hash file
+	tmpFile, err := os.CreateTemp("", "ub_password_hash")
+	if err != nil {
+		t.Fatalf("CreateTemp failed: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	// Write a hash to it
+	if _, err := tmpFile.WriteString("hashed_password_from_file"); err != nil {
+		t.Fatalf("WriteString failed: %v", err)
+	}
+	tmpFile.Close()
+
+	// Clear env vars first
+	t.Cleanup(func() {
+		os.Unsetenv("UB_USERNAME")
+		os.Unsetenv("UB_PASSWORD_HASH")
+		os.Unsetenv("UB_PASSWORD_HASH_PATH")
+	})
+
+	// Set username and password hash path (but leave DB empty)
+	os.Setenv("UB_USERNAME", "bob")
+	os.Setenv("UB_PASSWORD_HASH_PATH", tmpFile.Name())
+
+	// With password hash file, setup is not required.
+	if IsSetupRequired(ctx, db) {
+		t.Errorf("expected IsSetupRequired=false with password hash file, got true")
+	}
+}
+
+// TestIsSetupRequiredWithPartialDBCredentials verifies that setup is still required
+// if only username or only password hash is set.
+func TestIsSetupRequiredWithPartialDBCredentials(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupDB func(*sql.DB, context.Context) error
+	}{
+		{
+			name: "only_username",
+			setupDB: func(db *sql.DB, ctx context.Context) error {
+				return notedb.SetSetting(ctx, db, KeyUsername, "alice")
+			},
+		},
+		{
+			name: "only_password_hash",
+			setupDB: func(db *sql.DB, ctx context.Context) error {
+				return notedb.SetSetting(ctx, db, KeyPasswordHash, "hashed_password")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openTestDB(t)
+			ctx := context.Background()
+
+			// Clear env vars
+			t.Cleanup(func() {
+				os.Unsetenv("UB_USERNAME")
+				os.Unsetenv("UB_PASSWORD_HASH")
+				os.Unsetenv("UB_PASSWORD_HASH_PATH")
+			})
+
+			if err := tt.setupDB(db, ctx); err != nil {
+				t.Fatalf("setupDB failed: %v", err)
+			}
+
+			// With partial credentials, setup is still required.
+			if !IsSetupRequired(ctx, db) {
+				t.Errorf("expected IsSetupRequired=true with partial credentials, got false")
+			}
+		})
+	}
+}
