@@ -296,12 +296,13 @@ func main() {
 	}
 
 	deps := source.SharedDeps{
-		Indexer:    si,
-		Embedder:   embedder,
-		EmbedModel: cfg.OllamaEmbedModel,
-		EmbedStore: embedStore,
-		OCRClient:  ocrClient,
-		Logger:     logger,
+		Indexer:      si,
+		Embedder:     embedder,
+		EmbedModel:   cfg.OllamaEmbedModel,
+		EmbedStore:   embedStore,
+		OCRClient:    ocrClient,
+		OCRMaxFileMB: cfg.OCRMaxFileMB,
+		Logger:       logger,
 	}
 
 	// List enabled sources from DB
@@ -314,7 +315,7 @@ func main() {
 	// Backward compatibility: seed sources from env vars if DB is empty
 	if len(rows) == 0 {
 		if cfg.NotesPath != "" {
-			source.AddSource(context.Background(), noteDB, source.SourceRow{
+			_, err := source.AddSource(context.Background(), noteDB, source.SourceRow{
 				Type:       "supernote",
 				Name:       "Supernote",
 				Enabled:    true,
@@ -322,9 +323,12 @@ func main() {
 				CreatedAt:  time.Now().UnixMilli(),
 				UpdatedAt:  time.Now().UnixMilli(),
 			})
+			if err != nil {
+				logger.Warn("failed to seed supernote source from env", "error", err)
+			}
 		}
 		if cfg.BooxEnabled && cfg.BooxNotesPath != "" {
-			source.AddSource(context.Background(), noteDB, source.SourceRow{
+			_, err := source.AddSource(context.Background(), noteDB, source.SourceRow{
 				Type:       "boox",
 				Name:       "Boox",
 				Enabled:    true,
@@ -332,9 +336,16 @@ func main() {
 				CreatedAt:  time.Now().UnixMilli(),
 				UpdatedAt:  time.Now().UnixMilli(),
 			})
+			if err != nil {
+				logger.Warn("failed to seed boox source from env", "error", err)
+			}
 		}
 		// Re-read after seeding
-		rows, _ = source.ListEnabledSources(context.Background(), noteDB)
+		rows, err = source.ListEnabledSources(context.Background(), noteDB)
+		if err != nil {
+			logger.Error("failed to re-read sources after seeding", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	// Start sources

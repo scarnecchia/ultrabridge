@@ -29,12 +29,13 @@ type Factory func(db *sql.DB, row SourceRow, deps SharedDeps) (Source, error)
 
 // SharedDeps bundles infrastructure shared across all source adapters.
 type SharedDeps struct {
-	Indexer    processor.Indexer
-	Embedder   rag.Embedder
-	EmbedModel string
-	EmbedStore rag.EmbedStore
-	OCRClient  *processor.OCRClient
-	Logger     *slog.Logger
+	Indexer      processor.Indexer
+	Embedder     rag.Embedder
+	EmbedModel   string
+	EmbedStore   rag.EmbedStore
+	OCRClient    *processor.OCRClient
+	OCRMaxFileMB int // max file size in MB for OCR processing (0 = unlimited)
+	Logger       *slog.Logger
 }
 
 // SourceRow represents a row from the sources table.
