@@ -33,6 +33,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/processor"
 	"github.com/sysop/ultrabridge/internal/rag"
 	"github.com/sysop/ultrabridge/internal/search"
+	"github.com/sysop/ultrabridge/internal/source"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
 
@@ -176,7 +177,7 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	// Cache the import path for the noteSource template function.
 	var booxImportPath string
 	if noteDB != nil {
-		booxImportPath, _ = notedb.GetSetting(context.Background(), noteDB, SettingKeyBooxImportPath)
+		booxImportPath, _ = notedb.GetSetting(context.Background(), noteDB, appconfig.KeyBooxImportPath)
 	}
 
 	// Parse the embedded templates with custom function map
@@ -339,9 +340,9 @@ func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
 	data["BooxNotesPath"] = h.booxNotesPath
 	data["chatEnabled"] = h.chatHandler != nil
 	if h.noteDB != nil {
-		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+		importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
 		data["BooxImportPath"] = importPath
-		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxTodoEnabled)
+		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoEnabled)
 		data["BooxTodoEnabled"] = todoEnabled == "true"
 	}
 	return data
@@ -364,15 +365,6 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 // Settings keys for per-pipeline OCR prompts.
 const (
-	SettingKeySNInjectEnabled = "sn_inject_enabled"
-	SettingKeySNOCRPrompt     = "sn_ocr_prompt"
-	SettingKeyBooxOCRPrompt   = "boox_ocr_prompt"
-	SettingKeyBooxTodoEnabled = "boox_todo_enabled"
-	SettingKeyBooxTodoPrompt  = "boox_todo_prompt"
-	SettingKeyBooxImportPath  = "boox_import_path"
-	SettingKeyBooxImportNotes = "boox_import_notes"
-	SettingKeyBooxImportPDFs      = "boox_import_pdfs"
-	SettingKeyBooxImportOnyxPaths = "boox_import_onyx_paths"
 )
 
 // DefaultBooxTodoPrompt is the default prompt for red ink to-do extraction.
@@ -388,39 +380,59 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	data["SNPipelineActive"] = h.noteStore != nil
 	data["BooxActive"] = h.booxStore != nil
 
-	// Load OCR prompts from DB, falling back to default.
+	// Load current config and detect if restart is required.
 	if h.noteDB != nil {
-		snInject, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeySNInjectEnabled)
+		cfg, err := appconfig.Load(ctx, h.noteDB)
+		if err != nil {
+			h.logger.Error("load config for settings page", "error", err)
+		} else {
+			data["Config"] = cfg
+			// Check if config has diverged from running config (restart required).
+			if h.runningConfig != nil {
+				restartRequired := h.configDirty.Load()
+				data["RestartRequired"] = restartRequired
+			}
+		}
+
+		// Load sources list.
+		sources, err := source.ListSources(ctx, h.noteDB)
+		if err != nil {
+			h.logger.Error("list sources for settings page", "error", err)
+		} else {
+			data["Sources"] = sources
+		}
+
+		snInject, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeySNInjectEnabled)
 		data["SNInjectEnabled"] = snInject != "false" // default true
 
-		snPrompt, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeySNOCRPrompt)
+		snPrompt, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeySNOCRPrompt)
 		if snPrompt == "" {
 			snPrompt = processor.DefaultOCRPrompt
 		}
 		data["SNOCRPrompt"] = snPrompt
 
-		booxPrompt, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxOCRPrompt)
+		booxPrompt, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxOCRPrompt)
 		if booxPrompt == "" {
 			booxPrompt = processor.DefaultOCRPrompt
 		}
 		data["BooxOCRPrompt"] = booxPrompt
 
-		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxTodoEnabled)
+		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoEnabled)
 		data["BooxTodoEnabled"] = todoEnabled == "true"
 
-		todoPrompt, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxTodoPrompt)
+		todoPrompt, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoPrompt)
 		if todoPrompt == "" {
 			todoPrompt = DefaultBooxTodoPrompt
 		}
 		data["BooxTodoPrompt"] = todoPrompt
 
-		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+		importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
 		data["BooxImportPath"] = importPath
-		importNotes, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportNotes)
+		importNotes, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportNotes)
 		data["BooxImportNotes"] = importNotes == "true"
-		importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPDFs)
+		importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPDFs)
 		data["BooxImportPDFs"] = importPDFs == "true"
-		importOnyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportOnyxPaths)
+		importOnyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportOnyxPaths)
 		data["BooxImportOnyxPaths"] = importOnyxPaths == "true"
 	}
 
@@ -478,49 +490,49 @@ func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 			if r.FormValue("inject_enabled") == "false" {
 				injectEnabled = "false"
 			}
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeySNInjectEnabled, injectEnabled); err != nil {
-				h.logger.Error("save setting", "key", SettingKeySNInjectEnabled, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeySNInjectEnabled, injectEnabled); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeySNInjectEnabled, "error", err)
 			}
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeySNOCRPrompt, ocrPrompt); err != nil {
-				h.logger.Error("save setting", "key", SettingKeySNOCRPrompt, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeySNOCRPrompt, ocrPrompt); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeySNOCRPrompt, "error", err)
 			}
 		case "boox":
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxOCRPrompt, ocrPrompt); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxOCRPrompt, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxOCRPrompt, ocrPrompt); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyBooxOCRPrompt, "error", err)
 			}
 			// Save to-do extraction settings.
 			todoEnabled := "false"
 			if r.FormValue("todo_enabled") == "true" {
 				todoEnabled = "true"
 			}
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxTodoEnabled, todoEnabled); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxTodoEnabled, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoEnabled, todoEnabled); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyBooxTodoEnabled, "error", err)
 			}
 			todoPrompt := r.FormValue("todo_prompt")
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxTodoPrompt, todoPrompt); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxTodoPrompt, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoPrompt, todoPrompt); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyBooxTodoPrompt, "error", err)
 			}
 			// Save bulk import settings (path is read-only, set via env var).
 			importNotes := "false"
 			if r.FormValue("import_notes") == "true" {
 				importNotes = "true"
 			}
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxImportNotes, importNotes); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxImportNotes, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxImportNotes, importNotes); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyBooxImportNotes, "error", err)
 			}
 			importPDFs := "false"
 			if r.FormValue("import_pdfs") == "true" {
 				importPDFs = "true"
 			}
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxImportPDFs, importPDFs); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxImportPDFs, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPDFs, importPDFs); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyBooxImportPDFs, "error", err)
 			}
 			importOnyxPaths := "false"
 			if r.FormValue("import_onyx_paths") == "true" {
 				importOnyxPaths = "true"
 			}
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxImportOnyxPaths, importOnyxPaths); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxImportOnyxPaths, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxImportOnyxPaths, importOnyxPaths); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyBooxImportOnyxPaths, "error", err)
 			}
 		}
 	}
@@ -1133,7 +1145,7 @@ func (h *Handler) handleFilesStatus(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// Count unmigrated files if an import path is configured.
 			if h.noteDB != nil {
-				importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+				importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
 				if importPath != "" {
 					if count, err := h.booxStore.CountNotesWithPrefix(ctx, importPath); err == nil && count > 0 {
 						qs.UnmigratedCount = count
@@ -1157,7 +1169,7 @@ func (h *Handler) isBooxPath(ctx context.Context, path string) bool {
 		return true
 	}
 	if h.noteDB != nil {
-		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+		importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
 		if importPath != "" && strings.HasPrefix(path, importPath) {
 			return true
 		}
@@ -1330,15 +1342,15 @@ func (h *Handler) handleFilesImport(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Read import settings from DB.
-	importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+	importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
 	if importPath == "" {
 		h.logger.Warn("import: no import path configured")
 		http.Redirect(w, r, "/settings", http.StatusSeeOther)
 		return
 	}
-	importNotes, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportNotes)
-	importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPDFs)
-	onyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportOnyxPaths)
+	importNotes, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportNotes)
+	importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPDFs)
+	onyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportOnyxPaths)
 
 	cfg := booxpipeline.ImportConfig{
 		ImportPath:  importPath,
@@ -1456,7 +1468,7 @@ func (h *Handler) handleFilesMigrateImports(w http.ResponseWriter, r *http.Reque
 	}
 
 	ctx := context.Background() // detached — survives browser redirect
-	importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+	importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
 	if importPath == "" || h.booxNotesPath == "" {
 		h.logger.Warn("migrate: import path or notes path not configured")
 		http.Redirect(w, r, "/settings", http.StatusSeeOther)

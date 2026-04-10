@@ -185,6 +185,98 @@ func TestSettingsPage_RAGEnabled(t *testing.T) {
 	}
 }
 
+// TestSettingsPage_GeneralSettings verifies AC1.4: general config form rendered with current values
+func TestSettingsPage_GeneralSettings(t *testing.T) {
+	db, err := notedb.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	// Set some config values
+	notedb.SetSetting(ctx, db, appconfig.KeyUsername, "testuser")
+	notedb.SetSetting(ctx, db, appconfig.KeyOllamaURL, "http://test-ollama:11434")
+	notedb.SetSetting(ctx, db, appconfig.KeyOCRFormat, "openai")
+
+	// Create a running config to enable RestartRequired detection
+	runningCfg, _ := appconfig.Load(ctx, db)
+
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+	})
+	handler.runningConfig = runningCfg
+
+	req := httptest.NewRequest("GET", "/settings", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+
+	// Should contain general settings section
+	if !strings.Contains(body, "General Settings") {
+		t.Error("Settings page should contain 'General Settings' section")
+	}
+
+	// Should contain config form fields with values
+	if !strings.Contains(body, `id="config-username"`) {
+		t.Error("Settings page should contain username input field")
+	}
+	if !strings.Contains(body, `value="testuser"`) {
+		t.Error("Settings page should pre-populate username with saved value")
+	}
+	if !strings.Contains(body, `id="config-ollama-url"`) {
+		t.Error("Settings page should contain ollama URL input field")
+	}
+	if !strings.Contains(body, `value="http://test-ollama:11434"`) {
+		t.Error("Settings page should pre-populate ollama URL with saved value")
+	}
+	if !strings.Contains(body, `saveConfig()`) {
+		t.Error("Settings page should contain saveConfig JavaScript function call")
+	}
+}
+
+// TestSettingsPage_RestartBanner verifies AC1.6: restart required banner when config changes require restart
+func TestSettingsPage_RestartBanner(t *testing.T) {
+	db, err := notedb.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	handler := testHandler(t, func(o *testHandlerOpts) {
+		o.noteDB = db
+	})
+
+	// Initially no restart required
+	handler.configDirty.Store(false)
+	handler.runningConfig, _ = appconfig.Load(ctx, db)
+
+	req := httptest.NewRequest("GET", "/settings", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if strings.Contains(body, "Configuration has changed") {
+		t.Error("Settings page should not show restart banner when configDirty is false")
+	}
+
+	// Now mark dirty and verify banner appears
+	handler.configDirty.Store(true)
+	req = httptest.NewRequest("GET", "/settings", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body = w.Body.String()
+	if !strings.Contains(body, "Configuration has changed") {
+		t.Error("Settings page should show 'Configuration has changed' banner when configDirty is true")
+	}
+	if !strings.Contains(body, "Restart the application") {
+		t.Error("Settings page restart banner should explain restart is needed")
+	}
+}
+
 // --- /settings/save ---
 
 func TestSettingsSave_BooxOCRPrompt(t *testing.T) {
