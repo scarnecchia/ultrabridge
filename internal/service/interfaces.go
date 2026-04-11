@@ -71,6 +71,12 @@ type ActiveTask struct {
 	StartedAt time.Time `json:"started_at"`
 }
 
+// SyncStatusProvider is an interface for accessing sync status and triggering sync.
+type SyncStatusProvider interface {
+	Status() SyncStatus
+	TriggerSync()
+}
+
 // TaskService manages task-related operations.
 type TaskService interface {
 	List(ctx context.Context) ([]Task, error)

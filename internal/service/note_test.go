@@ -1,0 +1,139 @@
+package service
+
+import (
+	"context"
+	"testing"
+
+	"github.com/sysop/ultrabridge/internal/booxpipeline"
+	"github.com/sysop/ultrabridge/internal/notestore"
+	"github.com/sysop/ultrabridge/internal/processor"
+)
+
+type mockNoteStore struct {
+	files []notestore.NoteFile
+}
+
+func (m *mockNoteStore) List(ctx context.Context, path string) ([]notestore.NoteFile, error) {
+	return m.files, nil
+}
+func (m *mockNoteStore) Scan(ctx context.Context) ([]string, error)      { return nil, nil }
+func (m *mockNoteStore) Get(ctx context.Context, path string) (*notestore.NoteFile, error) {
+	return nil, nil
+}
+func (m *mockNoteStore) UpsertFile(ctx context.Context, path string) error { return nil }
+func (m *mockNoteStore) SetHash(ctx context.Context, path, hash string) error { return nil }
+func (m *mockNoteStore) GetHash(ctx context.Context, path string) (string, error) { return "", nil }
+func (m *mockNoteStore) LookupByHash(ctx context.Context, hash string) (string, bool, error) {
+	return "", false, nil
+}
+func (m *mockNoteStore) TransferJob(ctx context.Context, oldPath, newPath string) error { return nil }
+
+type mockProcessor struct {
+	enqueued []string
+	status   processor.ProcessorStatus
+}
+
+func (m *mockProcessor) Start(ctx context.Context) error { return nil }
+func (m *mockProcessor) Stop() error                    { return nil }
+func (m *mockProcessor) Status() processor.ProcessorStatus { return m.status }
+func (m *mockProcessor) Enqueue(ctx context.Context, path string, opts ...processor.EnqueueOption) error {
+	m.enqueued = append(m.enqueued, path)
+	return nil
+}
+func (m *mockProcessor) Skip(ctx context.Context, path, reason string) error { return nil }
+func (m *mockProcessor) Unskip(ctx context.Context, path string) error      { return nil }
+func (m *mockProcessor) GetJob(ctx context.Context, path string) (*processor.Job, error) {
+	return nil, nil
+}
+
+type mockBooxStore struct {
+	notes    []booxpipeline.BooxNoteEntry
+	enqueued []string
+}
+
+func (m *mockBooxStore) ListNotes(ctx context.Context) ([]booxpipeline.BooxNoteEntry, error) {
+	return m.notes, nil
+}
+func (m *mockBooxStore) GetVersions(ctx context.Context, path string) ([]booxpipeline.BooxVersion, error) {
+	return nil, nil
+}
+func (m *mockBooxStore) GetNoteID(ctx context.Context, path string) (string, error) { return "", nil }
+func (m *mockBooxStore) EnqueueJob(ctx context.Context, path string) error {
+	m.enqueued = append(m.enqueued, path)
+	return nil
+}
+func (m *mockBooxStore) GetLatestJob(ctx context.Context, path string) (*booxpipeline.BooxJob, error) {
+	return nil, nil
+}
+func (m *mockBooxStore) RetryAllFailed(ctx context.Context) (int64, error) { return 0, nil }
+func (m *mockBooxStore) DeleteNote(ctx context.Context, path string) error    { return nil }
+func (m *mockBooxStore) SkipNote(ctx context.Context, path, reason string) error { return nil }
+func (m *mockBooxStore) UnskipNote(ctx context.Context, path string) error       { return nil }
+
+type mockFileScanner struct {
+	scanned int
+}
+
+func (m *mockFileScanner) ScanNow(ctx context.Context) {
+	m.scanned++
+}
+
+func TestNoteService_ListFiles(t *testing.T) {
+	ns := &mockNoteStore{
+		files: []notestore.NoteFile{
+			{Name: "SN Note 1", Path: "/notes/sn1", FileType: notestore.FileTypeNote},
+			{Name: "SN Note 2", Path: "/notes/sn2", FileType: notestore.FileTypeNote},
+		},
+	}
+	bs := &mockBooxStore{
+		notes: []booxpipeline.BooxNoteEntry{
+			{Title: "Boox Note 1", Path: "/boox/bn1"},
+		},
+	}
+	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, "", "", nil)
+
+	files, total, err := svc.ListFiles(context.Background(), "", "name", "asc", 1, 10)
+	if err != nil {
+		t.Fatalf("ListFiles failed: %v", err)
+	}
+
+	if total != 3 {
+		t.Errorf("expected 3 total files, got %d", total)
+	}
+	if len(files) != 3 {
+		t.Errorf("expected 3 files in page, got %d", len(files))
+	}
+
+	// Verify merging and mapping
+	names := map[string]bool{}
+	for _, f := range files {
+		names[f.Name] = true
+	}
+	if !names["SN Note 1"] || !names["SN Note 2"] || !names["Boox Note 1"] {
+		t.Errorf("missing files in merged list: %v", names)
+	}
+}
+
+func TestNoteService_Enqueue(t *testing.T) {
+	p := &mockProcessor{}
+	bs := &mockBooxStore{}
+	svc := NewNoteService(nil, p, bs, nil, nil, nil, nil, "", "", nil)
+
+	// Supernote path
+	err := svc.Enqueue(context.Background(), "/notes/sn1", false)
+	if err != nil {
+		t.Fatalf("Enqueue SN failed: %v", err)
+	}
+	if len(p.enqueued) != 1 || p.enqueued[0] != "/notes/sn1" {
+		t.Errorf("expected /notes/sn1 in SN processor, got %v", p.enqueued)
+	}
+
+	// Boox path
+	err = svc.Enqueue(context.Background(), "/boox/bn1.note", false)
+	if err != nil {
+		t.Fatalf("Enqueue Boox failed: %v", err)
+	}
+	if len(bs.enqueued) != 1 || bs.enqueued[0] != "/boox/bn1.note" {
+		t.Errorf("expected /boox/bn1.note in Boox store, got %v", bs.enqueued)
+	}
+}
