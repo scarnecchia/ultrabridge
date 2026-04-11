@@ -100,21 +100,6 @@ func redactSecret(s string) string {
 	return "[not set]"
 }
 
-// handleGetConfig handles GET /api/config — returns current config with secrets redacted.
-func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	cfg, err := appconfig.Load(ctx, h.noteDB)
-	if err != nil {
-		h.logger.Error("load config", "error", err)
-		apiError(w, http.StatusInternalServerError, "failed to load config")
-		return
-	}
-
-	redacted := redactConfig(cfg)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(redacted)
-}
-
 // IncomingConfig is the request body format for PUT /api/config.
 // It mirrors appconfig.Config but adds a "password" field for plaintext input.
 type IncomingConfig struct {
@@ -155,139 +140,81 @@ type IncomingConfig struct {
 	UserID                int64  `json:"user_id"`
 }
 
+// handleGetConfig handles GET /api/config — returns current config with secrets redacted.
+func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	cObj, err := h.config.GetConfig(r.Context())
+	if err != nil {
+		h.logger.Error("load config", "error", err)
+		apiError(w, http.StatusInternalServerError, "failed to load config")
+		return
+	}
+	cfg := cObj.(*appconfig.Config)
+
+	redacted := redactConfig(cfg)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(redacted)
+}
+
 // handlePutConfig handles PUT /api/config — update config with password hashing.
-// Uses merge semantics: loads current config from DB first, then overlays
-// only the fields present in the incoming JSON. This prevents partial PUTs
-// from wiping fields the client didn't send (e.g., web_enabled defaulting
-// to false when omitted from the request body).
 func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Load current config as the base — incoming values overlay this.
-	cfg, err := appconfig.Load(ctx, h.noteDB)
+	// Load current config as the base
+	cObj, err := h.config.GetConfig(ctx)
 	if err != nil {
 		h.logger.Error("load config for merge", "error", err)
 		apiError(w, http.StatusInternalServerError, "failed to load current config")
 		return
 	}
+	cfg := cObj.(*appconfig.Config)
 
-	// Decode incoming into a map so we can detect which fields were actually sent.
+	// Decode incoming into a map for merge detection
 	var rawMap map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&rawMap); err != nil {
 		apiError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
-	// Re-encode the map and decode into IncomingConfig for typed access.
-	rawBytes, _ := json.Marshal(rawMap)
 	var incoming IncomingConfig
+	rawBytes, _ := json.Marshal(rawMap)
 	json.Unmarshal(rawBytes, &incoming)
 
-	// Only overlay fields that were explicitly present in the request.
-	if _, ok := rawMap["username"]; ok {
-		cfg.Username = incoming.Username
-	}
-	if _, ok := rawMap["ocr_enabled"]; ok {
-		cfg.OCREnabled = incoming.OCREnabled
-	}
-	if _, ok := rawMap["ocr_api_url"]; ok {
-		cfg.OCRAPIURL = incoming.OCRAPIURL
-	}
-	if _, ok := rawMap["ocr_api_key"]; ok {
-		cfg.OCRAPIKey = incoming.OCRAPIKey
-	}
-	if _, ok := rawMap["ocr_model"]; ok {
-		cfg.OCRModel = incoming.OCRModel
-	}
-	if _, ok := rawMap["ocr_concurrency"]; ok {
-		cfg.OCRConcurrency = incoming.OCRConcurrency
-	}
-	if _, ok := rawMap["ocr_max_file_mb"]; ok {
-		cfg.OCRMaxFileMB = incoming.OCRMaxFileMB
-	}
-	if _, ok := rawMap["ocr_format"]; ok {
-		cfg.OCRFormat = incoming.OCRFormat
-	}
-	if _, ok := rawMap["embed_enabled"]; ok {
-		cfg.EmbedEnabled = incoming.EmbedEnabled
-	}
-	if _, ok := rawMap["ollama_url"]; ok {
-		cfg.OllamaURL = incoming.OllamaURL
-	}
-	if _, ok := rawMap["ollama_embed_model"]; ok {
-		cfg.OllamaEmbedModel = incoming.OllamaEmbedModel
-	}
-	if _, ok := rawMap["chat_enabled"]; ok {
-		cfg.ChatEnabled = incoming.ChatEnabled
-	}
-	if _, ok := rawMap["chat_api_url"]; ok {
-		cfg.ChatAPIURL = incoming.ChatAPIURL
-	}
-	if _, ok := rawMap["chat_model"]; ok {
-		cfg.ChatModel = incoming.ChatModel
-	}
-	if _, ok := rawMap["sn_sync_enabled"]; ok {
-		cfg.SNSyncEnabled = incoming.SNSyncEnabled
-	}
-	if _, ok := rawMap["sn_sync_interval"]; ok {
-		cfg.SNSyncInterval = incoming.SNSyncInterval
-	}
-	if _, ok := rawMap["sn_api_url"]; ok {
-		cfg.SNAPIURL = incoming.SNAPIURL
-	}
-	if _, ok := rawMap["sn_account"]; ok {
-		cfg.SNAccount = incoming.SNAccount
-	}
-	if _, ok := rawMap["sn_password"]; ok {
-		cfg.SNPassword = incoming.SNPassword
-	}
-	if _, ok := rawMap["log_level"]; ok {
-		cfg.LogLevel = incoming.LogLevel
-	}
-	if _, ok := rawMap["log_format"]; ok {
-		cfg.LogFormat = incoming.LogFormat
-	}
-	if _, ok := rawMap["log_file"]; ok {
-		cfg.LogFile = incoming.LogFile
-	}
-	if _, ok := rawMap["log_file_max_mb"]; ok {
-		cfg.LogFileMaxMB = incoming.LogFileMaxMB
-	}
-	if _, ok := rawMap["log_file_max_age"]; ok {
-		cfg.LogFileMaxAge = incoming.LogFileMaxAge
-	}
-	if _, ok := rawMap["log_file_max_backup"]; ok {
-		cfg.LogFileMaxBackup = incoming.LogFileMaxBackup
-	}
-	if _, ok := rawMap["log_syslog_addr"]; ok {
-		cfg.LogSyslogAddr = incoming.LogSyslogAddr
-	}
-	if _, ok := rawMap["caldav_collection_name"]; ok {
-		cfg.CalDAVCollectionName = incoming.CalDAVCollectionName
-	}
-	if _, ok := rawMap["due_time_mode"]; ok {
-		cfg.DueTimeMode = incoming.DueTimeMode
-	}
-	if _, ok := rawMap["web_enabled"]; ok {
-		cfg.WebEnabled = incoming.WebEnabled
-	}
-	if _, ok := rawMap["socketio_url"]; ok {
-		cfg.SocketIOURL = incoming.SocketIOURL
-	}
-	if _, ok := rawMap["db_host"]; ok {
-		cfg.DBHost = incoming.DBHost
-	}
-	if _, ok := rawMap["db_port"]; ok {
-		cfg.DBPort = incoming.DBPort
-	}
-	if _, ok := rawMap["db_env_path"]; ok {
-		cfg.DBEnvPath = incoming.DBEnvPath
-	}
-	if _, ok := rawMap["user_id"]; ok {
-		cfg.UserID = incoming.UserID
-	}
+	// Overlay fields
+	if _, ok := rawMap["username"]; ok { cfg.Username = incoming.Username }
+	if _, ok := rawMap["ocr_enabled"]; ok { cfg.OCREnabled = incoming.OCREnabled }
+	if _, ok := rawMap["ocr_api_url"]; ok { cfg.OCRAPIURL = incoming.OCRAPIURL }
+	if _, ok := rawMap["ocr_api_key"]; ok { cfg.OCRAPIKey = incoming.OCRAPIKey }
+	if _, ok := rawMap["ocr_model"]; ok { cfg.OCRModel = incoming.OCRModel }
+	if _, ok := rawMap["ocr_concurrency"]; ok { cfg.OCRConcurrency = incoming.OCRConcurrency }
+	if _, ok := rawMap["ocr_max_file_mb"]; ok { cfg.OCRMaxFileMB = incoming.OCRMaxFileMB }
+	if _, ok := rawMap["ocr_format"]; ok { cfg.OCRFormat = incoming.OCRFormat }
+	if _, ok := rawMap["embed_enabled"]; ok { cfg.EmbedEnabled = incoming.EmbedEnabled }
+	if _, ok := rawMap["ollama_url"]; ok { cfg.OllamaURL = incoming.OllamaURL }
+	if _, ok := rawMap["ollama_embed_model"]; ok { cfg.OllamaEmbedModel = incoming.OllamaEmbedModel }
+	if _, ok := rawMap["chat_enabled"]; ok { cfg.ChatEnabled = incoming.ChatEnabled }
+	if _, ok := rawMap["chat_api_url"]; ok { cfg.ChatAPIURL = incoming.ChatAPIURL }
+	if _, ok := rawMap["chat_model"]; ok { cfg.ChatModel = incoming.ChatModel }
+	if _, ok := rawMap["sn_sync_enabled"]; ok { cfg.SNSyncEnabled = incoming.SNSyncEnabled }
+	if _, ok := rawMap["sn_sync_interval"]; ok { cfg.SNSyncInterval = incoming.SNSyncInterval }
+	if _, ok := rawMap["sn_api_url"]; ok { cfg.SNAPIURL = incoming.SNAPIURL }
+	if _, ok := rawMap["sn_account"]; ok { cfg.SNAccount = incoming.SNAccount }
+	if _, ok := rawMap["sn_password"]; ok { cfg.SNPassword = incoming.SNPassword }
+	if _, ok := rawMap["log_level"]; ok { cfg.LogLevel = incoming.LogLevel }
+	if _, ok := rawMap["log_format"]; ok { cfg.LogFormat = incoming.LogFormat }
+	if _, ok := rawMap["log_file"]; ok { cfg.LogFile = incoming.LogFile }
+	if _, ok := rawMap["log_file_max_mb"]; ok { cfg.LogFileMaxMB = incoming.LogFileMaxMB }
+	if _, ok := rawMap["log_file_max_age"]; ok { cfg.LogFileMaxAge = incoming.LogFileMaxAge }
+	if _, ok := rawMap["log_file_max_backup"]; ok { cfg.LogFileMaxBackup = incoming.LogFileMaxBackup }
+	if _, ok := rawMap["log_syslog_addr"]; ok { cfg.LogSyslogAddr = incoming.LogSyslogAddr }
+	if _, ok := rawMap["caldav_collection_name"]; ok { cfg.CalDAVCollectionName = incoming.CalDAVCollectionName }
+	if _, ok := rawMap["due_time_mode"]; ok { cfg.DueTimeMode = incoming.DueTimeMode }
+	if _, ok := rawMap["web_enabled"]; ok { cfg.WebEnabled = incoming.WebEnabled }
+	if _, ok := rawMap["socketio_url"]; ok { cfg.SocketIOURL = incoming.SocketIOURL }
+	if _, ok := rawMap["db_host"]; ok { cfg.DBHost = incoming.DBHost }
+	if _, ok := rawMap["db_port"]; ok { cfg.DBPort = incoming.DBPort }
+	if _, ok := rawMap["db_env_path"]; ok { cfg.DBEnvPath = incoming.DBEnvPath }
+	if _, ok := rawMap["user_id"]; ok { cfg.UserID = incoming.UserID }
 
-	// If plaintext password provided, hash it and set PasswordHash.
 	if pw, ok := rawMap["password"]; ok {
 		var password string
 		json.Unmarshal(pw, &password)
@@ -302,19 +229,11 @@ func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Save to DB.
-	result, err := appconfig.Save(ctx, h.noteDB, cfg)
-	if err != nil {
+	if err := h.config.UpdateConfig(ctx, cfg); err != nil {
 		h.logger.Error("save config", "error", err)
 		apiError(w, http.StatusInternalServerError, "failed to save config")
 		return
 	}
 
-	// Set dirty flag if restart required.
-	if result.RestartRequired {
-		h.configDirty.Store(true)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	w.WriteHeader(http.StatusNoContent)
 }

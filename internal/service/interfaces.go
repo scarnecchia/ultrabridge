@@ -129,6 +129,10 @@ type SearchService interface {
 	Ask(ctx context.Context, question string, sessionID int) (<-chan ChatResponse, error)
 	ListSessions(ctx context.Context) (interface{}, error)
 	GetMessages(ctx context.Context, sessionID int) (interface{}, error)
+
+	// Embeddings
+	TriggerBackfill(ctx context.Context) error
+	GetEmbeddingCount(ctx context.Context) int
 }
 
 type ChatResponse struct {

@@ -1,128 +1,41 @@
 package web
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"embed"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"image/jpeg"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
-	gosnote "github.com/jdkruzr/go-sn/note"
-
 	"github.com/sysop/ultrabridge/internal/appconfig"
-	"github.com/sysop/ultrabridge/internal/booxpipeline"
-	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
-	"github.com/sysop/ultrabridge/internal/chat"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/mcpauth"
-	"github.com/sysop/ultrabridge/internal/notedb"
-	"github.com/sysop/ultrabridge/internal/notestore"
-	"github.com/sysop/ultrabridge/internal/processor"
-	"github.com/sysop/ultrabridge/internal/rag"
-	"github.com/sysop/ultrabridge/internal/search"
-	"github.com/sysop/ultrabridge/internal/source"
-	"github.com/sysop/ultrabridge/internal/taskstore"
+	"github.com/sysop/ultrabridge/internal/service"
 )
 
 //go:embed templates
 var templateFS embed.FS
 
-// FileScanner triggers a filesystem scan. Implemented by pipeline.Pipeline.
-type FileScanner interface {
-	ScanNow(ctx context.Context)
-}
-
-// SyncStatus represents sync engine state for the web UI.
-type SyncStatus struct {
-	LastSyncAt    int64  `json:"lastSyncAt"`
-	NextSyncAt    int64  `json:"nextSyncAt"`
-	InProgress    bool   `json:"inProgress"`
-	LastError     string `json:"lastError"`
-	AdapterID     string `json:"adapterId"`
-	AdapterActive bool   `json:"adapterActive"`
-}
-
-// SyncStatusProvider provides sync status and manual trigger.
-// Implemented by a wrapper around tasksync.SyncEngine. Nil-safe in Handler.
-type SyncStatusProvider interface {
-	Status() SyncStatus
-	TriggerSync()
-}
-
-// BooxStore provides Boox note data to the web handler.
-// Types are defined in booxpipeline package to avoid circular imports.
-type BooxStore interface {
-	ListNotes(ctx context.Context) ([]booxpipeline.BooxNoteEntry, error)
-	GetVersions(ctx context.Context, path string) ([]booxpipeline.BooxVersion, error)
-	GetNoteID(ctx context.Context, path string) (string, error) // returns note_id for cache path resolution
-	EnqueueJob(ctx context.Context, notePath string) error
-	GetLatestJob(ctx context.Context, notePath string) (*booxpipeline.BooxJob, error)
-	RetryAllFailed(ctx context.Context) (int64, error)
-	DeleteNote(ctx context.Context, path string) error
-	SkipNote(ctx context.Context, path, reason string) error
-	UnskipNote(ctx context.Context, path string) error
-	GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error)
-	CountNotesWithPrefix(ctx context.Context, prefix string) (int, error)
-}
-
-// BooxImporter can scan an import path and enqueue files for processing.
-type BooxImporter interface {
-	ScanAndEnqueue(ctx context.Context, cfg booxpipeline.ImportConfig, logger *slog.Logger) booxpipeline.ImportResult
-	MigrateImportedFiles(ctx context.Context, importPath, notesPath string, logger *slog.Logger) booxpipeline.MigrateResult
-}
-
-// RAGDisplayConfig holds display configuration for RAG features in the settings UI.
-type RAGDisplayConfig struct {
-	OllamaURL   string
-	OllamaModel string
-	ChatAPIURL  string
-	ChatModel   string
-}
-
 type Handler struct {
-	store           ubcaldav.TaskStore
-	notifier        ubcaldav.SyncNotifier
-	noteStore       notestore.NoteStore
-	searchIndex     search.SearchIndex
-	proc            processor.Processor
-	scanner         FileScanner
-	syncProvider    SyncStatusProvider
-	booxStore       BooxStore
-	booxImporter    BooxImporter
-	notesPathPrefix string // device file path prefix for rendering note page images
-	booxNotesPath   string
-	booxCachePath   string
-	noteDB          *sql.DB // shared SQLite DB for settings
-	tmpl            *template.Template
-	mux             *http.ServeMux
-	logger          *slog.Logger
-	broadcaster     *logging.LogBroadcaster
-	embedder        rag.Embedder
-	embedStore      *rag.Store
-	embedModel      string
-	retriever       rag.SearchRetriever // nil = API endpoints disabled
-	chatHandler     *chat.Handler
-	chatStore       *chat.Store
-	ollamaURL       string
-	ollamaModel     string
-	chatAPIURL      string
-	chatModel       string
-	runningConfig   *appconfig.Config  // config loaded at startup for drift detection
-	configDirty     atomic.Bool          // set to true when config changes require restart
+	tasks    service.TaskService
+	notes    service.NoteService
+	search   service.SearchService
+	config   service.ConfigService
+	
+	noteDB      *sql.DB // for settings directly (mcp tokens)
+	tmpl        *template.Template
+	mux         *http.ServeMux
+	logger      *slog.Logger
+	broadcaster *logging.LogBroadcaster
 }
 
 // formatDueTime converts a millisecond Unix timestamp to a formatted date string.
@@ -144,41 +57,24 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, notesPathPrefix string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string, retriever rag.SearchRetriever, chatHandler *chat.Handler, chatStore *chat.Store, ragDisplay RAGDisplayConfig, runningConfig *appconfig.Config) *Handler {
+func NewHandler(
+	tasks service.TaskService,
+	notes service.NoteService,
+	search service.SearchService,
+	config service.ConfigService,
+	noteDB *sql.DB,
+	logger *slog.Logger,
+	broadcaster *logging.LogBroadcaster,
+) *Handler {
 	h := &Handler{
-		store:           store,
-		notifier:        notifier,
-		noteStore:       noteStore,
-		searchIndex:     searchIndex,
-		proc:            proc,
-		scanner:         scanner,
-		syncProvider:    syncProvider,
-		notesPathPrefix: notesPathPrefix,
-		booxStore:       booxStore,
-		booxImporter:    booxImporter,
-		booxNotesPath:   booxNotesPath,
-		booxCachePath: filepath.Join(booxNotesPath, ".cache"),
-		noteDB:        noteDB,
-		logger:        logger,
-		mux:           http.NewServeMux(),
-		broadcaster:   broadcaster,
-		embedder:      embedder,
-		embedStore:    embedStore,
-		embedModel:    embedModel,
-		retriever:     retriever,
-		chatHandler:   chatHandler,
-		chatStore:     chatStore,
-		ollamaURL:     ragDisplay.OllamaURL,
-		ollamaModel:   ragDisplay.OllamaModel,
-		chatAPIURL:    ragDisplay.ChatAPIURL,
-		chatModel:     ragDisplay.ChatModel,
-		runningConfig: runningConfig,
-	}
-
-	// Cache the import path for the noteSource template function.
-	var booxImportPath string
-	if noteDB != nil {
-		booxImportPath, _ = notedb.GetSetting(context.Background(), noteDB, appconfig.KeyBooxImportPath)
+		tasks:       tasks,
+		notes:       notes,
+		search:      search,
+		config:      config,
+		noteDB:      noteDB,
+		logger:      logger,
+		broadcaster: broadcaster,
+		mux:         http.NewServeMux(),
 	}
 
 	// Parse the embedded templates with custom function map
@@ -191,53 +87,10 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 			}
 			return time.UnixMilli(ms).UTC().Format("2006-01-02 15:04")
 		},
-		"fileTypeStr":   func(ft notestore.FileType) string { return string(ft) },
-		"noteSource": func(path string) string {
-			if h.booxStore != nil {
-				if h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) {
-					return "Boox"
-				}
-				if booxImportPath != "" && strings.HasPrefix(path, booxImportPath) {
-					return "Boox"
-				}
-			}
-			return "Supernote"
-		},
 		"hasPrefix":  strings.HasPrefix,
 		"add":        func(a, b int) int { return a + b },
 		"sub":        func(a, b int) int { return a - b },
 		"trimPrefix": strings.TrimPrefix,
-		"taskLink": func(links string) map[string]interface{} {
-			if links == "" {
-				return nil
-			}
-			data, err := base64.StdEncoding.DecodeString(links)
-			if err != nil {
-				return nil
-			}
-			var link struct {
-				AppName  string `json:"appName"`
-				FilePath string `json:"filePath"`
-				Page     int    `json:"page"`
-			}
-			if err := json.Unmarshal(data, &link); err != nil {
-				return nil
-			}
-			if link.FilePath == "" {
-				return nil
-			}
-			// Map device path to local path.
-			// Device: /storage/emulated/0/Note/... → local: {notesPathPrefix}/...
-			const devicePrefix = "/storage/emulated/0/Note/"
-			localPath := link.FilePath
-			if h.notesPathPrefix != "" && strings.HasPrefix(link.FilePath, devicePrefix) {
-				localPath = filepath.Join(h.notesPathPrefix, link.FilePath[len(devicePrefix):])
-			}
-			return map[string]interface{}{
-				"Path": localPath,
-				"Page": link.Page,
-			}
-		},
 	}
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
@@ -256,17 +109,13 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("GET /logs", h.handleLogs)
 	h.mux.HandleFunc("GET /settings", h.handleSettings)
 	h.mux.HandleFunc("POST /settings/save", h.handleSettingsSave)
-	if h.embedder != nil && h.embedStore != nil {
-		h.mux.HandleFunc("POST /settings/backfill-embeddings", h.handleBackfillEmbeddings)
-	} else {
-		h.mux.HandleFunc("POST /settings/backfill-embeddings", func(w http.ResponseWriter, r *http.Request) {
-			http.NotFound(w, r)
-		})
-	}
+	h.mux.HandleFunc("POST /settings/backfill-embeddings", h.handleBackfillEmbeddings)
+	
 	if h.noteDB != nil {
 		h.mux.HandleFunc("POST /settings/mcp-tokens/create", h.handleMCPTokenCreate)
 		h.mux.HandleFunc("POST /settings/mcp-tokens/revoke", h.handleMCPTokenRevoke)
 	}
+	
 	h.mux.HandleFunc("GET /files", h.handleFiles)
 	h.mux.HandleFunc("GET /search", h.handleSearch)
 	h.mux.HandleFunc("POST /files/queue", h.handleFilesQueue)
@@ -291,22 +140,10 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /sync/trigger", h.handleSyncTrigger)
 	h.registerLogStreamHandler(broadcaster)
 
-	// JSON API endpoints (requires retriever)
-	if h.retriever != nil {
-		h.mux.HandleFunc("GET /api/search", h.handleAPISearch)
-		h.mux.HandleFunc("GET /api/notes/pages", h.handleAPIGetPages)
-		h.mux.HandleFunc("GET /api/notes/pages/image", h.handleAPIGetImage)
-	} else {
-		h.mux.HandleFunc("GET /api/search", func(w http.ResponseWriter, r *http.Request) {
-			http.NotFound(w, r)
-		})
-		h.mux.HandleFunc("GET /api/notes/pages", func(w http.ResponseWriter, r *http.Request) {
-			http.NotFound(w, r)
-		})
-		h.mux.HandleFunc("GET /api/notes/pages/image", func(w http.ResponseWriter, r *http.Request) {
-			http.NotFound(w, r)
-		})
-	}
+	// JSON API endpoints
+	h.mux.HandleFunc("GET /api/search", h.handleAPISearch)
+	h.mux.HandleFunc("GET /api/notes/pages", h.handleAPIGetPages)
+	h.mux.HandleFunc("GET /api/notes/pages/image", h.handleAPIGetImage)
 
 	// Config and sources API endpoints
 	if h.noteDB != nil {
@@ -318,15 +155,54 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		h.mux.HandleFunc("DELETE /api/sources/{id}", h.handleDeleteSource)
 	}
 
-	// Chat routes (requires chatHandler)
-	if h.chatHandler != nil {
-		h.mux.HandleFunc("GET /chat", h.handleChat)
-		h.mux.HandleFunc("POST /chat/ask", h.chatHandler.HandleAsk)
-		h.mux.HandleFunc("GET /chat/sessions", h.handleChatSessions)
-		h.mux.HandleFunc("GET /chat/messages", h.handleChatMessages)
-	}
+	// Chat routes
+	h.mux.HandleFunc("GET /chat", h.handleChat)
+	h.mux.HandleFunc("POST /chat/ask", h.handleAsk)
+	h.mux.HandleFunc("GET /chat/sessions", h.handleChatSessions)
+	h.mux.HandleFunc("GET /chat/messages", h.handleChatMessages)
 
 	return h
+}
+
+// handleAsk handles POST /chat/ask. Orchestrates retrieval → prompt → vLLM → SSE proxy.
+func (h *Handler) handleAsk(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID int    `json:"session_id"`
+		Question  string `json:"question"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Question == "" {
+		http.Error(w, `{"error":"question is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	responses, err := h.search.Ask(r.Context(), req.Question, req.SessionID)
+	if err != nil {
+		h.logger.Error("ask failed", "error", err)
+		http.Error(w, "chat failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, _ := w.(http.Flusher)
+	for resp := range responses {
+		fmt.Fprintf(w, "data: %s\n\n", mustJSON(resp))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+}
+
+func mustJSON(v interface{}) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 // ServeHTTP implements http.Handler
@@ -334,34 +210,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
 
-// IsConfigDirty returns true if config has changed and restart is required.
-func (h *Handler) IsConfigDirty() bool {
-	if h == nil {
-		return false
-	}
-	return h.configDirty.Load()
-}
-
 // baseTemplateData returns shared data needed by all routes that render index.html.
 // This ensures the task list is always available regardless of which tab is active.
 func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
 	data := map[string]interface{}{}
-	if h.store != nil {
-		tasks, err := h.store.List(ctx)
+	
+	if h.tasks != nil {
+		tasks, err := h.tasks.List(ctx)
 		if err != nil {
 			h.logger.Error("failed to list tasks for template", "error", err)
 		} else {
 			data["tasks"] = tasks
 		}
 	}
-	data["BooxNotesPath"] = h.booxNotesPath
-	data["chatEnabled"] = h.chatHandler != nil
-	if h.noteDB != nil {
-		importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
-		data["BooxImportPath"] = importPath
-		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoEnabled)
-		data["BooxTodoEnabled"] = todoEnabled == "true"
+
+	cfg, _ := h.config.GetConfig(ctx)
+	if c, ok := cfg.(*appconfig.Config); ok {
+		data["BooxNotesPath"] = c.DBEnvPath // or specific path from config
 	}
+
+	data["RestartRequired"] = h.config.IsRestartRequired()
+	
 	return data
 }
 
@@ -390,103 +259,28 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	data := h.baseTemplateData(ctx)
 	data["activeTab"] = "settings"
-	// Pipeline active = running now OR configured in sources table (not yet started after add)
-	snActive := h.noteStore != nil
-	booxActive := h.booxStore != nil
-	if h.noteDB != nil && (!snActive || !booxActive) {
-		sources, err := source.ListSources(ctx, h.noteDB)
-		if err == nil {
-			for _, s := range sources {
-				if s.Type == "supernote" {
-					snActive = true
-				}
-				if s.Type == "boox" {
-					booxActive = true
-				}
-			}
-		}
-	}
-	data["SNPipelineActive"] = snActive
-	data["BooxActive"] = booxActive
 
-	// Load current config and detect if restart is required.
-	if h.noteDB != nil {
-		cfg, err := appconfig.Load(ctx, h.noteDB)
-		if err != nil {
-			h.logger.Error("load config for settings page", "error", err)
-		} else {
-			data["Config"] = cfg
-			// Check if config has diverged from running config (restart required).
-			if h.runningConfig != nil {
-				restartRequired := h.configDirty.Load()
-				data["RestartRequired"] = restartRequired
-			}
-		}
-
-		// Load sources list.
-		sources, err := source.ListSources(ctx, h.noteDB)
-		if err != nil {
-			h.logger.Error("list sources for settings page", "error", err)
-		} else {
-			data["Sources"] = sources
-		}
-
-		snInject, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeySNInjectEnabled)
-		data["SNInjectEnabled"] = snInject != "false" // default true
-
-		snPrompt, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeySNOCRPrompt)
-		if snPrompt == "" {
-			snPrompt = processor.DefaultOCRPrompt
-		}
-		data["SNOCRPrompt"] = snPrompt
-
-		booxPrompt, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxOCRPrompt)
-		if booxPrompt == "" {
-			booxPrompt = processor.DefaultOCRPrompt
-		}
-		data["BooxOCRPrompt"] = booxPrompt
-
-		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoEnabled)
-		data["BooxTodoEnabled"] = todoEnabled == "true"
-
-		todoPrompt, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoPrompt)
-		if todoPrompt == "" {
-			todoPrompt = DefaultBooxTodoPrompt
-		}
-		data["BooxTodoPrompt"] = todoPrompt
-
-		importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
-		data["BooxImportPath"] = importPath
-		importNotes, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportNotes)
-		data["BooxImportNotes"] = importNotes == "true"
-		importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPDFs)
-		data["BooxImportPDFs"] = importPDFs == "true"
-		importOnyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportOnyxPaths)
-		data["BooxImportOnyxPaths"] = importOnyxPaths == "true"
-	}
-
-	// RAG Pipeline settings
-	data["EmbedEnabled"] = h.embedder != nil
-	if h.embedStore != nil {
-		data["EmbeddingCount"] = len(h.embedStore.AllEmbeddings())
-	}
-	data["OllamaURL"] = h.ollamaURL
-	data["OllamaModel"] = h.ollamaModel
-	data["ChatEnabled"] = h.chatHandler != nil
-	data["ChatModel"] = h.chatModel
-	data["ChatAPIURL"] = h.chatAPIURL
-
-	// MCP Tokens (mcp_tokens table created at startup via mcpauth.Migrate in Task 1)
-	if h.noteDB != nil {
-		tokens, err := mcpauth.ListTokens(ctx, h.noteDB)
-		if err != nil {
-			h.logger.Error("list mcp tokens", "error", err)
-		}
-		data["MCPTokens"] = tokens
-		data["MCPTokensEnabled"] = true
+	cfg, err := h.config.GetConfig(ctx)
+	if err != nil {
+		h.logger.Error("failed to get config", "error", err)
 	} else {
-		data["MCPTokensEnabled"] = false
+		data["Config"] = cfg
 	}
+
+	sources, err := h.config.ListSources(ctx)
+	if err != nil {
+		h.logger.Error("failed to list sources", "error", err)
+	} else {
+		data["Sources"] = sources
+	}
+
+	// MCP Tokens (mcp_tokens table managed directly for now)
+	tokens, err := mcpauth.ListTokens(ctx, h.noteDB)
+	if err != nil {
+		h.logger.Error("list mcp tokens", "error", err)
+	}
+	data["MCPTokens"] = tokens
+	data["MCPTokensEnabled"] = true
 
 	// One-time flash: display raw token after creation
 	if newToken := r.URL.Query().Get("new_token"); newToken != "" {
@@ -509,112 +303,33 @@ func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
+	// Get current config to update it
+	cObj, err := h.config.GetConfig(ctx)
+	if err != nil {
+		h.logger.Error("failed to get config for save", "error", err)
+		http.Error(w, "failed to load configuration", http.StatusInternalServerError)
+		return
+	}
+	cfg := cObj.(*appconfig.Config)
+
 	section := r.FormValue("section")
-	ocrPrompt := r.FormValue("ocr_prompt")
+	switch section {
+	case "supernote":
+		cfg.SNSyncEnabled = r.FormValue("inject_enabled") != "false"
+	case "general":
+		cfg.EmbedEnabled = r.FormValue("embed_enabled") == "true"
+		cfg.OllamaURL = r.FormValue("ollama_url")
+		cfg.OllamaEmbedModel = r.FormValue("ollama_embed_model")
+		cfg.ChatEnabled = r.FormValue("chat_enabled") == "true"
+		cfg.ChatAPIURL = r.FormValue("chat_api_url")
+		cfg.ChatModel = r.FormValue("chat_model")
+		cfg.LogVerboseAPI = r.FormValue("log_verbose_api") == "true"
+	}
 
-	if h.noteDB != nil {
-		switch section {
-		case "supernote":
-			injectEnabled := "true"
-			if r.FormValue("inject_enabled") == "false" {
-				injectEnabled = "false"
-			}
-			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeySNInjectEnabled, injectEnabled); err != nil {
-				h.logger.Error("save setting", "key", appconfig.KeySNInjectEnabled, "error", err)
-			}
-			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeySNOCRPrompt, ocrPrompt); err != nil {
-				h.logger.Error("save setting", "key", appconfig.KeySNOCRPrompt, "error", err)
-			}
-		case "boox":
-			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxOCRPrompt, ocrPrompt); err != nil {
-				h.logger.Error("save setting", "key", appconfig.KeyBooxOCRPrompt, "error", err)
-			}
-			// Save to-do extraction settings.
-			todoEnabled := "false"
-			if r.FormValue("todo_enabled") == "true" {
-				todoEnabled = "true"
-			}
-			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoEnabled, todoEnabled); err != nil {
-				h.logger.Error("save setting", "key", appconfig.KeyBooxTodoEnabled, "error", err)
-			}
-			todoPrompt := r.FormValue("todo_prompt")
-			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoPrompt, todoPrompt); err != nil {
-				h.logger.Error("save setting", "key", appconfig.KeyBooxTodoPrompt, "error", err)
-			}
-			// Save bulk import settings (path is read-only, set via env var).
-			importNotes := "false"
-			if r.FormValue("import_notes") == "true" {
-				importNotes = "true"
-			}
-			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxImportNotes, importNotes); err != nil {
-				h.logger.Error("save setting", "key", appconfig.KeyBooxImportNotes, "error", err)
-			}
-			importPDFs := "false"
-			if r.FormValue("import_pdfs") == "true" {
-				importPDFs = "true"
-			}
-			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPDFs, importPDFs); err != nil {
-				h.logger.Error("save setting", "key", appconfig.KeyBooxImportPDFs, "error", err)
-			}
-			importOnyxPaths := "false"
-			if r.FormValue("import_onyx_paths") == "true" {
-				importOnyxPaths = "true"
-			}
-			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxImportOnyxPaths, importOnyxPaths); err != nil {
-				h.logger.Error("save setting", "key", appconfig.KeyBooxImportOnyxPaths, "error", err)
-			}
-		case "general":
-			// RAG / Embedding
-			embedEnabled := "false"
-			if r.FormValue("embed_enabled") == "true" {
-				embedEnabled = "true"
-			}
-			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyEmbedEnabled, embedEnabled); err != nil {
-				h.logger.Error("save setting", "key", appconfig.KeyEmbedEnabled, "error", err)
-			}
-			ollamaURL := r.FormValue("ollama_url")
-			if ollamaURL != "" {
-				if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyOllamaURL, ollamaURL); err != nil {
-					h.logger.Error("save setting", "key", appconfig.KeyOllamaURL, "error", err)
-				}
-			}
-			ollamaModel := r.FormValue("ollama_embed_model")
-			if ollamaModel != "" {
-				if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyOllamaEmbedModel, ollamaModel); err != nil {
-					h.logger.Error("save setting", "key", appconfig.KeyOllamaEmbedModel, "error", err)
-				}
-			}
-
-			// Chat
-			chatEnabled := "false"
-			if r.FormValue("chat_enabled") == "true" {
-				chatEnabled = "true"
-			}
-			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyChatEnabled, chatEnabled); err != nil {
-				h.logger.Error("save setting", "key", appconfig.KeyChatEnabled, "error", err)
-			}
-			chatAPIURL := r.FormValue("chat_api_url")
-			if chatAPIURL != "" {
-				if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyChatAPIURL, chatAPIURL); err != nil {
-					h.logger.Error("save setting", "key", appconfig.KeyChatAPIURL, "error", err)
-				}
-			}
-			chatModel := r.FormValue("chat_model")
-			if chatModel != "" {
-				if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyChatModel, chatModel); err != nil {
-					h.logger.Error("save setting", "key", appconfig.KeyChatModel, "error", err)
-				}
-			}
-
-			// Logging
-			verboseAPI := "false"
-			if r.FormValue("log_verbose_api") == "true" {
-				verboseAPI = "true"
-			}
-			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyLogVerboseAPI, verboseAPI); err != nil {
-				h.logger.Error("save setting", "key", appconfig.KeyLogVerboseAPI, "error", err)
-			}
-		}
+	if err := h.config.UpdateConfig(ctx, cfg); err != nil {
+		h.logger.Error("failed to update config", "error", err)
+		http.Error(w, "failed to save configuration", http.StatusInternalServerError)
+		return
 	}
 
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)
@@ -650,42 +365,22 @@ func (h *Handler) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dueDateStr := strings.TrimSpace(r.FormValue("due_date"))
-	var dueTime int64 = 0
+	var dueAt *time.Time
 	if dueDateStr != "" {
-		// Parse HTML date format: 2006-01-02
 		t, err := time.Parse("2006-01-02", dueDateStr)
 		if err != nil {
 			h.logger.Warn("invalid due date", "error", err, "value", dueDateStr)
 			http.Error(w, "invalid due date format", http.StatusBadRequest)
 			return
 		}
-		// Convert to milliseconds UTC
-		dueTime = t.UTC().UnixMilli()
+		utc := t.UTC()
+		dueAt = &utc
 	}
 
-	now := time.Now().UnixMilli()
-	task := &taskstore.Task{
-		TaskID: taskstore.GenerateTaskID(title, now),
-		Title:  taskstore.SqlStr(title),
-		Status: taskstore.SqlStr("needsAction"),
-		DueTime: dueTime,
-		IsDeleted: "N",
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	if err := h.store.Create(ctx, task); err != nil {
-		h.logger.Error("failed to create task", "error", err, "task_id", task.TaskID)
+	if _, err := h.tasks.Create(r.Context(), title, dueAt); err != nil {
+		h.logger.Error("failed to create task", "error", err)
 		http.Error(w, "failed to create task", http.StatusInternalServerError)
 		return
-	}
-
-	// Notify device of sync
-	if h.notifier != nil {
-		if err := h.notifier.Notify(ctx); err != nil {
-			h.logger.Warn("failed to notify", "error", err)
-		}
 	}
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -700,33 +395,10 @@ func (h *Handler) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	task, err := h.store.Get(ctx, taskID)
-	if err != nil {
-		h.logger.Error("failed to get task", "error", err, "task_id", taskID)
-		http.Error(w, "task not found", http.StatusNotFound)
-		return
-	}
-
-	// Mark as completed
-	task.Status = taskstore.SqlStr("completed")
-	if !task.CompletedTime.Valid {
-		task.CompletedTime = sql.NullInt64{Int64: time.Now().UnixMilli(), Valid: true}
-	}
-
-	if err := h.store.Update(ctx, task); err != nil {
-		h.logger.Error("failed to update task", "error", err, "task_id", taskID)
+	if err := h.tasks.Complete(r.Context(), taskID); err != nil {
+		h.logger.Error("failed to complete task", "error", err, "task_id", taskID)
 		http.Error(w, "failed to complete task", http.StatusInternalServerError)
 		return
-	}
-
-	// Notify device of sync
-	if h.notifier != nil {
-		if err := h.notifier.Notify(ctx); err != nil {
-			h.logger.Warn("failed to notify", "error", err)
-		}
 	}
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -747,66 +419,27 @@ func (h *Handler) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	var failed int
-	for _, taskID := range taskIDs {
-		switch action {
-		case "complete":
-			task, err := h.store.Get(ctx, taskID)
-			if err != nil {
-				h.logger.Error("bulk complete: get failed", "task_id", taskID, "error", err)
-				failed++
-				continue
-			}
-			task.Status = taskstore.SqlStr("completed")
-			if !task.CompletedTime.Valid {
-				task.CompletedTime = sql.NullInt64{Int64: time.Now().UnixMilli(), Valid: true}
-			}
-			if err := h.store.Update(ctx, task); err != nil {
-				h.logger.Error("bulk complete: update failed", "task_id", taskID, "error", err)
-				failed++
-			}
-		case "delete":
-			if err := h.store.Delete(ctx, taskID); err != nil {
-				h.logger.Error("bulk delete: failed", "task_id", taskID, "error", err)
-				failed++
-			}
-		default:
-			http.Error(w, "unknown action", http.StatusBadRequest)
-			return
-		}
+	var err error
+	switch action {
+	case "complete":
+		err = h.tasks.BulkComplete(r.Context(), taskIDs)
+	case "delete":
+		err = h.tasks.BulkDelete(r.Context(), taskIDs)
+	default:
+		http.Error(w, "unknown action", http.StatusBadRequest)
+		return
 	}
 
-	if failed > 0 {
-		h.logger.Warn("bulk action partial failure", "action", action, "total", len(taskIDs), "failed", failed)
-	}
-
-	if h.notifier != nil {
-		if err := h.notifier.Notify(ctx); err != nil {
-			h.logger.Warn("failed to notify", "error", err)
-		}
+	if err != nil {
+		h.logger.Error("bulk action failure", "action", action, "error", err)
 	}
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (h *Handler) handlePurgeCompleted(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	count, err := h.store.DeleteCompleted(ctx)
-	if err != nil {
+	if err := h.tasks.PurgeCompleted(r.Context()); err != nil {
 		h.logger.Error("purge completed tasks", "error", err)
-	} else {
-		h.logger.Info("purged completed tasks", "count", count)
-	}
-
-	if h.notifier != nil {
-		if err := h.notifier.Notify(ctx); err != nil {
-			h.logger.Warn("failed to notify after purge", "error", err)
-		}
 	}
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -850,15 +483,9 @@ func safeRelPath(relPath string) (string, bool) {
 
 // handleBackfillEmbeddings triggers embedding backfill in the background.
 func (h *Handler) handleBackfillEmbeddings(w http.ResponseWriter, r *http.Request) {
-	go func() {
-		ctx := context.Background() // independent of request lifecycle
-		n, err := rag.Backfill(ctx, h.embedStore, h.embedder, h.embedModel, h.logger)
-		if err != nil {
-			h.logger.Error("backfill failed", "err", err)
-			return
-		}
-		h.logger.Info("backfill triggered via settings", "embedded", n)
-	}()
+	if err := h.search.TriggerBackfill(r.Context()); err != nil {
+		h.logger.Error("backfill failed", "err", err)
+	}
 
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
@@ -870,194 +497,26 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	data := h.baseTemplateData(ctx)
 	data["activeTab"] = "files"
 
-	if h.noteStore == nil {
-		data["filesError"] = "No Supernote source configured. Add a source in Settings."
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
-			h.logger.Error("failed to render template", "error", err)
-		}
-		return
-	}
-
 	rawPath := r.URL.Query().Get("path")
-	relPath, ok := safeRelPath(rawPath)
-	if !ok {
-		http.Error(w, "invalid path", http.StatusBadRequest)
-		return
-	}
+	relPath, _ := safeRelPath(rawPath)
+	
+	sortField := r.URL.Query().Get("sort")
+	sortOrder := r.URL.Query().Get("order")
+	
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
 
-	files, err := h.noteStore.List(ctx, relPath)
+	files, total, err := h.notes.ListFiles(ctx, relPath, sortField, sortOrder, page, perPage)
 	if err != nil {
 		h.logger.Error("handleFiles list", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	// Set DeviceInfo for Supernote files.
-	for i := range files {
-		if !files[i].IsDir && files[i].DeviceInfo == "" {
-			files[i].DeviceInfo = "Supernote"
-		}
-	}
-
-	// Merge Boox notes into file list (only at root level).
-	if h.booxStore != nil && relPath == "" {
-		booxNotes, err := h.booxStore.ListNotes(ctx)
-		if err != nil {
-			h.logger.Error("list boox notes", "error", err)
-		}
-		for _, bn := range booxNotes {
-			var mtime time.Time
-			if bn.UpdatedAt > 0 {
-				mtime = time.UnixMilli(bn.UpdatedAt)
-			}
-			var ctime time.Time
-			if bn.CreatedAt > 0 {
-				ctime = time.UnixMilli(bn.CreatedAt)
-			}
-			var sizeBytes int64
-			if info, err := os.Stat(bn.Path); err == nil {
-				sizeBytes = info.Size()
-			}
-			deviceInfo := bn.DeviceModel
-			if bn.Folder != "" {
-				deviceInfo += " / " + bn.Folder
-			}
-			files = append(files, notestore.NoteFile{
-				Path:       bn.Path,
-				RelPath:    bn.Title, // display title instead of path
-				Name:       bn.Title,
-				IsDir:      false,
-				FileType:   notestore.FileTypeNote,
-				SizeBytes:  sizeBytes,
-				MTime:      mtime,
-				CTime:      ctime,
-				JobStatus:  bn.JobStatus,
-				DeviceInfo: deviceInfo,
-			})
-		}
-	}
-
-	// Populate folder filter dropdown (only at root level).
-	folder := strings.TrimSpace(r.URL.Query().Get("folder"))
-	data["filesFolder"] = folder
-	if relPath == "" && h.searchIndex != nil {
-		folders, err := h.searchIndex.ListFolders(ctx)
-		if err != nil {
-			h.logger.Error("handleFiles list folders", "err", err)
-		} else {
-			data["filesFolders"] = folders
-		}
-	}
-
-	// Apply folder filter if set.
-	if folder != "" {
-		needle := "/" + folder + "/"
-		filtered := files[:0]
-		for _, f := range files {
-			if strings.Contains(f.Path, needle) {
-				filtered = append(filtered, f)
-			}
-		}
-		files = filtered
-	}
-
-	// Sorting
-	sortField := strings.TrimSpace(r.URL.Query().Get("sort"))
-	if sortField == "" {
-		sortField = "name" // default
-	}
-	sortOrder := strings.TrimSpace(r.URL.Query().Get("order"))
-	if sortOrder == "" {
-		sortOrder = "asc" // default
-	}
-	
-	sort.Slice(files, func(i, j int) bool {
-		if files[i].IsDir != files[j].IsDir {
-			return files[i].IsDir
-		}
-		
-		var cmp int
-		switch sortField {
-		case "created":
-			if files[i].CTime.Equal(files[j].CTime) {
-				cmp = strings.Compare(files[i].Name, files[j].Name)
-			} else if files[i].CTime.Before(files[j].CTime) {
-				cmp = -1
-			} else {
-				cmp = 1
-			}
-		case "modified":
-			if files[i].MTime.Equal(files[j].MTime) {
-				cmp = strings.Compare(files[i].Name, files[j].Name)
-			} else if files[i].MTime.Before(files[j].MTime) {
-				cmp = -1
-			} else {
-				cmp = 1
-			}
-		case "size":
-			if files[i].SizeBytes == files[j].SizeBytes {
-				cmp = strings.Compare(files[i].Name, files[j].Name)
-			} else if files[i].SizeBytes < files[j].SizeBytes {
-				cmp = -1
-			} else {
-				cmp = 1
-			}
-		default: // "name"
-			cmp = strings.Compare(files[i].Name, files[j].Name)
-		}
-		
-		if sortOrder == "desc" {
-			return cmp > 0
-		}
-		return cmp < 0
-	})
-	
-	data["filesSort"] = sortField
-	data["filesOrder"] = sortOrder
-
-	// Pagination. Query param overrides cookie; cookie persists preference.
-	perPage := 25
-	if c, err := r.Cookie("files_per_page"); err == nil {
-		if pp, err := strconv.Atoi(c.Value); err == nil {
-			switch pp {
-			case 10, 25, 50:
-				perPage = pp
-			}
-		}
-	}
-	if pp, err := strconv.Atoi(r.URL.Query().Get("per_page")); err == nil {
-		switch pp {
-		case 10, 25, 50:
-			perPage = pp
-		}
-	}
-	page := 1
-	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 0 {
-		page = p
-	}
-	totalFiles := len(files)
-	totalPages := (totalFiles + perPage - 1) / perPage
-	if totalPages < 1 {
-		totalPages = 1
-	}
-	if page > totalPages {
-		page = totalPages
-	}
-	start := (page - 1) * perPage
-	end := start + perPage
-	if end > totalFiles {
-		end = totalFiles
-	}
-	files = files[start:end]
-
 	data["files"] = files
 	data["relPath"] = relPath
 	data["breadcrumbs"] = buildBreadcrumbs(relPath)
-	data["filesPage"] = page
-	data["filesPerPage"] = perPage
-	data["filesTotalPages"] = totalPages
-	data["filesTotalFiles"] = totalFiles
+	data["filesTotalFiles"] = total
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -1077,22 +536,12 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	data["searchQuery"] = query
 	data["searchFolder"] = folder
 
-	if h.searchIndex != nil {
-		// Populate folder dropdown.
-		folders, err := h.searchIndex.ListFolders(ctx)
+	if query != "" {
+		results, err := h.search.Search(ctx, query, folder)
 		if err != nil {
-			h.logger.Error("handleSearch list folders", "err", err)
+			h.logger.Error("handleSearch", "err", err)
 		} else {
-			data["searchFolders"] = folders
-		}
-
-		if query != "" {
-			results, err := h.searchIndex.Search(ctx, search.SearchQuery{Text: query, Folder: folder})
-			if err != nil {
-				h.logger.Error("handleSearch", "err", err)
-			} else {
-				data["searchResults"] = results
-			}
+			data["searchResults"] = results
 		}
 	}
 
@@ -1109,11 +558,9 @@ func (h *Handler) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	data := h.baseTemplateData(ctx)
 	data["activeTab"] = "chat"
-	data["chatEnabled"] = h.chatHandler != nil
-	if h.chatStore != nil {
-		sessions, _ := h.chatStore.ListSessions(ctx)
-		data["chatSessions"] = sessions
-	}
+	
+	sessions, _ := h.search.ListSessions(ctx)
+	data["chatSessions"] = sessions
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -1123,15 +570,10 @@ func (h *Handler) handleChat(w http.ResponseWriter, r *http.Request) {
 
 // handleChatSessions returns JSON list of chat sessions
 func (h *Handler) handleChatSessions(w http.ResponseWriter, r *http.Request) {
-	if h.chatStore == nil {
-		http.Error(w, "chat not enabled", http.StatusNotFound)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	sessions, err := h.chatStore.ListSessions(ctx)
+	sessions, err := h.search.ListSessions(ctx)
 	if err != nil {
 		h.logger.Error("list sessions", "err", err)
 		http.Error(w, "failed to list sessions", http.StatusInternalServerError)
@@ -1144,14 +586,8 @@ func (h *Handler) handleChatSessions(w http.ResponseWriter, r *http.Request) {
 
 // handleChatMessages returns JSON list of messages for a session
 func (h *Handler) handleChatMessages(w http.ResponseWriter, r *http.Request) {
-	if h.chatStore == nil {
-		http.Error(w, "chat not enabled", http.StatusNotFound)
-		return
-	}
-
 	sessionIDStr := r.URL.Query().Get("session_id")
-	sessionID := int64(0)
-	fmt.Sscanf(sessionIDStr, "%d", &sessionID)
+	sessionID, _ := strconv.Atoi(sessionIDStr)
 
 	if sessionID == 0 {
 		http.Error(w, "session_id required", http.StatusBadRequest)
@@ -1161,7 +597,7 @@ func (h *Handler) handleChatMessages(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	messages, err := h.chatStore.GetMessages(ctx, sessionID)
+	messages, err := h.search.GetMessages(ctx, sessionID)
 	if err != nil {
 		h.logger.Error("get messages", "err", err)
 		http.Error(w, "failed to get messages", http.StatusInternalServerError)
@@ -1181,16 +617,8 @@ func (h *Handler) handleFilesQueue(w http.ResponseWriter, r *http.Request) {
 	path := r.FormValue("path")
 	back := r.FormValue("back")
 	if path != "" {
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if h.isBooxPath(ctx, path) {
-			if err := h.booxStore.EnqueueJob(ctx, path); err != nil {
-				h.logger.Error("failed to enqueue boox file", "path", path, "error", err)
-			}
-		} else if h.proc != nil {
-			if err := h.proc.Enqueue(ctx, path); err != nil {
-				h.logger.Error("failed to enqueue file", "path", path, "error", err)
-			}
+		if err := h.notes.Enqueue(r.Context(), path, false); err != nil {
+			h.logger.Error("failed to enqueue", "path", path, "error", err)
 		}
 	}
 	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
@@ -1205,16 +633,8 @@ func (h *Handler) handleFilesSkip(w http.ResponseWriter, r *http.Request) {
 	path := r.FormValue("path")
 	back := r.FormValue("back")
 	if path != "" {
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if h.isBooxPath(ctx, path) && h.booxStore != nil {
-			if err := h.booxStore.SkipNote(ctx, path, "manual"); err != nil {
-				h.logger.Error("failed to skip boox file", "path", path, "error", err)
-			}
-		} else if h.proc != nil {
-			if err := h.proc.Skip(ctx, path, processor.SkipReasonManual); err != nil {
-				h.logger.Error("failed to skip file", "path", path, "error", err)
-			}
+		if err := h.notes.Skip(r.Context(), path, "manual"); err != nil {
+			h.logger.Error("failed to skip", "path", path, "error", err)
 		}
 	}
 	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
@@ -1229,23 +649,14 @@ func (h *Handler) handleFilesUnskip(w http.ResponseWriter, r *http.Request) {
 	path := r.FormValue("path")
 	back := r.FormValue("back")
 	if path != "" {
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if h.isBooxPath(ctx, path) && h.booxStore != nil {
-			if err := h.booxStore.UnskipNote(ctx, path); err != nil {
-				h.logger.Error("failed to unskip boox file", "path", path, "error", err)
-			}
-		} else if h.proc != nil {
-			if err := h.proc.Unskip(ctx, path); err != nil {
-				h.logger.Error("failed to unskip file", "path", path, "error", err)
-			}
+		if err := h.notes.Unskip(r.Context(), path); err != nil {
+			h.logger.Error("failed to unskip", "path", path, "error", err)
 		}
 	}
 	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesForce(w http.ResponseWriter, r *http.Request) {
-	// Force-include: unskip then re-enqueue regardless of previous skip reason.
 	if err := r.ParseForm(); err != nil {
 		h.logger.Error("failed to parse form", "error", err)
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -1253,67 +664,21 @@ func (h *Handler) handleFilesForce(w http.ResponseWriter, r *http.Request) {
 	}
 	path := r.FormValue("path")
 	back := r.FormValue("back")
-	if path != "" && h.proc != nil {
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if err := h.proc.Unskip(ctx, path); err != nil {
-			h.logger.Error("failed to unskip file during force", "path", path, "error", err)
-		}
-		if err := h.proc.Enqueue(ctx, path); err != nil {
-			h.logger.Error("failed to enqueue file during force", "path", path, "error", err)
+	if path != "" {
+		if err := h.notes.Enqueue(r.Context(), path, true); err != nil {
+			h.logger.Error("failed to force enqueue", "path", path, "error", err)
 		}
 	}
 	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesStatus(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	resp := struct {
-		processor.ProcessorStatus
-		Boox *booxpipeline.QueueStatus `json:"boox,omitempty"`
-	}{}
-	if h.proc != nil {
-		resp.ProcessorStatus = h.proc.Status()
-	}
-	if h.booxStore != nil {
-		qs, err := h.booxStore.GetQueueStatus(ctx)
-		if err != nil {
-			h.logger.Error("boox queue status", "error", err)
-		} else {
-			// Count unmigrated files if an import path is configured.
-			if h.noteDB != nil {
-				importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
-				if importPath != "" {
-					if count, err := h.booxStore.CountNotesWithPrefix(ctx, importPath); err == nil && count > 0 {
-						qs.UnmigratedCount = count
-					}
-				}
-			}
-			resp.Boox = &qs
-		}
+	status, err := h.notes.GetProcessorStatus(r.Context())
+	if err != nil {
+		h.logger.Error("failed to get processor status", "error", err)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-// isBooxPath reports whether a file path belongs to the Boox pipeline
-// (either WebDAV uploads or bulk imports).
-func (h *Handler) isBooxPath(ctx context.Context, path string) bool {
-	if h.booxStore == nil {
-		return false
-	}
-	if h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) {
-		return true
-	}
-	if h.noteDB != nil {
-		importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
-		if importPath != "" && strings.HasPrefix(path, importPath) {
-			return true
-		}
-	}
-	return false
+	json.NewEncoder(w).Encode(status)
 }
 
 // handleFilesHistory returns JSON job history for a single file (AC7.6).
@@ -1328,38 +693,13 @@ func (h *Handler) handleFilesHistory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	// Route to Boox job store if path is a Boox note (WebDAV uploads or imports).
-	if h.isBooxPath(ctx, path) {
-		job, err := h.booxStore.GetLatestJob(ctx, path)
-		if err != nil {
-			h.logger.Error("failed to get boox job history", "path", path, "error", err)
-			w.Write([]byte("null"))
-			return
-		}
-		if job == nil {
-			w.Write([]byte("null"))
-			return
-		}
-		json.NewEncoder(w).Encode(job)
-		return
-	}
-
-	// Supernote job lookup.
-	if h.proc == nil {
-		w.Write([]byte("null"))
-		return
-	}
-	job, err := h.proc.GetJob(ctx, path)
+	details, err := h.notes.GetNoteDetails(ctx, path)
 	if err != nil {
-		h.logger.Error("failed to get job history", "path", path, "error", err)
+		h.logger.Error("failed to get note details", "path", path, "error", err)
 		w.Write([]byte("null"))
 		return
 	}
-	if job == nil {
-		w.Write([]byte("null"))
-		return
-	}
-	json.NewEncoder(w).Encode(job)
+	json.NewEncoder(w).Encode(details)
 }
 
 // handleFilesContent returns indexed note_content for a single file as JSON.
@@ -1367,13 +707,13 @@ func (h *Handler) handleFilesHistory(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleFilesContent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	path := r.URL.Query().Get("path")
-	if path == "" || h.searchIndex == nil {
+	if path == "" {
 		w.Write([]byte("[]"))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	docs, err := h.searchIndex.GetContent(ctx, path)
+	docs, err := h.notes.GetContent(ctx, path)
 	if err != nil {
 		h.logger.Error("failed to get content", "path", path, "error", err)
 		w.Write([]byte("[]"))
@@ -1396,135 +736,55 @@ func (h *Handler) handleFilesRender(w http.ResponseWriter, r *http.Request) {
 		pageIdx = 0
 	}
 
-	f, err := os.Open(path)
+	stream, contentType, err := h.notes.RenderPage(r.Context(), path, pageIdx)
 	if err != nil {
-		h.logger.Error("render: open failed", "path", path, "err", err)
-		http.Error(w, "file not found", http.StatusNotFound)
+		h.logger.Error("render failed", "path", path, "err", err)
+		http.Error(w, "render failed", http.StatusInternalServerError)
 		return
 	}
-	n, err := gosnote.Load(f)
-	f.Close()
-	if err != nil {
-		h.logger.Error("render: load failed", "path", path, "err", err)
-		http.Error(w, "invalid note file", http.StatusInternalServerError)
-		return
-	}
+	defer stream.Close()
 
-	if pageIdx >= len(n.Pages) {
-		http.Error(w, fmt.Sprintf("page %d out of range (note has %d pages)", pageIdx, len(n.Pages)), http.StatusBadRequest)
-		return
-	}
-
-	p := n.Pages[pageIdx]
-	tp, err := n.TotalPathData(p)
-	if err != nil || tp == nil {
-		http.Error(w, "no stroke data for page", http.StatusNoContent)
-		return
-	}
-	pageW, pageH := n.PageDimensions(p)
-	objs, err := gosnote.DecodeObjects(tp, pageW, pageH)
-	if err != nil {
-		h.logger.Error("render: decode failed", "path", path, "page", pageIdx, "err", err)
-		http.Error(w, "decode error", http.StatusInternalServerError)
-		return
-	}
-	img := gosnote.RenderObjects(objs, pageW, pageH, nil)
-
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
-		h.logger.Error("render: jpeg encode failed", "err", err)
-		http.Error(w, "encode error", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=300")
-	w.Write(buf.Bytes())
+	io.Copy(w, stream)
 }
 
 func (h *Handler) handleProcessorStart(w http.ResponseWriter, r *http.Request) {
-	if h.proc != nil {
-		if err := h.proc.Start(r.Context()); err != nil {
-			h.logger.Error("failed to start processor", "error", err)
-		}
+	if err := h.notes.StartProcessor(r.Context()); err != nil {
+		h.logger.Error("failed to start processor", "error", err)
 	}
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
 func (h *Handler) handleProcessorStop(w http.ResponseWriter, r *http.Request) {
-	if h.proc != nil {
-		if err := h.proc.Stop(); err != nil {
-			h.logger.Error("failed to stop processor", "error", err)
-		}
+	if err := h.notes.StopProcessor(r.Context()); err != nil {
+		h.logger.Error("failed to stop processor", "error", err)
 	}
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesScan(w http.ResponseWriter, r *http.Request) {
-	if h.scanner != nil {
-		h.scanner.ScanNow(r.Context())
+	if err := h.notes.ScanFiles(r.Context()); err != nil {
+		h.logger.Error("scan failed", "error", err)
 	}
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesImport(w http.ResponseWriter, r *http.Request) {
-	if h.booxImporter == nil {
-		http.Error(w, "Boox pipeline not enabled", http.StatusNotFound)
-		return
-	}
-	if h.noteDB == nil {
-		http.Error(w, "database not available", http.StatusInternalServerError)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	// Read import settings from DB.
-	importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
-	if importPath == "" {
-		h.logger.Warn("import: no import path configured")
-		http.Redirect(w, r, "/settings", http.StatusSeeOther)
-		return
+	if err := h.notes.ImportFiles(ctx); err != nil {
+		h.logger.Error("import failed", "error", err)
 	}
-	importNotes, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportNotes)
-	importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPDFs)
-	onyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportOnyxPaths)
-
-	cfg := booxpipeline.ImportConfig{
-		ImportPath:  importPath,
-		ImportNotes: importNotes == "true",
-		ImportPDFs:  importPDFs == "true",
-		OnyxPaths:   onyxPaths == "true",
-	}
-
-	result := h.booxImporter.ScanAndEnqueue(ctx, cfg, h.logger)
-	h.logger.Info("import complete",
-		"scanned", result.Scanned,
-		"enqueued", result.Enqueued,
-		"skipped", result.Skipped,
-		"errors", result.Errors,
-	)
 
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesRetryFailed(w http.ResponseWriter, r *http.Request) {
-	if h.booxStore == nil {
-		http.Error(w, "Boox pipeline not enabled", http.StatusNotFound)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	count, err := h.booxStore.RetryAllFailed(ctx)
-	if err != nil {
+	if err := h.notes.RetryFailed(r.Context()); err != nil {
 		h.logger.Error("retry failed jobs", "error", err)
-	} else {
-		h.logger.Info("retried failed jobs", "count", count)
 	}
-
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
@@ -1539,24 +799,10 @@ func (h *Handler) handleFilesDeleteNote(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	if h.isBooxPath(ctx, path) && h.booxStore != nil {
-		// Get noteID for cache cleanup before deleting DB records.
-		noteID, _ := h.booxStore.GetNoteID(ctx, path)
-
-		// Delete DB records (jobs, content, note).
-		if err := h.booxStore.DeleteNote(ctx, path); err != nil {
-			h.logger.Error("delete boox note", "path", path, "error", err)
-			http.Error(w, "delete failed", http.StatusInternalServerError)
-			return
-		}
-		// Delete cached renders.
-		if noteID != "" && h.booxCachePath != "" {
-			os.RemoveAll(filepath.Join(h.booxCachePath, noteID))
-		}
-		h.logger.Info("deleted boox note", "path", path)
+	if err := h.notes.DeleteNote(r.Context(), path); err != nil {
+		h.logger.Error("delete failed", "path", path, "error", err)
+		http.Error(w, "delete failed", http.StatusInternalServerError)
+		return
 	}
 
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
@@ -1573,78 +819,31 @@ func (h *Handler) handleFilesDeleteBulk(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-
-	var deleted, failed int
-	for _, path := range paths {
-		if h.isBooxPath(ctx, path) && h.booxStore != nil {
-			noteID, _ := h.booxStore.GetNoteID(ctx, path)
-			if err := h.booxStore.DeleteNote(ctx, path); err != nil {
-				h.logger.Error("bulk delete note", "path", path, "error", err)
-				failed++
-				continue
-			}
-			if noteID != "" && h.booxCachePath != "" {
-				os.RemoveAll(filepath.Join(h.booxCachePath, noteID))
-			}
-			deleted++
-		}
+	if err := h.notes.BulkDelete(r.Context(), paths); err != nil {
+		h.logger.Error("bulk delete failure", "error", err)
 	}
 
-	h.logger.Info("bulk delete complete", "deleted", deleted, "failed", failed)
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesMigrateImports(w http.ResponseWriter, r *http.Request) {
-	if h.booxImporter == nil {
-		http.Error(w, "Boox pipeline not enabled", http.StatusNotFound)
-		return
+	if err := h.notes.MigrateImports(r.Context()); err != nil {
+		h.logger.Error("migrate failed", "error", err)
 	}
-	if h.noteDB == nil {
-		http.Error(w, "database not available", http.StatusInternalServerError)
-		return
-	}
-
-	ctx := context.Background() // detached — survives browser redirect
-	importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
-	if importPath == "" || h.booxNotesPath == "" {
-		h.logger.Warn("migrate: import path or notes path not configured")
-		http.Redirect(w, r, "/settings", http.StatusSeeOther)
-		return
-	}
-
-	// Run in background so the browser redirect doesn't cancel it.
-	go func() {
-		result := h.booxImporter.MigrateImportedFiles(ctx, importPath, h.booxNotesPath, h.logger)
-		h.logger.Info("migrate complete",
-			"migrated", result.Migrated,
-			"skipped", result.Skipped,
-			"errors", result.Errors,
-		)
-	}()
-
-	h.logger.Info("migrate started in background")
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
 func (h *Handler) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if h.syncProvider == nil {
-		json.NewEncoder(w).Encode(SyncStatus{})
-		return
-	}
-	json.NewEncoder(w).Encode(h.syncProvider.Status())
+	status, _ := h.config.GetSyncStatus(r.Context())
+	json.NewEncoder(w).Encode(status)
 }
 
 func (h *Handler) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
-	if h.syncProvider == nil {
-		http.Error(w, "sync not configured", http.StatusNotFound)
-		return
-	}
-	h.syncProvider.TriggerSync()
+	h.config.TriggerSync(r.Context())
+	status, _ := h.config.GetSyncStatus(r.Context())
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(h.syncProvider.Status())
+	json.NewEncoder(w).Encode(status)
 }
 
 // handleBooxRender serves cached JPEG page images for Boox notes.
@@ -1654,53 +853,34 @@ func (h *Handler) handleBooxRender(w http.ResponseWriter, r *http.Request) {
 	pageStr := r.URL.Query().Get("page")
 	page, _ := strconv.Atoi(pageStr)
 
-	if h.booxStore == nil {
-		http.Error(w, "Boox not configured", http.StatusNotFound)
-		return
-	}
-
-	// Look up note_id from boox_notes table to construct cache path.
-	// The cache is at {BooxCachePath}/{noteId}/page_{N}.jpg
-	noteID, err := h.booxStore.GetNoteID(r.Context(), path)
-	if err != nil || noteID == "" {
-		h.logger.Debug("boox render: note not found", "path", path, "error", err)
+	stream, contentType, err := h.notes.RenderPage(r.Context(), path, page)
+	if err != nil {
+		h.logger.Debug("boox render failed", "path", path, "error", err)
 		http.Error(w, "Note not found", http.StatusNotFound)
 		return
 	}
-	cachePath := filepath.Join(h.booxCachePath, noteID, fmt.Sprintf("page_%d.jpg", page))
+	defer stream.Close()
 
-	data, err := os.ReadFile(cachePath)
-	if err != nil {
-		h.logger.Debug("boox render: page not rendered yet", "path", cachePath, "error", err)
-		http.Error(w, "Page not rendered yet", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=300")
-	w.Write(data)
+	io.Copy(w, stream)
 }
 
 // handleBooxVersions returns a list of archived versions for a Boox note.
 // GET /files/boox/versions?path=<absolute_path>
 func (h *Handler) handleBooxVersions(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
-	if h.booxStore == nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]interface{}{})
-		return
-	}
-	versions, err := h.booxStore.GetVersions(r.Context(), path)
+	
+	// Note: Currently service doesn't have ListVersions, we might need to add it or use GetNoteDetails
+	details, err := h.notes.GetNoteDetails(r.Context(), path)
 	if err != nil {
-		h.logger.Error("boox versions: get versions failed", "path", path, "error", err)
+		h.logger.Error("boox versions failed", "path", path, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if versions == nil {
-		versions = []booxpipeline.BooxVersion{}
-	}
+	
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(versions)
+	json.NewEncoder(w).Encode(details)
 }
 
 // handleMCPTokenCreate creates a new MCP bearer token and redirects with one-time display.
