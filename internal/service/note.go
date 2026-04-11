@@ -40,6 +40,7 @@ type BooxStore interface {
 type BooxImporter interface {
 	ScanAndEnqueue(ctx context.Context, cfg booxpipeline.ImportConfig, logger *slog.Logger) booxpipeline.ImportResult
 	MigrateImportedFiles(ctx context.Context, importPath, notesPath string, logger *slog.Logger) booxpipeline.MigrateResult
+	Enqueue(ctx context.Context, notePath string) error
 }
 
 // FileScanner triggers a filesystem scan.
@@ -181,7 +182,13 @@ func (s *noteService) ListFiles(ctx context.Context, path string, sortField, ord
 
 func (s *noteService) GetNoteDetails(ctx context.Context, path string) (interface{}, error) {
 	if s.isBooxPath(path) {
+		if s.booxStore == nil {
+			return nil, fmt.Errorf("boox store not available")
+		}
 		return s.booxStore.GetLatestJob(ctx, path)
+	}
+	if s.proc == nil {
+		return nil, fmt.Errorf("supernote processor not available")
 	}
 	return s.proc.GetJob(ctx, path)
 }
@@ -252,6 +259,21 @@ func (s *noteService) renderSupernotePage(ctx context.Context, path string, page
 	return io.NopCloser(&buf), "image/jpeg", nil
 }
 
+func (s *noteService) HasSupernoteSource() bool {
+	return s.noteStore != nil
+}
+
+func (s *noteService) HasBooxSource() bool {
+	return s.booxStore != nil
+}
+
+func (s *noteService) ListVersions(ctx context.Context, path string) (interface{}, error) {
+	if !s.isBooxPath(path) || s.booxStore == nil {
+		return nil, nil
+	}
+	return s.booxStore.GetVersions(ctx, path)
+}
+
 func (s *noteService) ScanFiles(ctx context.Context) error {
 	if s.scanner != nil {
 		s.scanner.ScanNow(ctx)
@@ -261,21 +283,39 @@ func (s *noteService) ScanFiles(ctx context.Context) error {
 
 func (s *noteService) Enqueue(ctx context.Context, path string, force bool) error {
 	if s.isBooxPath(path) {
+		if s.booxStore == nil {
+			return fmt.Errorf("boox store not available")
+		}
 		return s.booxStore.EnqueueJob(ctx, path)
+	}
+	if s.proc == nil {
+		return fmt.Errorf("supernote processor not available")
 	}
 	return s.proc.Enqueue(ctx, path)
 }
 
 func (s *noteService) Skip(ctx context.Context, path, reason string) error {
 	if s.isBooxPath(path) {
+		if s.booxStore == nil {
+			return fmt.Errorf("boox store not available")
+		}
 		return s.booxStore.SkipNote(ctx, path, reason)
+	}
+	if s.proc == nil {
+		return fmt.Errorf("supernote processor not available")
 	}
 	return s.proc.Skip(ctx, path, reason)
 }
 
 func (s *noteService) Unskip(ctx context.Context, path string) error {
 	if s.isBooxPath(path) {
+		if s.booxStore == nil {
+			return fmt.Errorf("boox store not available")
+		}
 		return s.booxStore.UnskipNote(ctx, path)
+	}
+	if s.proc == nil {
+		return fmt.Errorf("supernote processor not available")
 	}
 	return s.proc.Unskip(ctx, path)
 }
@@ -301,7 +341,6 @@ func (s *noteService) DeleteNote(ctx context.Context, path string) error {
 		}
 		return nil
 	}
-	// Supernote delete logic...
 	return nil
 }
 
@@ -332,9 +371,11 @@ func (s *noteService) GetProcessorStatus(ctx context.Context) (EmbeddingJobStatu
 	}
 	status := s.proc.Status()
 	return EmbeddingJobStatus{
-		Running:       status.Running,
-		PendingCount:  status.Pending,
-		InFlightCount: status.InFlight,
+		Running:        status.Running,
+		PendingCount:   status.Pending,
+		InFlightCount:  status.InFlight,
+		ProcessedCount: status.Done,
+		FailedCount:    status.Failed,
 	}, nil
 }
 
@@ -379,7 +420,16 @@ func (s *noteService) MigrateImports(ctx context.Context) error {
 // Helpers
 
 func (s *noteService) isBooxPath(path string) bool {
-	return strings.Contains(path, "boox") || strings.HasSuffix(path, ".note")
+	if s.booxStore == nil {
+		return false
+	}
+	if s.booxNotesPath != "" && strings.HasPrefix(path, s.booxNotesPath) {
+		return true
+	}
+	// Check for settings-based import path too if needed, but for now
+	// let's rely on booxNotesPath which covers the main store.
+	// Heuristic: if it's explicitly boox-y or we have no supernote store
+	return (strings.Contains(path, "boox") || strings.HasSuffix(path, ".note")) && s.noteStore == nil
 }
 
 func mapSupernoteFile(f notestore.NoteFile) NoteFile {

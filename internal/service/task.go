@@ -39,6 +39,9 @@ func NewTaskService(store TaskStore, notifier SyncNotifier) TaskService {
 }
 
 func (s *taskService) List(ctx context.Context) ([]Task, error) {
+	if s.store == nil {
+		return nil, nil
+	}
 	internalTasks, err := s.store.List(ctx)
 	if err != nil {
 		return nil, err
@@ -52,6 +55,9 @@ func (s *taskService) List(ctx context.Context) ([]Task, error) {
 }
 
 func (s *taskService) Create(ctx context.Context, title string, dueAt *time.Time) (Task, error) {
+	if s.store == nil {
+		return Task{}, fmt.Errorf("task store not available")
+	}
 	now := time.Now().UnixMilli()
 	t := &taskstore.Task{
 		TaskID:    taskstore.GenerateTaskID(title, now),
@@ -72,6 +78,9 @@ func (s *taskService) Create(ctx context.Context, title string, dueAt *time.Time
 }
 
 func (s *taskService) Complete(ctx context.Context, id string) error {
+	if s.store == nil {
+		return fmt.Errorf("task store not available")
+	}
 	task, err := s.store.Get(ctx, id)
 	if err != nil {
 		return err
@@ -91,6 +100,9 @@ func (s *taskService) Complete(ctx context.Context, id string) error {
 }
 
 func (s *taskService) Delete(ctx context.Context, id string) error {
+	if s.store == nil {
+		return fmt.Errorf("task store not available")
+	}
 	if err := s.store.Delete(ctx, id); err != nil {
 		return err
 	}
@@ -99,6 +111,9 @@ func (s *taskService) Delete(ctx context.Context, id string) error {
 }
 
 func (s *taskService) PurgeCompleted(ctx context.Context) error {
+	if s.store == nil {
+		return nil
+	}
 	_, err := s.store.DeleteCompleted(ctx)
 	if err != nil {
 		return err

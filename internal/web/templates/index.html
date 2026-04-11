@@ -1387,10 +1387,10 @@
               var el = document.getElementById('proc-status');
               if (el) {
                 var parts = [];
-                var state = data.Running ? '▶ SN Running' : '⏹ SN Stopped';
+                var state = data.running ? '▶ SN Running' : '⏹ SN Stopped';
                 parts.push(state);
-                if (data.Pending > 0 || data.InFlight > 0) {
-                  parts.push('SN Queue: ' + data.Pending);
+                if (data.pending_count > 0 || data.in_flight_count > 0) {
+                  parts.push('SN Queue: ' + data.pending_count);
                 }
                 if (data.boox) {
                   var b = data.boox;
@@ -1420,8 +1420,8 @@
                   if (b.done > 0) gParts.push(b.done + ' done');
                   if (b.unmigrated_count > 0) gParts.push('⬇ ' + b.unmigrated_count + ' unmigrated');
                 }
-                if (data.Pending > 0 || data.InFlight > 0) {
-                  gParts.push('SN: ' + data.Pending + ' queued');
+                if (data.pending_count > 0 || data.in_flight_count > 0) {
+                  gParts.push('SN: ' + data.pending_count + ' queued');
                 }
                 if (gParts.length > 0) {
                   gs.textContent = gParts.join(' | ');
@@ -1430,6 +1430,7 @@
                   gs.style.display = 'none';
                 }
               }
+
             })
             .catch(function() {});
         }
@@ -1444,7 +1445,7 @@
               const errorEl = document.getElementById('sync-error');
               const btn = document.getElementById('sync-now-btn');
 
-              if (!data.adapterActive) {
+              if (!data.adapter_active) {
                 statusEl.textContent = 'Disabled';
                 statusEl.className = 'badge';
                 btn.disabled = true;
@@ -1454,7 +1455,7 @@
                 return;
               }
 
-              if (data.inProgress) {
+              if (data.in_progress) {
                 statusEl.textContent = 'Syncing...';
                 statusEl.className = 'badge badge-progress';
                 btn.disabled = true;
@@ -1464,13 +1465,13 @@
                 btn.disabled = false;
               }
 
-              lastEl.textContent = data.lastSyncAt > 0
-                ? 'Last: ' + new Date(data.lastSyncAt).toLocaleTimeString()
+              lastEl.textContent = data.last_sync_at
+                ? 'Last: ' + new Date(data.last_sync_at).toLocaleTimeString()
                 : 'Last: never';
-              nextEl.textContent = data.nextSyncAt > 0
-                ? 'Next: ' + new Date(data.nextSyncAt).toLocaleTimeString()
+              nextEl.textContent = data.next_sync_at
+                ? 'Next: ' + new Date(data.next_sync_at).toLocaleTimeString()
                 : '';
-              errorEl.textContent = data.lastError ? 'Error: ' + data.lastError : '';
+              errorEl.textContent = data.last_error ? 'Error: ' + data.last_error : '';
             })
             .catch(() => {
               document.getElementById('sync-status').textContent = 'Offline';

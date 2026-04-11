@@ -20,6 +20,9 @@ import (
 type searchService struct {
 	searchIndex search.SearchIndex
 	retriever   rag.SearchRetriever
+	embedder    rag.Embedder
+	embedStore  *rag.Store
+	embedModel  string
 	chatStore   *chat.Store
 	chatAPIURL  string
 	chatModel   string
@@ -29,6 +32,9 @@ type searchService struct {
 func NewSearchService(
 	si search.SearchIndex,
 	r rag.SearchRetriever,
+	embedder rag.Embedder,
+	embedStore *rag.Store,
+	embedModel string,
 	cs *chat.Store,
 	apiURL string,
 	model string,
@@ -37,11 +43,40 @@ func NewSearchService(
 	return &searchService{
 		searchIndex: si,
 		retriever:   r,
+		embedder:    embedder,
+		embedStore:  embedStore,
+		embedModel:  embedModel,
 		chatStore:   cs,
 		chatAPIURL:  apiURL,
 		chatModel:   model,
 		logger:      logger,
 	}
+}
+
+func (s *searchService) TriggerBackfill(ctx context.Context) error {
+	if s.embedder == nil || s.embedStore == nil {
+		return fmt.Errorf("embedding pipeline not configured")
+	}
+	go func() {
+		n, err := rag.Backfill(context.Background(), s.embedStore, s.embedder, s.embedModel, s.logger)
+		if err != nil {
+			s.logger.Error("backfill failed", "error", err)
+		} else {
+			s.logger.Info("backfill complete", "count", n)
+		}
+	}()
+	return nil
+}
+
+func (s *searchService) GetEmbeddingCount(ctx context.Context) int {
+	if s.embedStore == nil {
+		return 0
+	}
+	return len(s.embedStore.AllEmbeddings())
+}
+
+func (s *searchService) HasEmbeddingPipeline() bool {
+	return s.embedder != nil && s.embedStore != nil
 }
 
 func (s *searchService) Search(ctx context.Context, query, folder string) ([]SearchResult, error) {

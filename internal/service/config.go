@@ -90,9 +90,13 @@ func (s *configService) UpdateSource(ctx context.Context, id string, src interfa
 }
 
 func (s *configService) DeleteSource(ctx context.Context, id string) error {
-	_, err := s.noteDB.ExecContext(ctx, "DELETE FROM sources WHERE id = ?", id)
+	res, err := s.noteDB.ExecContext(ctx, "DELETE FROM sources WHERE id = ?", id)
 	if err != nil {
 		return err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
 	}
 	s.configDirty.Store(true)
 	return nil
@@ -111,4 +115,8 @@ func (s *configService) TriggerSync(ctx context.Context) error {
 	}
 	s.syncProvider.TriggerSync()
 	return nil
+}
+
+func (s *configService) HasSyncProvider() bool {
+	return s.syncProvider != nil
 }

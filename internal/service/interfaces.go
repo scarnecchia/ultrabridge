@@ -60,10 +60,12 @@ type SyncStatus struct {
 
 // EmbeddingJobStatus represents the background processing state.
 type EmbeddingJobStatus struct {
-	Running       bool        `json:"running"`
-	PendingCount  int         `json:"pending_count"`
-	InFlightCount int         `json:"in_flight_count"`
-	ActiveTask    *ActiveTask `json:"active_task,omitempty"`
+	Running        bool        `json:"running"`
+	PendingCount   int         `json:"pending_count"`
+	InFlightCount  int         `json:"in_flight_count"`
+	ProcessedCount int         `json:"processed_count"`
+	FailedCount    int         `json:"failed_count"`
+	ActiveTask     *ActiveTask `json:"active_task,omitempty"`
 }
 
 type ActiveTask struct {
@@ -103,6 +105,11 @@ type NoteService interface {
 	DeleteNote(ctx context.Context, path string) error
 	BulkDelete(ctx context.Context, paths []string) error
 	
+	// Source Presence
+	HasSupernoteSource() bool
+	HasBooxSource() bool
+	ListVersions(ctx context.Context, path string) (interface{}, error)
+	
 	// Pipeline Control
 	StartProcessor(ctx context.Context) error
 	StopProcessor(ctx context.Context) error
@@ -133,6 +140,7 @@ type SearchService interface {
 	// Embeddings
 	TriggerBackfill(ctx context.Context) error
 	GetEmbeddingCount(ctx context.Context) int
+	HasEmbeddingPipeline() bool
 }
 
 type ChatResponse struct {
@@ -154,4 +162,5 @@ type ConfigService interface {
 	
 	GetSyncStatus(ctx context.Context) (SyncStatus, error)
 	TriggerSync(ctx context.Context) error
+	HasSyncProvider() bool
 }

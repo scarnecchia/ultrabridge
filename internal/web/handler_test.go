@@ -1163,8 +1163,8 @@ func TestHandleSyncStatus_AC33(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	if !strings.Contains(body, "\"inProgress\":true") {
-		t.Errorf("expected inProgress:true in JSON: %s", body)
+	if !strings.Contains(body, "\"in_progress\":true") {
+		t.Errorf("expected in_progress:true in JSON: %s", body)
 	}
 }
 
@@ -1183,7 +1183,7 @@ func TestHandleSyncStatus_NilSafe(t *testing.T) {
 		t.Errorf("GET /sync/status status = %d, want 200", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "\"adapterActive\":false") {
+	if !strings.Contains(body, "\"adapter_active\":false") {
 		t.Errorf("expected zero-value service.SyncStatus in JSON: %s", body)
 	}
 

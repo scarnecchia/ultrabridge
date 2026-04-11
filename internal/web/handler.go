@@ -279,6 +279,9 @@ func NewHandler(
 	h.mux.HandleFunc("GET /chat/sessions", h.handleChatSessions)
 	h.mux.HandleFunc("GET /chat/messages", h.handleChatMessages)
 
+	// Register V1 API standard routes
+	h.RegisterAPIv1()
+
 	// Static files (PWA)
 	h.mux.Handle("GET /manifest.json", http.FileServer(http.FS(staticFS)))
 	h.mux.Handle("GET /sw.js", http.FileServer(http.FS(staticFS)))
