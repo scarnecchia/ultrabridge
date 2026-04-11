@@ -11,9 +11,9 @@ UltraBridge is a note management and task synchronization platform supporting mu
 1. **CalDAV task sync** — synchronise Supernote tasks with any CalDAV client (DAVx5, GNOME Evolution, 2Do, etc.)
 2. **Supernote notes pipeline** — automatically discover `.note` files, extract handwritten text, index it for full-text search, and optionally run vision-API OCR
 3. **Boox notes pipeline** — accept Boox `.note` file uploads via WebDAV or bulk import from filesystem (including PDFs), parse ZIP/protobuf format, render pages, OCR, extract TODOs via color coding, and index for unified search alongside Supernote notes
-4. **RAG search** — generate vector embeddings via Ollama, then combine them with FTS5 keyword search using reciprocal rank fusion for hybrid retrieval. Exposed as a JSON API and an MCP server for Claude integration
+4. **RAG search** — generate vector embeddings via Ollama, then combine them with FTS5 keyword search using reciprocal rank fusion for hybrid retrieval. Exposed as a JSON API and an integrated MCP server with full OAuth2 support for Claude.ai
 5. **Local chat** — ask questions about your notes in a browser-based chat tab, powered by a local text generation model (vLLM) with streaming responses and clickable citations back to source pages
-6. **Unified search** — full-text search across both Supernote and Boox notes with source indicators
+6. **Unified search** — full-text search across both Supernote and Boox notes with source indicators and flexible sorting (name, size, date)
 
 **This software was developed using Claude Code, which was trained on open source software, and will therefore always be open-source software.**
 
@@ -27,7 +27,7 @@ UltraBridge is a note management and task synchronization platform supporting mu
 - For RAG search *(optional)*: **Ollama** with the `nomic-embed-text:v1.5` model
 - For local chat *(optional)*: **vLLM** (or any OpenAI-compatible API) with a text generation model
 
-> **Boox-only users:** UltraBridge works without Supernote Private Cloud. The installer auto-detects whether SPC is present and adjusts accordingly. CalDAV tasks, Boox WebDAV uploads, OCR, and search all work in standalone mode.
+> **Supernote Users:** The installer auto-detects your Supernote Private Cloud network and volume mounts to ensure seamless task synchronization and note discovery.
 
 ## Quick Start
 
@@ -89,11 +89,11 @@ Navigate to `http://<host>:<port>/` after starting the service.
 | Tab | What it does |
 |-----|-------------|
 | **Tasks** | View, create, and complete tasks; bulk actions; purge all completed tasks |
-| **Files** | Browse `.note` files from both Supernote and Boox with source badges; view rendered pages, OCR text, and version history; queue/skip/force processing; scan now |
+| **Files** | Browse `.note` files from both Supernote and Boox with source badges; sort by name, size, or date; view rendered pages, OCR text, and version history; queue/skip/force processing; scan now |
 | **Search** | Full-text keyword search across all indexed notes with source badges and folder filter |
-| **Chat** | Ask questions about your notes with streaming AI responses and clickable `[filename, p.N]` citations *(requires `UB_CHAT_ENABLED=true`)* |
-| **Logs** | Live WebSocket log stream with level filtering |
-| **Settings** | Per-pipeline OCR prompts (Supernote / Boox); red ink to-do extraction toggle and prompt; RAG embedding status and backfill trigger |
+| **Chat** | Ask questions about your notes with streaming AI responses and clickable `[filename, p.N]` citations |
+| **Logs** | Live log stream with level filtering and remote IP tracking |
+| **Settings** | Configuration for OCR prompts, red-ink to-dos, RAG embedding, local chat, MCP tokens, and verbose API logging |
 
 ### Red Ink To-Do Extraction
 
@@ -147,7 +147,8 @@ After first boot, use the **Settings** tab to configure:
 - **OCR:** Enable vision-API OCR, set API credentials and model
 - **Embeddings:** Configure Ollama for RAG search (optional)
 - **Chat:** Enable local chat with vLLM (optional)
-- **Logging:** Set log level, format, file path, syslog destination
+- **MCP Tokens:** Generate bearer tokens for standalone MCP clients
+- **Logging:** Set log level, format, file path, and toggle Verbose API Logging
 - **CalDAV:** Collection name for task sync, due date handling mode
 
 ### Device Sources
@@ -190,9 +191,26 @@ Three JSON endpoints are available when the embedding pipeline is enabled (or in
 
 Date parameters use `YYYY-MM-DD` format. `limit` defaults to 20.
 
-### MCP server (Claude integration)
+### MCP Server (Claude integration)
 
-`ub-mcp` is a standalone binary that exposes UltraBridge's search and content as MCP tools for Claude. It connects to the JSON API endpoints above — no internal imports, just HTTP.
+UltraBridge includes a built-in MCP server that exposes your notes as tools for AI agents.
+
+#### Option 1: Integrated SSE Server (Claude.ai Web)
+
+The main UltraBridge binary hosts an MCP-compliant SSE endpoint at `/mcp`. This is the easiest way to connect **Claude.ai** on the web.
+
+1. In Claude.ai, go to **Settings > MCP**.
+2. Click **Add Server** and select **SSE**.
+3. **Name:** UltraBridge
+4. **Endpoint URL:** `https://your-public-url/mcp`
+5. **Authorization:** Select **OAuth** (UltraBridge supports a simplified OAuth2 flow for Claude).
+6. Click **Connect**. You will be redirected to UltraBridge to authorize the connection.
+
+Once connected, Claude can search your notes, read page text, and view rendered images.
+
+#### Option 2: Standalone Binary (Claude Desktop / CLI)
+
+For local use with Claude Desktop or command-line agents, use the `ub-mcp` standalone binary. It communicates with the main UltraBridge API via JSON.
 
 **Tools:**
 
@@ -202,22 +220,11 @@ Date parameters use `YYYY-MM-DD` format. `limit` defaults to 20.
 | `get_note_pages` | Get all page text for a specific note |
 | `get_note_image` | Get a rendered page image (JPEG) |
 
-**Build and run:**
+**Build and configure Claude Desktop** (`claude_desktop_config.json`):
 
 ```bash
 go build ./cmd/ub-mcp/
-
-# stdio transport (Claude Desktop / Claude Code)
-UB_MCP_API_URL=http://localhost:8443 \
-UB_MCP_API_USER=admin \
-UB_MCP_API_PASS=yourpassword \
-./ub-mcp
-
-# HTTP SSE transport (claude.ai web)
-./ub-mcp --http :8081
 ```
-
-**Claude Desktop configuration** (`claude_desktop_config.json`):
 
 ```json
 {
@@ -225,20 +232,14 @@ UB_MCP_API_PASS=yourpassword \
     "ultrabridge": {
       "command": "/path/to/ub-mcp",
       "env": {
-        "UB_MCP_API_URL": "http://192.168.9.52:8443",
-        "UB_MCP_API_USER": "admin",
-        "UB_MCP_API_PASS": "yourpassword"
+        "UB_MCP_API_URL": "http://localhost:8443",
+        "UB_MCP_API_USER": "your-username",
+        "UB_MCP_API_PASS": "your-password"
       }
     }
   }
 }
 ```
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `UB_MCP_API_URL` | `http://localhost:8443` | UltraBridge API base URL |
-| `UB_MCP_API_USER` | (empty) | Basic Auth username |
-| `UB_MCP_API_PASS` | (empty) | Basic Auth password |
 
 ### Local chat
 
@@ -259,7 +260,7 @@ If vLLM is unreachable when you send a message, the chat UI shows an error inste
 
 When sync is enabled (via Settings > Supernote Sync), tasks are bidirectionally synced between UltraBridge and the Supernote device via SPC. UltraBridge is authoritative on conflicts.
 
-When sync is disabled, UltraBridge runs in standalone mode with tasks stored locally in SQLite. CalDAV and the web UI work normally. MariaDB connection failure is non-fatal in this mode.
+The UltraBridge installer automatically configures the Docker network and volume mounts required to communicate with `supernote-service` and access the MariaDB task store.
 
 ## Architecture
 
@@ -421,9 +422,23 @@ Zeroing RECOGNFILE removes the data the device uses to re-derive RECOGNTEXT, pre
 
 ## Troubleshooting
 
+### Claude.ai "Authorization Failed"
+
+1. Ensure your UltraBridge instance is accessible via a public URL (e.g., using a tunnel or reverse proxy) if connecting from Claude.ai web.
+2. Verify that **Verbose API Logging** is enabled in **Settings > General**.
+3. Check the Docker logs for "auth failure" messages to see why the request was rejected.
+4. If you recently changed your password, you may need to disconnect and reconnect the server in Claude.ai to trigger a new OAuth flow.
+
+### MCP tools not appearing in Claude
+
+1. Ensure the MCP server is enabled in **Settings > General**.
+2. Verify the SSE endpoint is correct (typically `https://your-host/mcp`).
+3. Check the **Logs** tab in UltraBridge for "MCP tool call" entries to verify that Claude is successfully reaching the server.
+
 ### "database connection failed"
 
-This is expected in standalone mode (no Supernote Private Cloud). The warning is non-fatal — UltraBridge continues with SQLite-only storage.
+This is expected in standalone mode (no Supernote Private Cloud).
+ The warning is non-fatal — UltraBridge continues with SQLite-only storage.
 
 If you have SPC installed, check that `.dbenv` is readable and MariaDB is running:
 
