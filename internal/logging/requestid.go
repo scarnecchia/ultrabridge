@@ -38,6 +38,7 @@ func RequestID(logger *slog.Logger) func(http.Handler) http.Handler {
 
 			logger.Info("request",
 				"request_id", id,
+				"remote_ip", r.RemoteAddr,
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", rw.status,

@@ -475,13 +475,15 @@ func TestAuthMiddleware_RequestContextPassedThrough(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
+	type ctxKey struct{}
 	req := httptest.NewRequest("GET", "/test", nil)
+	req = req.WithContext(context.WithValue(req.Context(), ctxKey{}, "test-value"))
 	req.Header.Set("Authorization", "Bearer "+rawToken)
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
 
-	if receivedCtx == context.Background() {
+	if receivedCtx.Value(ctxKey{}) != "test-value" {
 		t.Errorf("request context not passed through")
 	}
 }

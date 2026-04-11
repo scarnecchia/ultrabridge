@@ -63,7 +63,7 @@ func New(db *sql.DB, notesPath string) *Store {
 // Get returns the state of a single file by absolute path.
 func (s *Store) Get(ctx context.Context, path string) (*NoteFile, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT n.path, n.rel_path, n.file_type, n.size_bytes, n.mtime,
+		SELECT n.path, n.rel_path, n.file_type, n.size_bytes, n.mtime, n.created_at,
 		       COALESCE(j.status, '') AS job_status
 		FROM notes n
 		LEFT JOIN (
@@ -127,7 +127,7 @@ func (s *Store) List(ctx context.Context, relPath string) ([]NoteFile, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT n.path, n.rel_path, n.file_type, n.size_bytes, n.mtime,
+		SELECT n.path, n.rel_path, n.file_type, n.size_bytes, n.mtime, n.created_at,
 		       COALESCE(j.status, '') AS job_status
 		FROM notes n
 		LEFT JOIN (
@@ -147,8 +147,8 @@ func (s *Store) List(ctx context.Context, relPath string) ([]NoteFile, error) {
 
 	for rows.Next() {
 		var path2, relPath2, fileType, jobStatus string
-		var sizeBytes, mtimeUnix int64
-		if err := rows.Scan(&path2, &relPath2, &fileType, &sizeBytes, &mtimeUnix, &jobStatus); err != nil {
+		var sizeBytes, mtimeUnix, ctimeUnix int64
+		if err := rows.Scan(&path2, &relPath2, &fileType, &sizeBytes, &mtimeUnix, &ctimeUnix, &jobStatus); err != nil {
 			return nil, fmt.Errorf("notestore list scan: %w", err)
 		}
 		result = append(result, NoteFile{
@@ -158,6 +158,7 @@ func (s *Store) List(ctx context.Context, relPath string) ([]NoteFile, error) {
 			FileType:  FileType(fileType),
 			SizeBytes: sizeBytes,
 			MTime:     time.Unix(mtimeUnix, 0).UTC(),
+			CTime:     time.UnixMilli(ctimeUnix).UTC(),
 			JobStatus: jobStatus,
 		})
 	}
@@ -224,8 +225,8 @@ func (s *Store) TransferJob(ctx context.Context, oldPath, newPath string) error 
 
 func scanRow(row *sql.Row) (*NoteFile, error) {
 	var path2, relPath, fileType, jobStatus string
-	var sizeBytes, mtimeUnix int64
-	if err := row.Scan(&path2, &relPath, &fileType, &sizeBytes, &mtimeUnix, &jobStatus); err != nil {
+	var sizeBytes, mtimeUnix, ctimeUnix int64
+	if err := row.Scan(&path2, &relPath, &fileType, &sizeBytes, &mtimeUnix, &ctimeUnix, &jobStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -238,6 +239,8 @@ func scanRow(row *sql.Row) (*NoteFile, error) {
 		FileType:  FileType(fileType),
 		SizeBytes: sizeBytes,
 		MTime:     time.Unix(mtimeUnix, 0).UTC(),
+		CTime:     time.UnixMilli(ctimeUnix).UTC(),
 		JobStatus: jobStatus,
 	}, nil
 }
+

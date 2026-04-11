@@ -41,6 +41,7 @@ type NoteFile struct {
 	FileType   FileType
 	SizeBytes  int64
 	MTime      time.Time
+	CTime      time.Time
 	JobStatus  string
 	DeviceInfo string // e.g. "Palma2_Pro_C / Personal" for Boox, "Supernote" for SN
 }

@@ -1,38 +1,47 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	gocaldav "github.com/emersion/go-webdav/caldav"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sysop/ultrabridge/internal/appconfig"
 	"github.com/sysop/ultrabridge/internal/auth"
 	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/chat"
 	ubwebdav "github.com/sysop/ultrabridge/internal/webdav"
-	"github.com/sysop/ultrabridge/internal/config"
 	"github.com/sysop/ultrabridge/internal/db"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/mcpauth"
 	"github.com/sysop/ultrabridge/internal/notedb"
 	"github.com/sysop/ultrabridge/internal/notestore"
-	"github.com/sysop/ultrabridge/internal/pipeline"
 	"github.com/sysop/ultrabridge/internal/processor"
 	"github.com/sysop/ultrabridge/internal/rag"
 	"github.com/sysop/ultrabridge/internal/search"
+	"github.com/sysop/ultrabridge/internal/source"
+	"github.com/sysop/ultrabridge/internal/source/boox"
+	"github.com/sysop/ultrabridge/internal/source/supernote"
 	"github.com/sysop/ultrabridge/internal/sync"
 	"github.com/sysop/ultrabridge/internal/taskdb"
 	"github.com/sysop/ultrabridge/internal/tasksync"
-	"github.com/sysop/ultrabridge/internal/tasksync/supernote"
+	snsync "github.com/sysop/ultrabridge/internal/tasksync/supernote"
 	"github.com/sysop/ultrabridge/internal/web"
 )
 
@@ -64,34 +73,98 @@ func main() {
 		return
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ultrabridge: %v\n", err)
-		os.Exit(1)
+	if len(os.Args) >= 4 && os.Args[1] == "seed-user" {
+		username, password := os.Args[2], os.Args[3]
+		dbPath := envOrDefault("UB_DB_PATH", "/data/ultrabridge.db")
+		db, err := notedb.Open(context.Background(), dbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to open database: %v\n", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to hash password: %v\n", err)
+			os.Exit(1)
+		}
+		ctx := context.Background()
+		if err := notedb.SetSetting(ctx, db, appconfig.KeyUsername, username); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to save username: %v\n", err)
+			os.Exit(1)
+		}
+		if err := notedb.SetSetting(ctx, db, appconfig.KeyPasswordHash, string(hash)); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to save password hash: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("User credentials saved.")
+		return
+	}
+
+	// Stage 1: Bootstrap config (needed before DB opens)
+	// Logging and database paths read directly from env vars
+	bootstrapCfg := &bootstrapConfig{
+		logLevel:         envOrDefault("UB_LOG_LEVEL", "info"),
+		logFormat:        envOrDefault("UB_LOG_FORMAT", "json"),
+		logFile:          os.Getenv("UB_LOG_FILE"),
+		logFileMaxMB:     envIntOrDefault("UB_LOG_FILE_MAX_MB", 50),
+		logFileMaxAge:    envIntOrDefault("UB_LOG_FILE_MAX_AGE_DAYS", 30),
+		logFileMaxBackup: envIntOrDefault("UB_LOG_FILE_MAX_BACKUPS", 5),
+		logSyslogAddr:    os.Getenv("UB_LOG_SYSLOG_ADDR"),
+		dbPath:           envOrDefault("UB_DB_PATH", "/data/ultrabridge.db"),
+		taskDBPath:       envOrDefault("UB_TASK_DB_PATH", "/data/ultrabridge-tasks.db"),
+		listenAddr:       envOrDefault("UB_LISTEN_ADDR", ":8443"),
+		dbEnvPath:        envOrDefault("UB_SUPERNOTE_DBENV_PATH", "/run/secrets/dbenv"),
+		passwordHashPath: envOrDefault("UB_PASSWORD_HASH_PATH", "/run/secrets/ub_password_hash"),
 	}
 
 	logger := logging.Setup(logging.Config{
-		Level:         cfg.LogLevel,
-		Format:        cfg.LogFormat,
-		File:          cfg.LogFile,
-		FileMaxMB:     cfg.LogFileMaxMB,
-		FileMaxAge:    cfg.LogFileMaxAge,
-		FileMaxBackup: cfg.LogFileMaxBackup,
-		SyslogAddr:    cfg.LogSyslogAddr,
+		Level:         bootstrapCfg.logLevel,
+		Format:        bootstrapCfg.logFormat,
+		File:          bootstrapCfg.logFile,
+		FileMaxMB:     bootstrapCfg.logFileMaxMB,
+		FileMaxAge:    bootstrapCfg.logFileMaxAge,
+		FileMaxBackup: bootstrapCfg.logFileMaxBackup,
+		SyslogAddr:    bootstrapCfg.logSyslogAddr,
 	})
 
-	// Connect to Supernote MariaDB.
-	// Required when SN sync is enabled or notes pipeline uses catalog sync.
-	// Non-fatal when sync is disabled — task store is SQLite-only.
-	database, err := db.Connect(cfg.DSN())
+	// Load MariaDB credentials from env or .dbenv file
+	dbName, dbUser, dbPassword, err := loadDBEnv(bootstrapCfg.dbEnvPath)
 	if err != nil {
-		if cfg.SNSyncEnabled {
-			logger.Error("database connection failed (required for sync)", "error", err)
-			os.Exit(1)
-		}
-		logger.Warn("database connection failed, notes catalog sync disabled", "error", err)
-		// database is nil — catalog updater won't be set, which is nil-guarded below
+		logger.Warn("failed to load MariaDB credentials", "error", err)
+		// Non-fatal — catalog sync will be skipped
 	}
+
+	// Load password hash from env or secrets file
+	passwordHash := os.Getenv("UB_PASSWORD_HASH")
+	if passwordHash == "" {
+		if data, err := os.ReadFile(bootstrapCfg.passwordHashPath); err == nil {
+			passwordHash = strings.TrimSpace(string(data))
+		}
+	}
+
+	// Connect to Supernote MariaDB (optional — required only if sync is enabled)
+	// Build DSN from credentials we loaded
+	var database *sql.DB
+	if dbUser != "" && dbPassword != "" && dbName != "" {
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true",
+			dbUser, dbPassword,
+			envOrDefault("UB_DB_HOST", "mariadb"),
+			envOrDefault("UB_DB_PORT", "3306"),
+			dbName)
+		database, err = db.Connect(dsn)
+		if err != nil {
+			// Check if sync is enabled
+			if envBoolOrDefault("UB_SN_SYNC_ENABLED", false) {
+				logger.Error("database connection failed (required for sync)", "error", err)
+				os.Exit(1)
+			}
+			logger.Warn("database connection failed, notes catalog sync disabled", "error", err)
+			// database remains nil — catalog updater won't be set, which is nil-guarded below
+		}
+	} else {
+		logger.Warn("MariaDB credentials incomplete, skipping connection")
+	}
+
 	if database != nil {
 		defer database.Close()
 	}
@@ -101,14 +174,15 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		userID, err = db.ResolveUserID(ctx, database, cfg.UserID)
+		userIDVal := int64(envIntOrDefault("UB_USER_ID", 0))
+		userID, err = db.ResolveUserID(ctx, database, userIDVal)
 		if err != nil {
-			if cfg.SNSyncEnabled {
+			if envBoolOrDefault("UB_SN_SYNC_ENABLED", false) {
 				logger.Error("user resolution failed (required for sync)", "error", err)
 				os.Exit(1)
 			}
 			logger.Warn("user resolution failed", "error", err)
-		} else if cfg.UserID != 0 {
+		} else if userIDVal != 0 {
 			logger.Info("using configured user_id", "user_id", userID)
 		} else {
 			logger.Info("discovered user_id", "user_id", userID)
@@ -116,9 +190,9 @@ func main() {
 	}
 
 	// Open the task SQLite DB
-	taskDB, err := taskdb.Open(context.Background(), cfg.TaskDBPath)
+	taskDB, err := taskdb.Open(context.Background(), bootstrapCfg.taskDBPath)
 	if err != nil {
-		logger.Error("taskdb open failed", "err", err, "path", cfg.TaskDBPath)
+		logger.Error("taskdb open failed", "err", err, "path", bootstrapCfg.taskDBPath)
 		os.Exit(1)
 	}
 	defer taskDB.Close()
@@ -126,7 +200,7 @@ func main() {
 	store := taskdb.NewStore(taskDB)
 
 	// Run migration if task DB is empty and SPC sync is enabled
-	if cfg.SNSyncEnabled {
+	if envBoolOrDefault("UB_SN_SYNC_ENABLED", false) {
 		isEmpty, err := store.IsEmpty(context.Background())
 		if err != nil {
 			logger.Error("taskdb empty check failed", "err", err)
@@ -134,12 +208,15 @@ func main() {
 		}
 		if isEmpty {
 			logger.Info("empty task DB detected, attempting migration from SPC")
-			migClient := supernote.NewClient(cfg.SNAPIURL, cfg.SNAccount, cfg.SNPassword, logger)
+			snAPIURL := envOrDefault("UB_SN_API_URL", "http://supernote-service:8080")
+			snAccount := os.Getenv("UB_SN_ACCOUNT")
+			snPassword := os.Getenv("UB_SN_PASSWORD")
+			migClient := snsync.NewClient(snAPIURL, snAccount, snPassword, logger)
 			if err := migClient.Login(context.Background()); err != nil {
 				logger.Warn("SPC login failed for migration, starting with empty store", "error", err)
 			} else {
 				sm := tasksync.NewSyncMap(taskDB)
-				count, err := supernote.MigrateFromSPC(context.Background(), migClient, store, sm, logger)
+				count, err := snsync.MigrateFromSPC(context.Background(), migClient, store, sm, logger)
 				if err != nil {
 					logger.Warn("migration from SPC failed", "error", err)
 				} else {
@@ -151,17 +228,33 @@ func main() {
 		}
 	}
 
-	notifier := sync.NewNotifier(cfg.SocketIOURL, logger)
+	socketIOURL := envOrDefault("UB_SOCKETIO_URL", "ws://supernote-service:8080/socket.io/")
+	notifier := sync.NewNotifier(socketIOURL, logger)
 	notifier.Connect(context.Background())
 	defer notifier.Close()
 
 	// Open the notes SQLite DB (separate from Supernote's MariaDB)
-	noteDB, err := notedb.Open(context.Background(), cfg.DBPath)
+	noteDB, err := notedb.Open(context.Background(), bootstrapCfg.dbPath)
 	if err != nil {
-		logger.Error("notedb open failed", "err", err, "path", cfg.DBPath)
+		logger.Error("notedb open failed", "err", err, "path", bootstrapCfg.dbPath)
 		os.Exit(1)
 	}
 	defer noteDB.Close()
+
+	// Stage 2: Load application config from DB (after notedb opens)
+	cfg, err := appconfig.Load(context.Background(), noteDB)
+	if err != nil {
+		logger.Error("appconfig load failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Override auth credentials from bootstrap (env vars take precedence)
+	if passwordHash != "" {
+		cfg.PasswordHash = passwordHash
+	}
+	if username := os.Getenv("UB_USERNAME"); username != "" {
+		cfg.Username = username
+	}
 
 	// Run mcpauth migration to ensure mcp_tokens table exists
 	if err := mcpauth.Migrate(context.Background(), noteDB); err != nil {
@@ -169,8 +262,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Notes pipeline components
-	ns := notestore.New(noteDB, cfg.NotesPath)
+	// Shared infrastructure (not per-source)
 	si := search.New(noteDB)
 
 	// Initialize embedding pipeline if enabled
@@ -211,89 +303,112 @@ func main() {
 		retriever = rag.NewRetriever(noteDB, si, nil, nil, logger)
 	}
 
-	workerCfg := processor.WorkerConfig{
-		OCREnabled: cfg.OCREnabled,
-		BackupPath: cfg.BackupPath,
-		MaxFileMB:  cfg.OCRMaxFileMB,
-		Indexer:    si,
-		Embedder:   embedder,
-		EmbedModel: cfg.OllamaEmbedModel,
-		EmbedStore: embedStore,
-		OCRPrompt: func() string {
-			v, _ := notedb.GetSetting(context.Background(), noteDB, "sn_ocr_prompt")
-			return v
-		},
-		InjectEnabled: func() bool {
-			v, _ := notedb.GetSetting(context.Background(), noteDB, "sn_inject_enabled")
-			return v != "false" // default true
-		},
-	}
-	if database != nil {
-		workerCfg.CatalogUpdater = processor.NewSPCCatalog(database)
-	}
-	if cfg.OCREnabled && cfg.OCRAPIURL != "" {
-		workerCfg.OCRClient = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel, cfg.OCRFormat)
-	}
-	proc := processor.New(noteDB, workerCfg)
-	if cfg.OCREnabled {
-		if err := proc.Start(context.Background()); err != nil {
-			logger.Warn("processor start failed", "err", err)
-		}
-		defer proc.Stop()
-	}
-
-	pl := pipeline.New(pipeline.Config{
-		NotesPath: cfg.NotesPath,
-		Store:     ns,
-		Proc:      proc,
-		Events:    notifier.Events(),
-		Logger:    logger,
+	// Set up source registry with factory closures
+	registry := source.NewRegistry()
+	registry.Register("supernote", func(db *sql.DB, row source.SourceRow, deps source.SharedDeps) (source.Source, error) {
+		return supernote.NewSource(db, row, deps, database, notifier.Events())
 	})
-	pl.Start(context.Background())
-	defer pl.Close()
-
-	// Wire Boox pipeline if enabled
-	var booxProc *booxpipeline.Processor
-	if cfg.BooxEnabled && cfg.BooxNotesPath != "" {
-		booxCfg := booxpipeline.WorkerConfig{
-			Indexer:        si,  // shared search.Store (same as Supernote)
-			ContentDeleter: si,  // search.Store also satisfies ContentDeleter
-			CachePath:      filepath.Join(cfg.BooxNotesPath, ".cache"),
-			Embedder:       embedder,
-			EmbedModel:     cfg.OllamaEmbedModel,
-			EmbedStore:     embedStore,
-			OCRPrompt: func() string {
-				v, _ := notedb.GetSetting(context.Background(), noteDB, "boox_ocr_prompt")
-				return v
-			},
-			TodoEnabled: func() bool {
-				v, _ := notedb.GetSetting(context.Background(), noteDB, "boox_todo_enabled")
-				return v == "true"
-			},
-			TodoPrompt: func() string {
-				v, _ := notedb.GetSetting(context.Background(), noteDB, "boox_todo_prompt")
-				return v
-			},
+	registry.Register("boox", func(db *sql.DB, row source.SourceRow, deps source.SharedDeps) (source.Source, error) {
+		return boox.NewSource(db, row, deps, boox.BooxDeps{
+			ContentDeleter: si,
 			OnTodosFound: func(ctx context.Context, notePath string, todos []booxpipeline.TodoItem) {
 				created := booxpipeline.CreateTasksFromTodos(ctx, store, notePath, todos, logger)
 				if created > 0 && notifier != nil {
 					notifier.Notify(ctx)
 				}
 			},
+		})
+	})
+
+	// Create shared dependencies for sources
+	var ocrClient *processor.OCRClient
+	if cfg.OCREnabled && cfg.OCRAPIURL != "" {
+		ocrClient = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel, cfg.OCRFormat)
+	}
+
+	deps := source.SharedDeps{
+		Indexer:      si,
+		Embedder:     embedder,
+		EmbedModel:   cfg.OllamaEmbedModel,
+		EmbedStore:   embedStore,
+		OCRClient:    ocrClient,
+		OCRMaxFileMB: cfg.OCRMaxFileMB,
+		Logger:       logger,
+	}
+
+	// List enabled sources from DB
+	rows, err := source.ListEnabledSources(context.Background(), noteDB)
+	if err != nil {
+		logger.Error("list sources failed", "err", err)
+		os.Exit(1)
+	}
+
+
+	// Start sources
+	var sources []source.Source
+	for _, row := range rows {
+		s, err := registry.Create(noteDB, row, deps)
+		if err != nil {
+			logger.Warn("skipping source", "type", row.Type, "name", row.Name, "err", err)
+			continue // AC2.7 + AC2.8: unknown type or bad config → skip, don't crash
 		}
-		if cfg.OCREnabled && cfg.OCRAPIURL != "" {
-			booxCfg.OCR = processor.NewOCRClient(cfg.OCRAPIURL, cfg.OCRAPIKey, cfg.OCRModel, cfg.OCRFormat)
+		if err := s.Start(context.Background()); err != nil {
+			logger.Warn("source start failed", "type", row.Type, "name", row.Name, "err", err)
+			continue
 		}
-		booxProc = booxpipeline.New(noteDB, cfg.BooxNotesPath, booxCfg, logger)
-		if err := booxProc.Start(context.Background()); err != nil {
-			logger.Warn("boox processor start failed", "err", err)
-		} else {
-			defer booxProc.Stop()
+		defer s.Stop()
+		sources = append(sources, s)
+		logger.Info("source started", "type", s.Type(), "name", s.Name())
+	}
+
+	// Extract components for web handler backward compatibility (Phase 5)
+	// TODO: Phase 6 will refactor handler to work directly with sources
+	var ns notestore.NoteStore
+	var pl web.FileScanner
+	var proc processor.Processor
+	var booxProc *booxpipeline.Processor
+	var booxNotesPath string
+	var snNotesPath string
+
+	// Build a map from source type to source row for extracting config
+	sourceRowMap := make(map[string]source.SourceRow)
+	for _, row := range rows {
+		sourceRowMap[row.Type] = row
+	}
+
+	// Extract configs from source rows
+	if snRow, hasSupernote := sourceRowMap["supernote"]; hasSupernote {
+		var snCfg supernote.Config
+		if err := json.Unmarshal([]byte(snRow.ConfigJSON), &snCfg); err == nil {
+			snNotesPath = snCfg.NotesPath
 		}
-		// Sync import path from env var to settings DB so the web handler can read it.
-		if cfg.BooxImportPath != "" {
-			notedb.SetSetting(context.Background(), noteDB, "boox_import_path", cfg.BooxImportPath)
+	}
+	if booxRow, hasBoox := sourceRowMap["boox"]; hasBoox {
+		var booxCfg boox.Config
+		if err := json.Unmarshal([]byte(booxRow.ConfigJSON), &booxCfg); err == nil {
+			booxNotesPath = booxCfg.NotesPath
 		}
+	}
+
+	for _, s := range sources {
+		switch s.Type() {
+		case "supernote":
+			if snSource, ok := s.(*supernote.Source); ok {
+				ns = snSource.NoteStore()
+				pl = snSource.Pipeline()
+				proc = snSource.Processor()
+			}
+		case "boox":
+			if booxSource, ok := s.(*boox.Source); ok {
+				booxProc = booxSource.Processor()
+			}
+		}
+	}
+
+	// Sync import path from env var to settings DB so the web handler can read it.
+	booxImportPath := os.Getenv("UB_BOOX_IMPORT_PATH")
+	if booxImportPath != "" {
+		notedb.SetSetting(context.Background(), noteDB, "boox_import_path", booxImportPath)
 	}
 
 	// Start sync engine if enabled
@@ -303,7 +418,7 @@ func main() {
 			store, taskDB, logger,
 			time.Duration(cfg.SNSyncInterval)*time.Second,
 		)
-		snAdapter := supernote.NewAdapter(cfg.SNAPIURL, cfg.SNAccount, cfg.SNPassword, notifier, logger)
+		snAdapter := snsync.NewAdapter(cfg.SNAPIURL, cfg.SNAccount, cfg.SNPassword, notifier, logger)
 		syncEngine.RegisterAdapter(snAdapter)
 		if err := syncEngine.Start(context.Background()); err != nil {
 			logger.Warn("sync engine start failed", "error", err)
@@ -318,7 +433,34 @@ func main() {
 		Prefix:  "/caldav",
 	}
 
-	authMW := auth.New(cfg.Username, cfg.PasswordHash)
+	// Generate a persistent internal loopback token for self-calls (MCP -> JSON API).
+	// Not stored in DB, strictly in-memory per process lifecycle.
+	internalTokenBytes := make([]byte, 32)
+	rand.Read(internalTokenBytes)
+	internalToken := hex.EncodeToString(internalTokenBytes)
+
+	authMW := auth.NewDynamic(func() (string, string) {
+		// Read credentials from DB on each request so changes from
+		// seed-user, setup page, or Settings UI take effect immediately.
+		// Falls back to bootstrap env var values if DB has no credentials.
+		u, _ := notedb.GetSetting(context.Background(), noteDB, appconfig.KeyUsername)
+		h, _ := notedb.GetSetting(context.Background(), noteDB, appconfig.KeyPasswordHash)
+		if u == "" {
+			u = cfg.Username
+		}
+		if h == "" {
+			h = cfg.PasswordHash
+		}
+		return u, h
+	})
+	// Enable bearer token auth (MCP tokens from Settings UI + internal loopback)
+	authMW.SetTokenValidator(func(token string) error {
+		if token == internalToken {
+			return nil
+		}
+		_, err := mcpauth.ValidateToken(context.Background(), noteDB, token)
+		return err
+	})
 
 	// Create log broadcaster for web UI
 	broadcaster := logging.NewLogBroadcaster()
@@ -327,10 +469,25 @@ func main() {
 	broadcastHandler := logging.NewBroadcastingHandler(logger.Handler(), broadcaster)
 	logger = slog.New(broadcastHandler)
 
+	// Set logger for auth middleware to enable verbose failure logging
+	authMW.SetLogger(logger, cfg.LogVerboseAPI)
+
 	mux := http.NewServeMux()
+	var webHandler *web.Handler // will be set later if web is enabled
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		configDirty := false
+		if webHandler != nil {
+			configDirty = webHandler.IsConfigDirty()
+		}
+		type healthResp struct {
+			Status       string `json:"status"`
+			ConfigDirty  bool   `json:"config_dirty"`
+		}
+		json.NewEncoder(w).Encode(healthResp{
+			Status:      "ok",
+			ConfigDirty: configDirty,
+		})
 	})
 	mux.Handle("/caldav/", authMW.Wrap(caldavHandler))
 	mux.HandleFunc("/.well-known/caldav", func(w http.ResponseWriter, r *http.Request) {
@@ -339,22 +496,56 @@ func main() {
 		})).ServeHTTP(w, r)
 	})
 
-	// Wire Boox WebDAV server if enabled
-	if cfg.BooxEnabled && cfg.BooxNotesPath != "" {
-		davHandler := ubwebdav.NewHandler(cfg.BooxNotesPath, func(absPath string) {
+	// MCP discovery for Claude/OAuth clients
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"mcp_endpoint": "/mcp",
+		})
+	})
+
+	// General OAuth discovery probes
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"providers": []string{"/mcp"},
+		})
+	})
+
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		// Detect host from request
+		host := r.Host
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		baseURL := scheme + "://" + host
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"issuer":                 baseURL,
+			"authorization_endpoint": baseURL + "/authorize",
+			"token_endpoint":         baseURL + "/token",
+			"response_types_supported": []string{"code"},
+			"grant_types_supported":    []string{"authorization_code"},
+			"token_endpoint_auth_methods_supported": []string{"none", "client_secret_post"},
+		})
+	})
+
+	// Wire Boox WebDAV server if Boox source is active
+	if booxProc != nil && booxNotesPath != "" {
+		davHandler := ubwebdav.NewHandler(booxNotesPath, func(absPath string) {
 			logger.Info("boox note uploaded", "path", absPath)
-			if booxProc != nil {
-				if err := booxProc.Enqueue(context.Background(), absPath); err != nil {
-					logger.Error("enqueue boox job", "error", err, "path", absPath)
-				}
+			if err := booxProc.Enqueue(context.Background(), absPath); err != nil {
+				logger.Error("enqueue boox job", "error", err, "path", absPath)
 			}
 		})
 		mux.Handle("/webdav/", authMW.Wrap(davHandler))
-		logger.Info("boox webdav enabled", "path", cfg.BooxNotesPath)
+		logger.Info("boox webdav enabled", "path", booxNotesPath)
 	}
 
-	// Wire web UI if enabled
-	if cfg.WebEnabled {
+	// Wire web UI (always enabled — setup page, settings, and source config depend on it)
+	{
 		// If sync is enabled, wrap syncEngine for web UI; otherwise nil
 		var syncProvider web.SyncStatusProvider
 		if cfg.SNSyncEnabled && syncEngine != nil {
@@ -376,16 +567,46 @@ func main() {
 			chatHandler = chat.NewHandler(chatStore, retriever, cfg.ChatAPIURL, cfg.ChatModel, logger)
 		}
 
-		webHandler := web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, cfg.BooxNotesPath, cfg.NotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel, retriever, chatHandler, chatStore, web.RAGDisplayConfig{
+		webHandler = web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, booxNotesPath, snNotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel, retriever, chatHandler, chatStore, web.RAGDisplayConfig{
 			OllamaURL:   cfg.OllamaURL,
 			OllamaModel: cfg.OllamaEmbedModel,
 			ChatAPIURL:  cfg.ChatAPIURL,
 			ChatModel:   cfg.ChatModel,
-		})
+		}, cfg)
+
+		// OAuth2 flow for Claude.ai
+		// /authorize requires user auth (browser login)
+		mux.Handle("/authorize", authMW.Wrap(http.HandlerFunc(webHandler.HandleOAuthAuthorize)))
+		// /token is called by Claude's backend (no browser/user auth)
+		mux.HandleFunc("/token", webHandler.HandleOAuthToken)
+
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 
-	handler := logging.RequestID(logger)(mux)
+	// Wire MCP server at /mcp/ — speaks MCP protocol for Claude Web and other MCP clients.
+	// Tools proxy to the local JSON API using the same auth credentials.
+	{
+		mcpAPIClient := newMCPAPIClient("http://localhost"+bootstrapCfg.listenAddr, internalToken, logger, cfg.LogVerboseAPI)
+		mcpServer := mcp.NewServer(&mcp.Implementation{
+			Name:    "ultrabridge-notes",
+			Version: "1.0.0",
+		}, nil)
+		registerMCPTools(mcpServer, mcpAPIClient)
+		mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+			return mcpServer
+		}, nil)
+		// Register on both with and without trailing slash to avoid redirects
+		wrappedMCP := authMW.Wrap(http.StripPrefix("/mcp", mcpHandler))
+		mux.Handle("/mcp", wrappedMCP)
+		mux.Handle("/mcp/", wrappedMCP)
+		logger.Info("mcp server enabled", "path", "/mcp")
+	}
+
+	// Wire middleware layers: logging -> setup (outermost layer).
+	// Setup middleware allows /setup and /setup/save through, redirects other requests to /setup if credentials missing.
+	// Individual routes are wrapped with auth middleware at registration time.
+	logHandler := logging.RequestID(logger)(mux)
+	handler := web.SetupMiddleware(noteDB, logHandler)
 
 	// Setup graceful shutdown with signal handling
 	sigChan := make(chan os.Signal, 1)
@@ -394,8 +615,8 @@ func main() {
 	// Start HTTP server in a goroutine so we can wait for signals
 	serverErr := make(chan error, 1)
 	go func() {
-		logger.Info("ultrabridge starting", "addr", cfg.ListenAddr)
-		serverErr <- http.ListenAndServe(cfg.ListenAddr, handler)
+		logger.Info("ultrabridge starting", "addr", bootstrapCfg.listenAddr)
+		serverErr <- http.ListenAndServe(bootstrapCfg.listenAddr, handler)
 	}()
 
 	// Wait for shutdown signal or server error
@@ -413,4 +634,102 @@ func main() {
 			backfillCancel()
 		}
 	}
+}
+
+// bootstrapConfig holds the minimal config needed before DB opens.
+type bootstrapConfig struct {
+	logLevel         string
+	logFormat        string
+	logFile          string
+	logFileMaxMB     int
+	logFileMaxAge    int
+	logFileMaxBackup int
+	logSyslogAddr    string
+	dbPath           string
+	taskDBPath       string
+	listenAddr       string
+	dbEnvPath        string
+	passwordHashPath string
+}
+
+// envOrDefault returns the value of an environment variable or a default.
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// envIntOrDefault returns the value of an environment variable as an int, or a default.
+func envIntOrDefault(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+// envBoolOrDefault returns the value of an environment variable as a bool, or a default.
+func envBoolOrDefault(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	return strings.EqualFold(v, "true") || v == "1"
+}
+
+// loadDBEnv loads MariaDB credentials from environment variables or a .dbenv file.
+// Returns (dbName, dbUser, dbPassword, error).
+// Env vars take precedence over file values.
+func loadDBEnv(dbEnvPath string) (string, string, string, error) {
+	dbName := os.Getenv("MYSQL_DATABASE")
+	dbUser := os.Getenv("MYSQL_USER")
+	dbPassword := os.Getenv("MYSQL_PASSWORD")
+
+	// If we got all three from env, we're done
+	if dbName != "" && dbUser != "" && dbPassword != "" {
+		return dbName, dbUser, dbPassword, nil
+	}
+
+	// Try file as fallback
+	f, err := os.Open(dbEnvPath)
+	if err != nil {
+		if dbName != "" || dbUser != "" {
+			// Got partial config from env, file is optional
+			return dbName, dbUser, dbPassword, nil
+		}
+		return "", "", "", fmt.Errorf("open %s: %w", dbEnvPath, err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "MYSQL_DATABASE":
+			if dbName == "" {
+				dbName = val
+			}
+		case "MYSQL_USER":
+			if dbUser == "" {
+				dbUser = val
+			}
+		case "MYSQL_PASSWORD":
+			if dbPassword == "" {
+				dbPassword = val
+			}
+		}
+	}
+	return dbName, dbUser, dbPassword, scanner.Err()
 }

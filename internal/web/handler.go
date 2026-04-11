@@ -15,12 +15,15 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	gosnote "github.com/jdkruzr/go-sn/note"
 
+	"github.com/sysop/ultrabridge/internal/appconfig"
 	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	ubcaldav "github.com/sysop/ultrabridge/internal/caldav"
 	"github.com/sysop/ultrabridge/internal/chat"
@@ -31,6 +34,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/processor"
 	"github.com/sysop/ultrabridge/internal/rag"
 	"github.com/sysop/ultrabridge/internal/search"
+	"github.com/sysop/ultrabridge/internal/source"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
 
@@ -99,7 +103,7 @@ type Handler struct {
 	syncProvider    SyncStatusProvider
 	booxStore       BooxStore
 	booxImporter    BooxImporter
-	snNotesPath     string // UB_NOTES_PATH for Supernote device path mapping
+	notesPathPrefix string // device file path prefix for rendering note page images
 	booxNotesPath   string
 	booxCachePath   string
 	noteDB          *sql.DB // shared SQLite DB for settings
@@ -117,6 +121,8 @@ type Handler struct {
 	ollamaModel     string
 	chatAPIURL      string
 	chatModel       string
+	runningConfig   *appconfig.Config  // config loaded at startup for drift detection
+	configDirty     atomic.Bool          // set to true when config changes require restart
 }
 
 // formatDueTime converts a millisecond Unix timestamp to a formatted date string.
@@ -138,19 +144,19 @@ func formatCreated(ct sql.NullInt64) string {
 }
 
 // NewHandler creates a new web handler with embedded templates.
-func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, snNotesPath string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string, retriever rag.SearchRetriever, chatHandler *chat.Handler, chatStore *chat.Store, ragDisplay RAGDisplayConfig) *Handler {
+func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteStore notestore.NoteStore, searchIndex search.SearchIndex, proc processor.Processor, scanner FileScanner, syncProvider SyncStatusProvider, booxStore BooxStore, booxImporter BooxImporter, booxNotesPath, notesPathPrefix string, noteDB *sql.DB, logger *slog.Logger, broadcaster *logging.LogBroadcaster, embedder rag.Embedder, embedStore *rag.Store, embedModel string, retriever rag.SearchRetriever, chatHandler *chat.Handler, chatStore *chat.Store, ragDisplay RAGDisplayConfig, runningConfig *appconfig.Config) *Handler {
 	h := &Handler{
-		store:         store,
-		notifier:      notifier,
-		noteStore:     noteStore,
-		searchIndex:   searchIndex,
-		proc:          proc,
-		scanner:       scanner,
-		syncProvider:  syncProvider,
-		snNotesPath:   snNotesPath,
-		booxStore:     booxStore,
-		booxImporter:  booxImporter,
-		booxNotesPath: booxNotesPath,
+		store:           store,
+		notifier:        notifier,
+		noteStore:       noteStore,
+		searchIndex:     searchIndex,
+		proc:            proc,
+		scanner:         scanner,
+		syncProvider:    syncProvider,
+		notesPathPrefix: notesPathPrefix,
+		booxStore:       booxStore,
+		booxImporter:    booxImporter,
+		booxNotesPath:   booxNotesPath,
 		booxCachePath: filepath.Join(booxNotesPath, ".cache"),
 		noteDB:        noteDB,
 		logger:        logger,
@@ -166,12 +172,13 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		ollamaModel:   ragDisplay.OllamaModel,
 		chatAPIURL:    ragDisplay.ChatAPIURL,
 		chatModel:     ragDisplay.ChatModel,
+		runningConfig: runningConfig,
 	}
 
 	// Cache the import path for the noteSource template function.
 	var booxImportPath string
 	if noteDB != nil {
-		booxImportPath, _ = notedb.GetSetting(context.Background(), noteDB, SettingKeyBooxImportPath)
+		booxImportPath, _ = notedb.GetSetting(context.Background(), noteDB, appconfig.KeyBooxImportPath)
 	}
 
 	// Parse the embedded templates with custom function map
@@ -220,11 +227,11 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 				return nil
 			}
 			// Map device path to local path.
-			// Device: /storage/emulated/0/Note/... → local: {snNotesPath}/...
+			// Device: /storage/emulated/0/Note/... → local: {notesPathPrefix}/...
 			const devicePrefix = "/storage/emulated/0/Note/"
 			localPath := link.FilePath
-			if h.snNotesPath != "" && strings.HasPrefix(link.FilePath, devicePrefix) {
-				localPath = filepath.Join(h.snNotesPath, link.FilePath[len(devicePrefix):])
+			if h.notesPathPrefix != "" && strings.HasPrefix(link.FilePath, devicePrefix) {
+				localPath = filepath.Join(h.notesPathPrefix, link.FilePath[len(devicePrefix):])
 			}
 			return map[string]interface{}{
 				"Path": localPath,
@@ -239,6 +246,8 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.tmpl = tmpl
 
 	// Register routes
+	h.mux.HandleFunc("GET /setup", h.handleSetup)
+	h.mux.HandleFunc("POST /setup/save", h.handleSetupSave)
 	h.mux.HandleFunc("GET /", h.handleIndex)
 	h.mux.HandleFunc("POST /tasks", h.handleCreateTask)
 	h.mux.HandleFunc("POST /tasks/{id}/complete", h.handleCompleteTask)
@@ -249,6 +258,10 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /settings/save", h.handleSettingsSave)
 	if h.embedder != nil && h.embedStore != nil {
 		h.mux.HandleFunc("POST /settings/backfill-embeddings", h.handleBackfillEmbeddings)
+	} else {
+		h.mux.HandleFunc("POST /settings/backfill-embeddings", func(w http.ResponseWriter, r *http.Request) {
+			http.NotFound(w, r)
+		})
 	}
 	if h.noteDB != nil {
 		h.mux.HandleFunc("POST /settings/mcp-tokens/create", h.handleMCPTokenCreate)
@@ -283,6 +296,26 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		h.mux.HandleFunc("GET /api/search", h.handleAPISearch)
 		h.mux.HandleFunc("GET /api/notes/pages", h.handleAPIGetPages)
 		h.mux.HandleFunc("GET /api/notes/pages/image", h.handleAPIGetImage)
+	} else {
+		h.mux.HandleFunc("GET /api/search", func(w http.ResponseWriter, r *http.Request) {
+			http.NotFound(w, r)
+		})
+		h.mux.HandleFunc("GET /api/notes/pages", func(w http.ResponseWriter, r *http.Request) {
+			http.NotFound(w, r)
+		})
+		h.mux.HandleFunc("GET /api/notes/pages/image", func(w http.ResponseWriter, r *http.Request) {
+			http.NotFound(w, r)
+		})
+	}
+
+	// Config and sources API endpoints
+	if h.noteDB != nil {
+		h.mux.HandleFunc("GET /api/config", h.handleGetConfig)
+		h.mux.HandleFunc("PUT /api/config", h.handlePutConfig)
+		h.mux.HandleFunc("GET /api/sources", h.handleListSources)
+		h.mux.HandleFunc("POST /api/sources", h.handleAddSource)
+		h.mux.HandleFunc("PUT /api/sources/{id}", h.handleUpdateSource)
+		h.mux.HandleFunc("DELETE /api/sources/{id}", h.handleDeleteSource)
 	}
 
 	// Chat routes (requires chatHandler)
@@ -301,6 +334,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
 
+// IsConfigDirty returns true if config has changed and restart is required.
+func (h *Handler) IsConfigDirty() bool {
+	if h == nil {
+		return false
+	}
+	return h.configDirty.Load()
+}
+
 // baseTemplateData returns shared data needed by all routes that render index.html.
 // This ensures the task list is always available regardless of which tab is active.
 func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
@@ -316,9 +357,9 @@ func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
 	data["BooxNotesPath"] = h.booxNotesPath
 	data["chatEnabled"] = h.chatHandler != nil
 	if h.noteDB != nil {
-		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+		importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
 		data["BooxImportPath"] = importPath
-		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxTodoEnabled)
+		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoEnabled)
 		data["BooxTodoEnabled"] = todoEnabled == "true"
 	}
 	return data
@@ -339,19 +380,6 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Settings keys for per-pipeline OCR prompts.
-const (
-	SettingKeySNInjectEnabled = "sn_inject_enabled"
-	SettingKeySNOCRPrompt     = "sn_ocr_prompt"
-	SettingKeyBooxOCRPrompt   = "boox_ocr_prompt"
-	SettingKeyBooxTodoEnabled = "boox_todo_enabled"
-	SettingKeyBooxTodoPrompt  = "boox_todo_prompt"
-	SettingKeyBooxImportPath  = "boox_import_path"
-	SettingKeyBooxImportNotes = "boox_import_notes"
-	SettingKeyBooxImportPDFs      = "boox_import_pdfs"
-	SettingKeyBooxImportOnyxPaths = "boox_import_onyx_paths"
-)
-
 // DefaultBooxTodoPrompt is the default prompt for red ink to-do extraction.
 const DefaultBooxTodoPrompt = `Find any passages on this page written in RED ink. For each red passage, return a JSON object on its own line like: {"type":"todo","text":"the red text content"}. If there are no red passages, return nothing.`
 
@@ -362,42 +390,78 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	data := h.baseTemplateData(ctx)
 	data["activeTab"] = "settings"
-	data["SNPipelineActive"] = h.noteStore != nil
-	data["BooxActive"] = h.booxStore != nil
+	// Pipeline active = running now OR configured in sources table (not yet started after add)
+	snActive := h.noteStore != nil
+	booxActive := h.booxStore != nil
+	if h.noteDB != nil && (!snActive || !booxActive) {
+		sources, err := source.ListSources(ctx, h.noteDB)
+		if err == nil {
+			for _, s := range sources {
+				if s.Type == "supernote" {
+					snActive = true
+				}
+				if s.Type == "boox" {
+					booxActive = true
+				}
+			}
+		}
+	}
+	data["SNPipelineActive"] = snActive
+	data["BooxActive"] = booxActive
 
-	// Load OCR prompts from DB, falling back to default.
+	// Load current config and detect if restart is required.
 	if h.noteDB != nil {
-		snInject, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeySNInjectEnabled)
+		cfg, err := appconfig.Load(ctx, h.noteDB)
+		if err != nil {
+			h.logger.Error("load config for settings page", "error", err)
+		} else {
+			data["Config"] = cfg
+			// Check if config has diverged from running config (restart required).
+			if h.runningConfig != nil {
+				restartRequired := h.configDirty.Load()
+				data["RestartRequired"] = restartRequired
+			}
+		}
+
+		// Load sources list.
+		sources, err := source.ListSources(ctx, h.noteDB)
+		if err != nil {
+			h.logger.Error("list sources for settings page", "error", err)
+		} else {
+			data["Sources"] = sources
+		}
+
+		snInject, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeySNInjectEnabled)
 		data["SNInjectEnabled"] = snInject != "false" // default true
 
-		snPrompt, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeySNOCRPrompt)
+		snPrompt, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeySNOCRPrompt)
 		if snPrompt == "" {
 			snPrompt = processor.DefaultOCRPrompt
 		}
 		data["SNOCRPrompt"] = snPrompt
 
-		booxPrompt, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxOCRPrompt)
+		booxPrompt, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxOCRPrompt)
 		if booxPrompt == "" {
 			booxPrompt = processor.DefaultOCRPrompt
 		}
 		data["BooxOCRPrompt"] = booxPrompt
 
-		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxTodoEnabled)
+		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoEnabled)
 		data["BooxTodoEnabled"] = todoEnabled == "true"
 
-		todoPrompt, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxTodoPrompt)
+		todoPrompt, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoPrompt)
 		if todoPrompt == "" {
 			todoPrompt = DefaultBooxTodoPrompt
 		}
 		data["BooxTodoPrompt"] = todoPrompt
 
-		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+		importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
 		data["BooxImportPath"] = importPath
-		importNotes, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportNotes)
+		importNotes, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportNotes)
 		data["BooxImportNotes"] = importNotes == "true"
-		importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPDFs)
+		importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPDFs)
 		data["BooxImportPDFs"] = importPDFs == "true"
-		importOnyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportOnyxPaths)
+		importOnyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportOnyxPaths)
 		data["BooxImportOnyxPaths"] = importOnyxPaths == "true"
 	}
 
@@ -455,49 +519,100 @@ func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 			if r.FormValue("inject_enabled") == "false" {
 				injectEnabled = "false"
 			}
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeySNInjectEnabled, injectEnabled); err != nil {
-				h.logger.Error("save setting", "key", SettingKeySNInjectEnabled, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeySNInjectEnabled, injectEnabled); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeySNInjectEnabled, "error", err)
 			}
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeySNOCRPrompt, ocrPrompt); err != nil {
-				h.logger.Error("save setting", "key", SettingKeySNOCRPrompt, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeySNOCRPrompt, ocrPrompt); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeySNOCRPrompt, "error", err)
 			}
 		case "boox":
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxOCRPrompt, ocrPrompt); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxOCRPrompt, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxOCRPrompt, ocrPrompt); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyBooxOCRPrompt, "error", err)
 			}
 			// Save to-do extraction settings.
 			todoEnabled := "false"
 			if r.FormValue("todo_enabled") == "true" {
 				todoEnabled = "true"
 			}
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxTodoEnabled, todoEnabled); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxTodoEnabled, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoEnabled, todoEnabled); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyBooxTodoEnabled, "error", err)
 			}
 			todoPrompt := r.FormValue("todo_prompt")
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxTodoPrompt, todoPrompt); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxTodoPrompt, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoPrompt, todoPrompt); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyBooxTodoPrompt, "error", err)
 			}
 			// Save bulk import settings (path is read-only, set via env var).
 			importNotes := "false"
 			if r.FormValue("import_notes") == "true" {
 				importNotes = "true"
 			}
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxImportNotes, importNotes); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxImportNotes, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxImportNotes, importNotes); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyBooxImportNotes, "error", err)
 			}
 			importPDFs := "false"
 			if r.FormValue("import_pdfs") == "true" {
 				importPDFs = "true"
 			}
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxImportPDFs, importPDFs); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxImportPDFs, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPDFs, importPDFs); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyBooxImportPDFs, "error", err)
 			}
 			importOnyxPaths := "false"
 			if r.FormValue("import_onyx_paths") == "true" {
 				importOnyxPaths = "true"
 			}
-			if err := notedb.SetSetting(ctx, h.noteDB, SettingKeyBooxImportOnyxPaths, importOnyxPaths); err != nil {
-				h.logger.Error("save setting", "key", SettingKeyBooxImportOnyxPaths, "error", err)
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxImportOnyxPaths, importOnyxPaths); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyBooxImportOnyxPaths, "error", err)
+			}
+		case "general":
+			// RAG / Embedding
+			embedEnabled := "false"
+			if r.FormValue("embed_enabled") == "true" {
+				embedEnabled = "true"
+			}
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyEmbedEnabled, embedEnabled); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyEmbedEnabled, "error", err)
+			}
+			ollamaURL := r.FormValue("ollama_url")
+			if ollamaURL != "" {
+				if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyOllamaURL, ollamaURL); err != nil {
+					h.logger.Error("save setting", "key", appconfig.KeyOllamaURL, "error", err)
+				}
+			}
+			ollamaModel := r.FormValue("ollama_embed_model")
+			if ollamaModel != "" {
+				if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyOllamaEmbedModel, ollamaModel); err != nil {
+					h.logger.Error("save setting", "key", appconfig.KeyOllamaEmbedModel, "error", err)
+				}
+			}
+
+			// Chat
+			chatEnabled := "false"
+			if r.FormValue("chat_enabled") == "true" {
+				chatEnabled = "true"
+			}
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyChatEnabled, chatEnabled); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyChatEnabled, "error", err)
+			}
+			chatAPIURL := r.FormValue("chat_api_url")
+			if chatAPIURL != "" {
+				if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyChatAPIURL, chatAPIURL); err != nil {
+					h.logger.Error("save setting", "key", appconfig.KeyChatAPIURL, "error", err)
+				}
+			}
+			chatModel := r.FormValue("chat_model")
+			if chatModel != "" {
+				if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyChatModel, chatModel); err != nil {
+					h.logger.Error("save setting", "key", appconfig.KeyChatModel, "error", err)
+				}
+			}
+
+			// Logging
+			verboseAPI := "false"
+			if r.FormValue("log_verbose_api") == "true" {
+				verboseAPI = "true"
+			}
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyLogVerboseAPI, verboseAPI); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyLogVerboseAPI, "error", err)
 			}
 		}
 	}
@@ -756,7 +871,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	data["activeTab"] = "files"
 
 	if h.noteStore == nil {
-		data["filesError"] = "UB_NOTES_PATH is not configured"
+		data["filesError"] = "No Supernote source configured. Add a source in Settings."
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
 			h.logger.Error("failed to render template", "error", err)
@@ -796,6 +911,10 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 			if bn.UpdatedAt > 0 {
 				mtime = time.UnixMilli(bn.UpdatedAt)
 			}
+			var ctime time.Time
+			if bn.CreatedAt > 0 {
+				ctime = time.UnixMilli(bn.CreatedAt)
+			}
 			var sizeBytes int64
 			if info, err := os.Stat(bn.Path); err == nil {
 				sizeBytes = info.Size()
@@ -812,6 +931,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 				FileType:   notestore.FileTypeNote,
 				SizeBytes:  sizeBytes,
 				MTime:      mtime,
+				CTime:      ctime,
 				JobStatus:  bn.JobStatus,
 				DeviceInfo: deviceInfo,
 			})
@@ -841,6 +961,60 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		files = filtered
 	}
+
+	// Sorting
+	sortField := strings.TrimSpace(r.URL.Query().Get("sort"))
+	if sortField == "" {
+		sortField = "name" // default
+	}
+	sortOrder := strings.TrimSpace(r.URL.Query().Get("order"))
+	if sortOrder == "" {
+		sortOrder = "asc" // default
+	}
+	
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].IsDir != files[j].IsDir {
+			return files[i].IsDir
+		}
+		
+		var cmp int
+		switch sortField {
+		case "created":
+			if files[i].CTime.Equal(files[j].CTime) {
+				cmp = strings.Compare(files[i].Name, files[j].Name)
+			} else if files[i].CTime.Before(files[j].CTime) {
+				cmp = -1
+			} else {
+				cmp = 1
+			}
+		case "modified":
+			if files[i].MTime.Equal(files[j].MTime) {
+				cmp = strings.Compare(files[i].Name, files[j].Name)
+			} else if files[i].MTime.Before(files[j].MTime) {
+				cmp = -1
+			} else {
+				cmp = 1
+			}
+		case "size":
+			if files[i].SizeBytes == files[j].SizeBytes {
+				cmp = strings.Compare(files[i].Name, files[j].Name)
+			} else if files[i].SizeBytes < files[j].SizeBytes {
+				cmp = -1
+			} else {
+				cmp = 1
+			}
+		default: // "name"
+			cmp = strings.Compare(files[i].Name, files[j].Name)
+		}
+		
+		if sortOrder == "desc" {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+	
+	data["filesSort"] = sortField
+	data["filesOrder"] = sortOrder
 
 	// Pagination. Query param overrides cookie; cookie persists preference.
 	perPage := 25
@@ -1110,7 +1284,7 @@ func (h *Handler) handleFilesStatus(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// Count unmigrated files if an import path is configured.
 			if h.noteDB != nil {
-				importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+				importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
 				if importPath != "" {
 					if count, err := h.booxStore.CountNotesWithPrefix(ctx, importPath); err == nil && count > 0 {
 						qs.UnmigratedCount = count
@@ -1134,7 +1308,7 @@ func (h *Handler) isBooxPath(ctx context.Context, path string) bool {
 		return true
 	}
 	if h.noteDB != nil {
-		importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+		importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
 		if importPath != "" && strings.HasPrefix(path, importPath) {
 			return true
 		}
@@ -1307,15 +1481,15 @@ func (h *Handler) handleFilesImport(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Read import settings from DB.
-	importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+	importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
 	if importPath == "" {
 		h.logger.Warn("import: no import path configured")
 		http.Redirect(w, r, "/settings", http.StatusSeeOther)
 		return
 	}
-	importNotes, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportNotes)
-	importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPDFs)
-	onyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportOnyxPaths)
+	importNotes, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportNotes)
+	importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPDFs)
+	onyxPaths, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportOnyxPaths)
 
 	cfg := booxpipeline.ImportConfig{
 		ImportPath:  importPath,
@@ -1433,7 +1607,7 @@ func (h *Handler) handleFilesMigrateImports(w http.ResponseWriter, r *http.Reque
 	}
 
 	ctx := context.Background() // detached — survives browser redirect
-	importPath, _ := notedb.GetSetting(ctx, h.noteDB, SettingKeyBooxImportPath)
+	importPath, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPath)
 	if importPath == "" || h.booxNotesPath == "" {
 		h.logger.Warn("migrate: import path or notes path not configured")
 		http.Redirect(w, r, "/settings", http.StatusSeeOther)
@@ -1578,4 +1752,63 @@ func (h *Handler) handleMCPTokenRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/settings#mcp-tokens", http.StatusSeeOther)
+}
+
+// HandleOAuthAuthorize handles the first leg of Claude's OAuth flow.
+// It skips user consent and immediately redirects back with a fixed code.
+func (h *Handler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
+	redirectURI := r.URL.Query().Get("redirect_uri")
+	state := r.URL.Query().Get("state")
+
+	if redirectURI == "" {
+		http.Error(w, "missing redirect_uri", http.StatusBadRequest)
+		return
+	}
+
+	target, err := url.Parse(redirectURI)
+	if err != nil {
+		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
+		return
+	}
+
+	q := target.Query()
+	q.Set("code", "mcp-fixed-flow-code")
+	if state != "" {
+		q.Set("state", state)
+	}
+	target.RawQuery = q.Encode()
+
+	h.logger.Info("OAuth authorize: redirecting to client", "target", target.String())
+	http.Redirect(w, r, target.String(), http.StatusFound)
+}
+
+// HandleOAuthToken handles the token exchange leg of Claude's OAuth flow.
+// It ignores the code and returns a new persistent MCP bearer token.
+func (h *Handler) HandleOAuthToken(w http.ResponseWriter, r *http.Request) {
+	// Claude sends form-encoded data
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// Generate a new persistent bearer token for this connection.
+	// We label it "Claude-OAuth" so the user can identify it in Settings.
+	rawToken, _, err := mcpauth.CreateToken(ctx, h.noteDB, "Claude-OAuth")
+	if err != nil {
+		h.logger.Error("OAuth token: failed to create bearer token", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Info("OAuth token: issued new bearer token for Claude")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"access_token": rawToken,
+		"token_type":   "Bearer",
+		"expires_in":   315360000, // 10 years (effectively permanent)
+	})
 }

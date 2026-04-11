@@ -447,7 +447,12 @@
               <thead>
                 <tr>
                   <th style="width:2rem;"><input type="checkbox" id="select-all-files" onclick="toggleAllFiles(this)"></th>
-                  <th>Name</th><th>Type</th><th>Size</th><th>Modified</th><th>Status</th><th>Actions</th>
+                  <th><a href="#" onclick="filesNav({sort:'name', order: '{{if and (eq $.filesSort "name") (eq $.filesOrder "asc")}}desc{{else}}asc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Name {{if eq $.filesSort "name"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+                  <th>Type</th>
+                  <th><a href="#" onclick="filesNav({sort:'size', order: '{{if and (eq $.filesSort "size") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Size {{if eq $.filesSort "size"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+                  <th><a href="#" onclick="filesNav({sort:'created', order: '{{if and (eq $.filesSort "created") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Created {{if eq $.filesSort "created"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+                  <th><a href="#" onclick="filesNav({sort:'modified', order: '{{if and (eq $.filesSort "modified") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Modified {{if eq $.filesSort "modified"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+                  <th>Status</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -467,6 +472,7 @@
                   </td>
                   <td>{{.FileType}}</td>
                   <td>{{.SizeBytes}}</td>
+                  <td>{{if .CTime.IsZero}}-{{else}}{{.CTime.Format "2006-01-02"}}{{end}}</td>
                   <td>{{.MTime.Format "2006-01-02"}}</td>
                   <td>
                     {{if .IsDir}}
@@ -572,52 +578,312 @@
 
         <!-- Settings Tab -->
         <div id="settings" class="tab-content">
+          {{if .RestartRequired}}
+          <div style="background:#fee; border:1px solid #c00; border-radius:4px; padding:1rem; margin-bottom:1rem; color:#8b0000;">
+            <strong>⚠ Configuration has changed</strong><br>
+            Restart the application for changes to take effect.
+          </div>
+          {{end}}
+
+          {{if .Config}}
+          <div class="card">
+            <h2>General Settings</h2>
+
+            <div style="margin-bottom:1.25rem;">
+              <h3 style="margin-bottom:0.5rem;">Authentication</h3>
+              <div class="form-group">
+                <label for="config-username" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Username</label>
+                <input id="config-username" type="text" value="{{.Config.Username}}"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+              <div class="form-group">
+                <label for="config-password" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Password</label>
+                <p class="device-info" style="margin:0 0 0.5rem 0;">Leave empty to keep current password.</p>
+                <input id="config-password" type="password" placeholder="Leave empty to keep current"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+            </div>
+
+            <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+
+            <div style="margin-bottom:1.25rem;">
+              <h3 style="margin-bottom:0.5rem;">OCR Configuration</h3>
+              <div class="form-group">
+                <label for="config-ocr-format" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Provider</label>
+                <select id="config-ocr-format" style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                  <option value="anthropic" {{if eq .Config.OCRFormat "anthropic"}}selected{{end}}>Anthropic</option>
+                  <option value="openai" {{if eq .Config.OCRFormat "openai"}}selected{{end}}>OpenAI</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="config-ocr-api-url" style="font-weight:bold; display:block; margin-bottom:0.3rem;">API URL</label>
+                <input id="config-ocr-api-url" type="text" value="{{.Config.OCRAPIURL}}"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+              <div class="form-group">
+                <label for="config-ocr-api-key" style="font-weight:bold; display:block; margin-bottom:0.3rem;">API Key</label>
+                <input id="config-ocr-api-key" type="password" placeholder="Leave empty to keep current"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+              <div class="form-group">
+                <label for="config-ocr-model" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Model</label>
+                <input id="config-ocr-model" type="text" value="{{.Config.OCRModel}}"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+              <div class="form-group">
+                <label for="config-ocr-concurrency" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Concurrency</label>
+                <input id="config-ocr-concurrency" type="number" value="{{.Config.OCRConcurrency}}"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+              <div class="form-group">
+                <label for="config-ocr-max-file-mb" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Max File Size (MB)</label>
+                <input id="config-ocr-max-file-mb" type="number" value="{{.Config.OCRMaxFileMB}}"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+            </div>
+
+            <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+
+            <div style="margin-bottom:1.25rem;">
+              <h3 style="margin-bottom:0.5rem;">Embedding Configuration</h3>
+              <div class="form-group">
+                <label for="config-ollama-url" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Ollama URL</label>
+                <input id="config-ollama-url" type="text" value="{{.Config.OllamaURL}}"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+              <div class="form-group">
+                <label for="config-ollama-embed-model" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Embedding Model</label>
+                <input id="config-ollama-embed-model" type="text" value="{{.Config.OllamaEmbedModel}}"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+            </div>
+
+            <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+
+            <div style="margin-bottom:1.25rem;">
+              <h3 style="margin-bottom:0.5rem;">Chat Configuration</h3>
+              <div class="form-group">
+                <label for="config-chat-api-url" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Chat API URL</label>
+                <input id="config-chat-api-url" type="text" value="{{.Config.ChatAPIURL}}"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+              <div class="form-group">
+                <label for="config-chat-model" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Chat Model</label>
+                <input id="config-chat-model" type="text" value="{{.Config.ChatModel}}"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+            </div>
+
+            <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+
+            <div style="margin-bottom:1.25rem;">
+              <h3 style="margin-bottom:0.5rem;">Supernote Device Sync</h3>
+              <div class="form-group">
+                <label for="config-sn-sync-enabled" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Enabled</label>
+                <select id="config-sn-sync-enabled" style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                  <option value="false" {{if not .Config.SNSyncEnabled}}selected{{end}}>Disabled</option>
+                  <option value="true" {{if .Config.SNSyncEnabled}}selected{{end}}>Enabled</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="config-sn-sync-interval" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Sync Interval (seconds)</label>
+                <input id="config-sn-sync-interval" type="number" value="{{.Config.SNSyncInterval}}"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+              <div class="form-group">
+                <label for="config-sn-api-url" style="font-weight:bold; display:block; margin-bottom:0.3rem;">API URL</label>
+                <input id="config-sn-api-url" type="text" value="{{.Config.SNAPIURL}}"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+              <div class="form-group">
+                <label for="config-sn-account" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Account</label>
+                <input id="config-sn-account" type="text" value="{{.Config.SNAccount}}"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+              <div class="form-group">
+                <label for="config-sn-password" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Password</label>
+                <input id="config-sn-password" type="password" placeholder="Leave empty to keep current"
+                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+              </div>
+            </div>
+
+            <button type="button" onclick="saveConfig()" style="padding:0.3rem 0.8rem;">Save Configuration</button>
+            <span id="config-status" style="margin-left:1rem; font-size:0.9rem;"></span>
+          </div>
+
+          <div class="card">
+            <h2>Sources</h2>
+
+            {{if .Sources}}
+            <table style="width:100%; border-collapse:collapse; margin-bottom:1rem; font-size:13px;">
+              <thead>
+                <tr style="border-bottom:2px solid #e5e7eb; text-align:left;">
+                  <th style="padding:0.4rem;">Name</th>
+                  <th style="padding:0.4rem;">Type</th>
+                  <th style="padding:0.4rem;">Enabled</th>
+                  <th style="padding:0.4rem;"></th>
+                </tr>
+              </thead>
+              <tbody id="sources-list">
+                {{range .Sources}}
+                <tr style="border-bottom:1px solid #f0f0f0;" data-source-id="{{.ID}}">
+                  <td style="padding:0.4rem;">{{.Name}}</td>
+                  <td style="padding:0.4rem;">{{.Type}}</td>
+                  <td style="padding:0.4rem;">
+                    <input type="checkbox" {{if .Enabled}}checked{{end}} onchange="toggleSourceEnabled({{.ID}}, this.checked)">
+                  </td>
+                  <td style="padding:0.4rem;">
+                    <button type="button" class="btn-small" onclick="editSource({{.ID}})">Edit</button>
+                    <button type="button" class="btn-small" style="background:#dc3545;" onclick="deleteSource({{.ID}})">Delete</button>
+                  </td>
+                </tr>
+                {{end}}
+              </tbody>
+            </table>
+            {{else}}
+            <p class="device-info">No sources configured yet.</p>
+            {{end}}
+
+            <button type="button" onclick="showAddSourceForm()" style="padding:0.3rem 0.8rem;">+ Add Source</button>
+            <span id="sources-status" style="margin-left:1rem; font-size:0.9rem;"></span>
+
+            <div id="source-form" style="display:none; margin-top:1rem; padding:1rem; border:1px solid #e5e7eb; border-radius:6px; background:#fafafa;">
+              <h3 id="source-form-title" style="margin-bottom:0.75rem;">Add Source</h3>
+              <input type="hidden" id="source-form-id" value="">
+              <div style="margin-bottom:0.5rem;">
+                <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Type</label>
+                <select id="source-type" onchange="updateSourceConfigFields()" style="padding:0.3rem; width:100%; max-width:300px;">
+                  <option value="supernote">Supernote</option>
+                  <option value="boox">Boox</option>
+                </select>
+              </div>
+              <div style="margin-bottom:0.5rem;">
+                <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Name</label>
+                <input type="text" id="source-name" placeholder="e.g. My Supernote" style="padding:0.3rem; width:100%; max-width:300px;">
+              </div>
+              <div style="margin-bottom:0.5rem;">
+                <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Enabled</label>
+                <input type="checkbox" id="source-enabled" checked>
+              </div>
+              <div id="source-config-fields">
+                <div style="margin-bottom:0.5rem;" id="field-notes-path">
+                  <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Notes Path</label>
+                  <input type="text" id="source-notes-path" placeholder="/data/notes" style="padding:0.3rem; width:100%; max-width:300px;">
+                </div>
+                <div style="margin-bottom:0.5rem;" id="field-backup-path">
+                  <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Backup Path</label>
+                  <input type="text" id="source-backup-path" placeholder="/data/backup" style="padding:0.3rem; width:100%; max-width:300px;">
+                </div>
+              </div>
+              <div style="margin-top:0.75rem;">
+                <button type="button" onclick="saveSource()" style="padding:0.3rem 0.8rem;">Save</button>
+                <button type="button" onclick="cancelSourceForm()" style="padding:0.3rem 0.8rem; margin-left:0.5rem; background:#6c757d;">Cancel</button>
+              </div>
+            </div>
+          </div>
+          {{end}}
+
           <div class="card">
             <h2>General</h2>
 
-            <div style="margin-bottom:1.25rem;">
-              <h3 style="margin-bottom:0.5rem;">RAG Search</h3>
-              {{if not .EmbedEnabled}}
-                <p class="settings-inactive-note">Embedding pipeline not configured. Set UB_EMBED_ENABLED=true to enable.</p>
-              {{else}}
-                <div style="margin-bottom:0.75rem;">
-                  <label style="font-weight:bold;">Embedding Status</label>
-                  <p style="padding:0.4rem; background:#f8f8f8; border-radius:3px;">
-                    {{.EmbeddingCount}} embeddings loaded
-                  </p>
-                </div>
-                <div style="margin-bottom:0.75rem;">
-                  <label style="font-weight:bold;">Ollama</label>
-                  <p style="padding:0.4rem; background:#f8f8f8; border-radius:3px;">
-                    {{.OllamaURL}} ({{.OllamaModel}})
-                  </p>
-                </div>
-                <form method="POST" action="/settings/backfill-embeddings" style="margin:0;">
-                  <button type="submit" onclick="return confirm('Recompute embeddings for all indexed notes? This may take several minutes.')">
-                    ⟳ Backfill Embeddings
-                  </button>
-                </form>
-              {{end}}
-            </div>
+            <form method="POST" action="/settings/save">
+              <input type="hidden" name="section" value="general">
 
-            {{if .ChatEnabled}}
-            <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
-            <div>
-              <h3 style="margin-bottom:0.5rem;">Chat</h3>
-              <div style="margin-bottom:0.75rem;">
-                <label style="font-weight:bold;">Model</label>
-                <p style="padding:0.4rem; background:#f8f8f8; border-radius:3px;">
-                  {{.ChatModel}} @ {{.ChatAPIURL}}
-                </p>
+              <div style="margin-bottom:1.25rem;">
+                <h3 style="margin-bottom:0.5rem;">RAG Search</h3>
+                <p class="device-info" style="margin-bottom:0.5rem;">Enables vector-based similarity search alongside keyword search.</p>
+
+                <div style="margin-bottom:0.75rem;">
+                  <label for="embed-enabled" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Enable Embedding</label>
+                  <select id="embed-enabled" name="embed_enabled" style="padding:0.4rem; border:1px solid #ccc; border-radius:3px;">
+                    <option value="false" {{if not .Config.EmbedEnabled}}selected{{end}}>Disabled</option>
+                    <option value="true" {{if .Config.EmbedEnabled}}selected{{end}}>Enabled</option>
+                  </select>
+                </div>
+
+                <div style="margin-bottom:0.75rem;">
+                  <label for="ollama-url" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Ollama API URL</label>
+                  <input type="text" id="ollama-url" name="ollama_url" value="{{.Config.OllamaURL}}" placeholder="http://localhost:11434"
+                    style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-size:13px;">
+                </div>
+
+                <div style="margin-bottom:0.75rem;">
+                  <label for="ollama-embed-model" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Embedding Model</label>
+                  <input type="text" id="ollama-embed-model" name="ollama_embed_model" value="{{.Config.OllamaEmbedModel}}" placeholder="nomic-embed-text:v1.5"
+                    style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-size:13px;">
+                </div>
+
+                {{if .EmbedEnabled}}
+                  <div style="margin-bottom:0.75rem; padding:0.5rem; background:#f0f7ff; border-radius:4px; border:1px solid #cce3ff;">
+                    <label style="font-weight:bold; font-size:12px; color:#0056b3;">RUNNING STATUS</label>
+                    <p style="margin:0; font-size:13px;">{{.EmbeddingCount}} embeddings loaded in memory.</p>
+                  </div>
+                {{end}}
               </div>
-            </div>
+
+              <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+
+              <div style="margin-bottom:1.25rem;">
+                <h3 style="margin-bottom:0.5rem;">Chat</h3>
+                <p class="device-info" style="margin-bottom:0.5rem;">Enables the Chat tab for conversational search via vLLM.</p>
+
+                <div style="margin-bottom:0.75rem;">
+                  <label for="chat-enabled" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Enable Chat</label>
+                  <select id="chat-enabled" name="chat_enabled" style="padding:0.4rem; border:1px solid #ccc; border-radius:3px;">
+                    <option value="false" {{if not .Config.ChatEnabled}}selected{{end}}>Disabled</option>
+                    <option value="true" {{if .Config.ChatEnabled}}selected{{end}}>Enabled</option>
+                  </select>
+                </div>
+
+                <div style="margin-bottom:0.75rem;">
+                  <label for="chat-api-url" style="font-weight:bold; display:block; margin-bottom:0.3rem;">vLLM API URL</label>
+                  <input type="text" id="chat-api-url" name="chat_api_url" value="{{.Config.ChatAPIURL}}" placeholder="http://localhost:8000"
+                    style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-size:13px;">
+                </div>
+
+                <div style="margin-bottom:0.75rem;">
+                  <label for="chat-model" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Chat Model Name</label>
+                  <input type="text" id="chat-model" name="chat_model" value="{{.Config.ChatModel}}" placeholder="Qwen/Qwen3-8B"
+                    style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-size:13px;">
+                </div>
+
+                {{if .chatEnabled}}
+                  <div style="margin-bottom:0.75rem; padding:0.5rem; background:#e6ffed; border-radius:4px; border:1px solid #acf2bd;">
+                    <label style="font-weight:bold; font-size:12px; color:#22863a;">RUNNING STATUS</label>
+                    <p style="margin:0; font-size:13px;">Connected to {{.ChatModel}}.</p>
+                  </div>
+                {{end}}
+              </div>
+
+              <div style="margin-bottom:1.25rem;">
+                <h3 style="margin-bottom:0.5rem;">Logging</h3>
+                <div style="margin-bottom:0.75rem;">
+                  <label for="log-verbose-api" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Verbose API Logging</label>
+                  <select id="log-verbose-api" name="log_verbose_api" style="padding:0.4rem; border:1px solid #ccc; border-radius:3px;">
+                    <option value="false" {{if not .Config.LogVerboseAPI}}selected{{end}}>Disabled</option>
+                    <option value="true" {{if .Config.LogVerboseAPI}}selected{{end}}>Enabled</option>
+                  </select>
+                  <p class="device-info" style="margin-top:0.3rem;">When enabled, log authentication failures and tool payloads for API/MCP requests.</p>
+                </div>
+              </div>
+
+              <button type="submit" style="padding:0.3rem 0.8rem;">Save General Settings</button>
+            </form>
+
+            {{if .EmbedEnabled}}
+              <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+              <form method="POST" action="/settings/backfill-embeddings" style="margin:0;">
+                <button type="submit" class="btn-small" style="background:#6c757d;" onclick="return confirm('Recompute embeddings for all indexed notes? This may take several minutes.')">
+                  ⟳ Force Backfill Embeddings
+                </button>
+              </form>
             {{end}}
           </div>
 
           <div class="card{{if not .SNPipelineActive}} settings-inactive{{end}}">
             <h2>Supernote</h2>
             {{if not .SNPipelineActive}}
-              <p class="settings-inactive-note">Supernote notes pipeline is not configured. Set UB_NOTES_PATH to enable.</p>
+              <p class="settings-inactive-note">Supernote notes pipeline is not configured. Add a Supernote source in Settings to enable.</p>
             {{else}}
               <form method="POST" action="/settings/save">
                 <input type="hidden" name="section" value="supernote">
@@ -643,7 +909,7 @@
           <div class="card{{if not .BooxActive}} settings-inactive{{end}}">
             <h2>Boox</h2>
             {{if not .BooxActive}}
-              <p class="settings-inactive-note">Boox integration is not enabled. Set UB_BOOX_ENABLED=true to enable.</p>
+              <p class="settings-inactive-note">Boox integration is not enabled. Add a Boox source in Settings to enable.</p>
             {{else}}
               <form method="POST" action="/settings/save">
                 <input type="hidden" name="section" value="boox">
@@ -1396,6 +1662,207 @@
           var div = document.createElement('div');
           div.textContent = text;
           return div.innerHTML;
+        }
+
+        // Configuration API functions
+        function saveConfig() {
+          var statusEl = document.getElementById('config-status');
+          statusEl.textContent = 'Saving...';
+
+          var config = {
+            username: document.getElementById('config-username').value,
+            password: document.getElementById('config-password').value,
+            ocr_format: document.getElementById('config-ocr-format').value,
+            ocr_api_url: document.getElementById('config-ocr-api-url').value,
+            ocr_api_key: document.getElementById('config-ocr-api-key').value,
+            ocr_model: document.getElementById('config-ocr-model').value,
+            ocr_concurrency: parseInt(document.getElementById('config-ocr-concurrency').value) || 1,
+            ocr_max_file_mb: parseInt(document.getElementById('config-ocr-max-file-mb').value) || 0,
+            ollama_url: document.getElementById('config-ollama-url').value,
+            ollama_embed_model: document.getElementById('config-ollama-embed-model').value,
+            chat_api_url: document.getElementById('config-chat-api-url').value,
+            chat_model: document.getElementById('config-chat-model').value,
+            sn_sync_enabled: document.getElementById('config-sn-sync-enabled').value === 'true',
+            sn_sync_interval: parseInt(document.getElementById('config-sn-sync-interval').value) || 300,
+            sn_api_url: document.getElementById('config-sn-api-url').value,
+            sn_account: document.getElementById('config-sn-account').value,
+            sn_password: document.getElementById('config-sn-password').value
+          };
+
+          fetch('/api/config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+          })
+          .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+          })
+          .then(data => {
+            if (data.restart_required) {
+              statusEl.textContent = 'Saved. ⚠ Restart required!';
+              statusEl.style.color = '#c00';
+              setTimeout(() => location.reload(), 1000);
+            } else {
+              statusEl.textContent = 'Saved.';
+              statusEl.style.color = '#090';
+              setTimeout(() => { statusEl.textContent = ''; }, 2000);
+            }
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
+        }
+
+        // Sources API functions
+        function toggleSourceEnabled(sourceId, enabled) {
+          var statusEl = document.getElementById('sources-status');
+          statusEl.textContent = 'Updating...';
+          // Fetch current source, toggle enabled, PUT back
+          fetch('/api/sources')
+          .then(r => r.json())
+          .then(sources => {
+            var src = sources.find(s => s.ID === sourceId);
+            if (!src) throw new Error('Source not found');
+            src.enabled = enabled;
+            return fetch('/api/sources/' + sourceId, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(src)
+            });
+          })
+          .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            statusEl.textContent = enabled ? 'Enabled. Restart to apply.' : 'Disabled. Restart to apply.';
+            statusEl.style.color = '#090';
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
+        }
+
+        function updateSourceConfigFields() {
+          var type = document.getElementById('source-type').value;
+          var backupField = document.getElementById('field-backup-path');
+          backupField.style.display = (type === 'supernote') ? 'block' : 'none';
+        }
+
+        function showAddSourceForm() {
+          document.getElementById('source-form').style.display = 'block';
+          document.getElementById('source-form-title').textContent = 'Add Source';
+          document.getElementById('source-form-id').value = '';
+          document.getElementById('source-type').value = 'supernote';
+          document.getElementById('source-type').disabled = false;
+          document.getElementById('source-name').value = '';
+          document.getElementById('source-enabled').checked = true;
+          document.getElementById('source-notes-path').value = '';
+          document.getElementById('source-backup-path').value = '';
+          updateSourceConfigFields();
+        }
+
+        function editSource(sourceId) {
+          var statusEl = document.getElementById('sources-status');
+          statusEl.textContent = 'Loading...';
+          fetch('/api/sources')
+          .then(r => r.json())
+          .then(sources => {
+            var src = sources.find(s => s.ID === sourceId);
+            if (!src) throw new Error('Source not found');
+            statusEl.textContent = '';
+            document.getElementById('source-form').style.display = 'block';
+            document.getElementById('source-form-title').textContent = 'Edit Source';
+            document.getElementById('source-form-id').value = src.ID;
+            document.getElementById('source-type').value = src.Type;
+            document.getElementById('source-type').disabled = true;
+            document.getElementById('source-name').value = src.Name;
+            document.getElementById('source-enabled').checked = src.Enabled;
+            var cfg = {};
+            try { cfg = JSON.parse(src.ConfigJSON || '{}'); } catch(e) {}
+            document.getElementById('source-notes-path').value = cfg.notes_path || '';
+            document.getElementById('source-backup-path').value = cfg.backup_path || '';
+            updateSourceConfigFields();
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
+        }
+
+        function cancelSourceForm() {
+          document.getElementById('source-form').style.display = 'none';
+        }
+
+        function saveSource() {
+          var statusEl = document.getElementById('sources-status');
+          var id = document.getElementById('source-form-id').value;
+          var type = document.getElementById('source-type').value;
+          var name = document.getElementById('source-name').value.trim();
+          var enabled = document.getElementById('source-enabled').checked;
+          var notesPath = document.getElementById('source-notes-path').value.trim();
+          var backupPath = document.getElementById('source-backup-path').value.trim();
+
+          if (!name) { statusEl.textContent = 'Name is required.'; statusEl.style.color = '#c00'; return; }
+          if (!notesPath) { statusEl.textContent = 'Notes path is required.'; statusEl.style.color = '#c00'; return; }
+
+          var configObj = { notes_path: notesPath };
+          if (type === 'supernote' && backupPath) {
+            configObj.backup_path = backupPath;
+          }
+
+          var body = {
+            type: type,
+            name: name,
+            enabled: enabled,
+            config_json: JSON.stringify(configObj)
+          };
+
+          var method = id ? 'PUT' : 'POST';
+          var url = id ? '/api/sources/' + id : '/api/sources';
+
+          statusEl.textContent = 'Saving...';
+          fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          })
+          .then(r => {
+            if (!r.ok) return r.json().then(j => { throw new Error(j.error || 'HTTP ' + r.status); });
+            return r.json();
+          })
+          .then(() => {
+            statusEl.textContent = 'Saved. Reload to see changes.';
+            statusEl.style.color = '#090';
+            document.getElementById('source-form').style.display = 'none';
+            setTimeout(() => location.reload(), 500);
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
+        }
+
+        function deleteSource(sourceId) {
+          if (!confirm('Delete this source? Requires restart to take effect.')) return;
+
+          var statusEl = document.getElementById('sources-status');
+          statusEl.textContent = 'Deleting...';
+
+          fetch('/api/sources/' + sourceId, { method: 'DELETE' })
+          .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            var row = document.querySelector('[data-source-id="' + sourceId + '"]');
+            if (row) row.remove();
+            statusEl.textContent = 'Deleted. Restart to apply.';
+            statusEl.style.color = '#090';
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
         }
     </script>
 </body>

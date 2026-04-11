@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Last verified: 2026-04-09
+Last verified: 2026-04-10
 
-Go sidecar service for Supernote Private Cloud. Six subsystems:
+Platform-neutral note management and task synchronization service supporting Supernote (via Supernote Private Cloud) and Onyx Boox devices. Six subsystems:
 1. **CalDAV task sync** -- CalDAV VTODO over local SQLite task store
 2. **Device sync** -- bidirectional task sync with Supernote via SPC REST API (adapter-based)
 3. **Supernote notes pipeline** -- scans Supernote .note files, extracts/OCRs text, indexes for full-text search
@@ -20,34 +20,52 @@ Instead: `git -C /path`, `go -C /path build`, or absolute paths.
 
 ## Project Structure
 
+### Core Components
 - `cmd/ultrabridge/` -- entry point, wires all components
 - `cmd/ub-mcp/` -- MCP server binary: exposes search_notes, get_note_pages, get_note_image tools via stdio or HTTP SSE (see domain CLAUDE.md)
+
+### Configuration & Data Management
+- `internal/appconfig/` -- SQLite-backed application config with two-stage loading (bootstrap env vars + settings table), restart detection (see domain CLAUDE.md)
+- `internal/notedb/` -- SQLite DB opener + schema migrations for notes, settings, and sources tables (see domain CLAUDE.md)
+- `internal/source/` -- Platform-neutral source abstraction: `Source` interface, `SourceRow` model, CRUD operations (see domain CLAUDE.md)
+- `internal/source/supernote/` -- Supernote source adapter: .note pipeline, Processor creation (see domain CLAUDE.md)
+- `internal/source/boox/` -- Boox source adapter: WebDAV receiver, Processor creation (see domain CLAUDE.md)
+
+### Task Synchronization
 - `internal/caldav/` -- CalDAV backend (go-webdav), VTODO conversion with iCal blob overlay (see domain CLAUDE.md)
 - `internal/taskstore/` -- Task model, field mapping helpers, MariaDB CRUD (legacy), ErrNotFound sentinel (see domain CLAUDE.md)
 - `internal/taskdb/` -- SQLite task store: Open/migrate DB, implements caldav.TaskStore (see domain CLAUDE.md)
 - `internal/tasksync/` -- adapter-agnostic sync engine: reconciliation, sync map, conflict resolution (see domain CLAUDE.md)
 - `internal/tasksync/supernote/` -- Supernote SPC REST adapter: JWT auth, field mapping, migration (see domain CLAUDE.md)
-- `internal/sync/` -- Engine.IO v3 notifier: STARTSYNC push + inbound events (see domain CLAUDE.md)
-- `internal/auth/` -- Basic Auth middleware (bcrypt)
-- `internal/config/` -- env vars (UB_ prefix) + .dbenv file loading + pipeline config + sync config + boox config + RAG/chat config
-- `internal/db/` -- MariaDB pool + single-user discovery
-- `internal/logging/` -- structured slog, file rotation, syslog, WebSocket broadcast
-- `internal/mcpauth/` -- MCP bearer token store: SHA-256 hashed tokens in SQLite, CRUD + validation (see domain CLAUDE.md)
-- `internal/web/` -- HTML UI: task list, Files tab, Search tab, Chat tab, processor C&C, sync status, Boox render/versions, JSON API, MCP token management, SSE log stream (see domain CLAUDE.md)
-- `internal/rag/` -- RAG embedding infrastructure: Ollama embedder, embedding store with in-memory cache, hybrid FTS5+vector retriever, backfill (see domain CLAUDE.md)
-- `internal/chat/` -- Chat subsystem: session/message store (SQLite), vLLM streaming handler with RAG context injection (see domain CLAUDE.md)
+
+### Note Processing & Pipelines
+- `internal/processor/` -- background OCR job queue: backup, extract, render, OCR, inject, SPC catalog sync (see domain CLAUDE.md)
+- `internal/search/` -- FTS5 full-text search over note content (see domain CLAUDE.md)
+- `internal/notestore/` -- file inventory (scan, list, get), content hashing, job transfer against SQLite notes table (see domain CLAUDE.md)
+- `internal/pipeline/` -- file detection: fsnotify watcher, reconciler, Engine.IO listener (see domain CLAUDE.md)
+- `internal/booxpipeline/` -- Boox processing pipeline: store, worker, processor (parse/render/OCR/index) (see domain CLAUDE.md)
+
+### Boox-Specific
 - `internal/booxnote/` -- Boox .note ZIP parser: protobuf pages, nested shape ZIPs, binary point files (see domain CLAUDE.md)
 - `internal/booxnote/proto/` -- Generated protobuf code for Boox .note format (NoteInfo, VirtualPage, ShapeInfoProto)
 - `internal/booxnote/testutil/` -- Exported test helper: builds synthetic .note ZIP files for tests
 - `internal/booxrender/` -- Stroke renderer: pressure-sensitive scribbles, geometric shapes via fogleman/gg (see domain CLAUDE.md)
-- `internal/booxpipeline/` -- Boox processing pipeline: store, worker, processor (parse/render/OCR/index) (see domain CLAUDE.md)
-- `internal/pdfrender/` -- PDF page rendering via pdftoppm (poppler-utils) for bulk import pipeline
 - `internal/webdav/` -- WebDAV server for Boox file uploads with versioning (see domain CLAUDE.md)
-- `internal/notedb/` -- SQLite DB opener + schema migrations for notes pipeline + Boox pipeline (see domain CLAUDE.md)
-- `internal/notestore/` -- file inventory (scan, list, get), content hashing, job transfer against SQLite notes table (see domain CLAUDE.md)
-- `internal/processor/` -- background OCR job queue: backup, extract, render, OCR, inject, SPC catalog sync (see domain CLAUDE.md)
-- `internal/search/` -- FTS5 full-text search over note content (see domain CLAUDE.md)
-- `internal/pipeline/` -- file detection: fsnotify watcher, reconciler, Engine.IO listener (see domain CLAUDE.md)
+- `internal/pdfrender/` -- PDF page rendering via pdftoppm (poppler-utils) for bulk import pipeline
+
+### RAG & Chat
+- `internal/rag/` -- RAG embedding infrastructure: Ollama embedder, embedding store with in-memory cache, hybrid FTS5+vector retriever, backfill (see domain CLAUDE.md)
+- `internal/chat/` -- Chat subsystem: session/message store (SQLite), vLLM streaming handler with RAG context injection (see domain CLAUDE.md)
+
+### Web UI & API
+- `internal/web/` -- HTML UI: setup wizard, settings, task list, Files tab, Search tab, Chat tab, processor C&C, sync status, Boox render/versions, JSON API, config/sources API, MCP token management, SSE log stream (see domain CLAUDE.md)
+- `internal/mcpauth/` -- MCP bearer token store: SHA-256 hashed tokens in SQLite, CRUD + validation (see domain CLAUDE.md)
+
+### Infrastructure
+- `internal/sync/` -- Engine.IO v3 notifier: STARTSYNC push + inbound events (see domain CLAUDE.md)
+- `internal/auth/` -- Basic Auth middleware (bcrypt)
+- `internal/db/` -- MariaDB pool + single-user discovery
+- `internal/logging/` -- structured slog, file rotation, syslog, WebSocket broadcast
 - `tests/` -- integration tests (require real DB)
 
 ## Build & Test
@@ -89,13 +107,46 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 ## Subcommands
 
 - `ultrabridge hash-password "pw"` -- generate bcrypt hash for UB_PASSWORD_HASH
+- `ultrabridge seed-user <username> <password>` -- pre-provision credentials in settings DB (headless/Docker setup, skips setup wizard)
 - `ub-mcp` -- MCP server for AI agents (stdio by default, `--http :8081` for HTTP SSE)
+
+## Configuration Architecture
+
+### Two-Stage Loading
+
+Configuration is loaded in two stages:
+
+1. **Bootstrap stage (startup):** Read only `UB_DB_PATH`, `UB_TASK_DB_PATH`, and `UB_LISTEN_ADDR` from environment. These are required to start the database and HTTP server.
+
+2. **Settings stage (runtime):** After DB opens, load all other config from the `settings` table in SQLite. This includes auth, OCR, RAG, logging, and source definitions.
+
+### Source Abstraction
+
+Each note source (Supernote, Boox, etc.) is represented by a `SourceRow` in the database with:
+- `type`: "supernote" or "boox"
+- `name`: user-provided label
+- `enabled`: feature flag
+- `config_json`: source-specific settings (e.g., NotesPath, BackupPath for Supernote; NotesPath for Boox)
+
+The `Source` interface abstracts device-specific logic; each source type (supernote.Source, boox.Source) implements Start(), Stop(), Type(), Name(), and provides access to pipelines and processors.
+
+Sources are created dynamically at startup from DB rows via the registry package, allowing hot-plugging of new device types without code changes.
+
+### Environment Variables
+
+Only bootstrap variables are read at startup:
+- `UB_DB_PATH` -- SQLite database path
+- `UB_TASK_DB_PATH` -- Task sync database path
+- `UB_LISTEN_ADDR` -- HTTP server listen address
+
+All other configuration (auth, OCR, sources, logging, RAG, chat) is configured via the Settings UI after first boot.
 
 ## Conventions
 
 - Module: `github.com/sysop/ultrabridge`
-- Config: all env vars prefixed `UB_`, DB creds from shared `.dbenv` file
+- Config: all env vars prefixed `UB_`, DB creds from shared `.dbenv` file (legacy MariaDB support)
 - Auth: single-user Basic Auth, password stored as bcrypt hash
+- Sources: device-agnostic pipelines, platform-specific adapters for Supernote and Boox
 
 ### CalDAV Subsystem (SQLite)
 - Local SQLite task store (internal/taskdb) replaces direct MariaDB access for CalDAV
@@ -123,7 +174,7 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 - Standard-only injection: only notes with FILE_RECOGN_TYPE=0 (Standard) get RECOGNTEXT injection (JIIX v3 format); RTR notes (FILE_RECOGN_TYPE=1) are OCR'd and indexed but file is NOT modified
 - Requeue with delay: jobs can be set back to pending with a future `requeue_after` timestamp
 - Content hash dedup: SHA-256 stored on job completion; pipeline detects moved/renamed files and transfers job records instead of re-processing
-- Pipeline env vars: UB_NOTES_PATH, UB_DB_PATH, UB_BACKUP_PATH, UB_OCR_*
+- Pipeline config: notes path and backup path from source config_json; OCR settings from settings table
 
 ### Boox Notes Pipeline (WebDAV + shared SQLite notedb)
 - Boox .note format: ZIP containing protobuf metadata, nested shape ZIPs, binary point files
@@ -133,10 +184,10 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 - Shares search index: same note_content/note_fts tables, unified search across both device types
 - Shares OCR client: same processor.Indexer and processor.OCRClient interfaces
 - File versioning: overwritten .note files archived to `.versions/` directory tree
-- Rendered page cache: JPEG images at `{UB_BOOX_NOTES_PATH}/.cache/{noteID}/page_{N}.jpg`
+- Rendered page cache: JPEG images at `{notesPath}/.cache/{noteID}/page_{N}.jpg`
 - Bulk import: filesystem paths can be imported in bulk via the web UI; importer scans for .note and .pdf files, enqueues each, and optionally migrates files to the Boox notes directory
 - PDF support: .pdf files accepted alongside .note files; pages rendered via pdftoppm (pdfrender package), then OCR'd and indexed identically to .note files
-- Config: UB_BOOX_ENABLED (feature flag), UB_BOOX_NOTES_PATH (filesystem root for uploads + cache), UB_BOOX_IMPORT_PATH (source directory for bulk imports)
+- Config: Boox sources configured via settings UI and sources table (NotesPath, ImportPath in config_json)
 
 ### RAG Retrieval Pipeline (Ollama + SQLite)
 - Embedding: Ollama `/api/embed` endpoint generates float32 vectors, stored as little-endian blobs in `note_embeddings` table
@@ -144,13 +195,13 @@ docker build -t ultrabridge:dev /home/jtd/ultrabridge
 - Hybrid retriever: combines FTS5 keyword search with cosine-similarity vector search, fuses results via reciprocal rank fusion
 - Backfill: startup goroutine embeds unembedded pages; manual trigger via web UI for re-embedding after model upgrades
 - Integration: both Supernote and Boox workers embed OCR'd text as part of the processing pipeline (best-effort, failures logged not propagated)
-- Config: UB_EMBED_ENABLED (feature flag), UB_OLLAMA_URL (default http://localhost:11434), UB_OLLAMA_EMBED_MODEL (default nomic-embed-text:v1.5)
+- Config: embed_enabled, ollama_url, ollama_embed_model in settings table (defaults: http://localhost:11434, nomic-embed-text:v1.5)
 
 ### Chat Subsystem (vLLM + RAG)
 - RAG-powered chat: user question triggers hybrid search, top results injected as context into vLLM prompt
 - SSE streaming: handler proxies vLLM OpenAI-compatible streaming response to browser via Server-Sent Events
 - Session persistence: chat sessions and messages stored in SQLite (chat_sessions, chat_messages tables in notedb)
-- Config: UB_CHAT_ENABLED (feature flag), UB_CHAT_API_URL (default http://localhost:8000), UB_CHAT_MODEL (default Qwen/Qwen3-8B)
+- Config: chat_enabled, chat_api_url, chat_model in settings table (defaults: http://localhost:8000, Qwen/Qwen3-8B)
 
 ### MCP Server (cmd/ub-mcp)
 - Separate binary that calls UltraBridge JSON API endpoints via HTTP

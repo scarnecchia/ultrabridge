@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sysop/ultrabridge/internal/appconfig"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/search"
 )
@@ -67,7 +68,7 @@ func TestSearchPage_SourceBadges(t *testing.T) {
 		nil, // booxStore not needed for this test
 		nil, // booxImporter not needed for this test
 		booxNotesPath,
-		"",  // snNotesPath
+		"",  // notesPathPrefix
 		nil, // noteDB
 		logger,
 		broadcaster,
@@ -78,6 +79,7 @@ func TestSearchPage_SourceBadges(t *testing.T) {
 		nil, // chatHandler
 		nil, // chatStore
 		RAGDisplayConfig{},
+		&appconfig.Config{},
 	)
 
 	// Execute GET /search?q=test

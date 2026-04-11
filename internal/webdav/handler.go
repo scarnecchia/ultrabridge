@@ -43,7 +43,7 @@ func ExtractPathMetadata(relPath string) PathMetadata {
 }
 
 // NewHandler creates a WebDAV handler for Boox note uploads.
-// rootDir is the absolute path to UB_BOOX_NOTES_PATH.
+// rootDir is the absolute path to the Boox source notes directory.
 // onUpload is called after each .note file is written.
 func NewHandler(rootDir string, onUpload OnNoteUpload) http.Handler {
 	fs := NewFS(rootDir, onUpload)

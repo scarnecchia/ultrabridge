@@ -2,38 +2,103 @@ package auth
 
 import (
 	"crypto/subtle"
+	"log/slog"
 	"net/http"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
+// CredentialFunc returns the current username and bcrypt password hash.
+// Called on every request so credentials picked up from DB changes
+// (e.g., seed-user, setup page, Settings UI) take effect immediately.
+type CredentialFunc func() (username, passwordHash string)
+
+// TokenValidator validates a bearer token. Returns nil if valid.
+type TokenValidator func(token string) error
+
 type Middleware struct {
-	username     string
-	passwordHash []byte
+	credsFn        CredentialFunc
+	tokenValidator TokenValidator
+	logger         *slog.Logger
+	verbose        bool
 }
 
+// New creates auth middleware with a static username and password hash.
 func New(username, passwordHash string) *Middleware {
 	return &Middleware{
-		username:     username,
-		passwordHash: []byte(passwordHash),
+		credsFn: func() (string, string) { return username, passwordHash },
 	}
 }
 
-// Wrap returns an http.Handler that requires Basic Auth before delegating to next.
+// NewDynamic creates auth middleware that reads credentials on each request.
+func NewDynamic(fn CredentialFunc) *Middleware {
+	return &Middleware{credsFn: fn}
+}
+
+// SetLogger sets the logger and verbose flag for the middleware.
+func (m *Middleware) SetLogger(logger *slog.Logger, verbose bool) {
+	m.logger = logger
+	m.verbose = verbose
+}
+
+// SetTokenValidator adds bearer token validation to the auth chain.
+// When set, Authorization: Bearer <token> is checked before Basic Auth.
+func (m *Middleware) SetTokenValidator(v TokenValidator) {
+	m.tokenValidator = v
+}
+
+// Wrap returns an http.Handler that requires auth before delegating to next.
+// Checks bearer token first (if validator set), then Basic Auth.
 func (m *Middleware) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok := r.BasicAuth()
-		if !ok || !m.valid(user, pass) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="UltraBridge"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
+		// Try bearer token first
+		if m.tokenValidator != nil {
+			if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+				token := authHeader[len("Bearer "):]
+				if m.tokenValidator(token) == nil {
+					next.ServeHTTP(w, r)
+					return
+				}
+				if m.verbose && m.logger != nil {
+					m.logger.Warn("auth failure: invalid bearer token", "remote_ip", r.RemoteAddr, "path", r.URL.Path)
+				}
+			}
 		}
-		next.ServeHTTP(w, r)
+
+		// Fall back to Basic Auth
+		user, pass, ok := r.BasicAuth()
+		if ok {
+			if m.validBasic(user, pass) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if m.verbose && m.logger != nil {
+				m.logger.Warn("auth failure: invalid basic credentials", "user", user, "remote_ip", r.RemoteAddr, "path", r.URL.Path)
+			}
+		} else if m.verbose && m.logger != nil && r.Header.Get("Authorization") != "" {
+			// They sent an Authorization header but it wasn't valid Bearer or Basic
+			m.logger.Warn("auth failure: malformed authorization header", "remote_ip", r.RemoteAddr, "path", r.URL.Path)
+		}
+
+		if m.tokenValidator != nil {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="UltraBridge", Basic realm="UltraBridge"`)
+		} else {
+			w.Header().Set("WWW-Authenticate", `Basic realm="UltraBridge"`)
+		}
+		if m.verbose && m.logger != nil {
+			m.logger.Warn("auth failure: unauthorized request", "remote_ip", r.RemoteAddr, "path", r.URL.Path, "has_auth", r.Header.Get("Authorization") != "")
+		}
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 	})
 }
 
-func (m *Middleware) valid(user, password string) bool {
-	userOK := subtle.ConstantTimeCompare([]byte(user), []byte(m.username)) == 1
-	passOK := bcrypt.CompareHashAndPassword(m.passwordHash, []byte(password)) == nil
+func (m *Middleware) validBasic(user, password string) bool {
+	username, hash := m.credsFn()
+	if username == "" || hash == "" {
+		return false
+	}
+	userOK := subtle.ConstantTimeCompare([]byte(user), []byte(username)) == 1
+	passOK := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 	return userOK && passOK
 }

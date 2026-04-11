@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sysop/ultrabridge/internal/appconfig"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/mcpauth"
 	"github.com/sysop/ultrabridge/internal/notedb"
@@ -276,7 +277,7 @@ func TestGetIndexResponseBodyVerifiesAC41(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	// Pre-populate with multiple tasks
 	task1 := &taskstore.Task{
@@ -326,7 +327,7 @@ func TestGetIndexFiltersDeletedTasks(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	// Add a non-deleted task
 	task1 := &taskstore.Task{
@@ -373,7 +374,7 @@ func TestPostCreateTaskMinimal(t *testing.T) {
 	notifier := &mockNotifier{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, notifier, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, notifier, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	// Create task via form POST
 	form := url.Values{}
@@ -421,7 +422,7 @@ func TestPostCreateTaskWithDueDate(t *testing.T) {
 	notifier := &mockNotifier{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, notifier, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, notifier, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	// Create task with due date
 	form := url.Values{}
@@ -457,7 +458,7 @@ func TestPostCreateTaskNoTitle(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	form := url.Values{}
 	form.Set("title", "")
@@ -480,7 +481,7 @@ func TestPostCreateTaskInvalidDueDate(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	form := url.Values{}
 	form.Set("title", "Task")
@@ -501,7 +502,7 @@ func TestPostCompleteTaskUpdatesStatus(t *testing.T) {
 	notifier := &mockNotifier{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, notifier, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, notifier, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	// Create a task
 	task := &taskstore.Task{
@@ -545,7 +546,7 @@ func TestPostCompleteTaskAlreadyCompleted(t *testing.T) {
 	notifier := &mockNotifier{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, notifier, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, notifier, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	// Create an already-completed task
 	completionTime := time.Now().UnixMilli()
@@ -579,7 +580,7 @@ func TestPostCompleteTaskNotFound(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("POST", "/tasks/nonexistent-id/complete", nil)
 	w := httptest.NewRecorder()
@@ -595,7 +596,7 @@ func TestPostCompleteTaskNoID(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	// Note: This test verifies the Go 1.22 route pattern parsing
 	// In practice, /tasks/{id}/complete always extracts an id (could be empty)
@@ -614,7 +615,7 @@ func TestHandlerNotifierNil(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	form := url.Values{}
 	form.Set("title", "Task without notifier")
@@ -638,7 +639,7 @@ func TestPostCreateTaskWithWhitespace(t *testing.T) {
 	store := newMockTaskStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	form := url.Values{}
 	form.Set("title", "  Task with spaces  ")
@@ -667,7 +668,7 @@ func TestBulkCompleteMultipleTasks(t *testing.T) {
 	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", Title: taskstore.SqlStr("Task 1"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
 	store.tasks["t2"] = &taskstore.Task{TaskID: "t2", Title: taskstore.SqlStr("Task 2"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
 	store.tasks["t3"] = &taskstore.Task{TaskID: "t3", Title: taskstore.SqlStr("Task 3"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	form := url.Values{}
 	form.Set("action", "complete")
@@ -697,7 +698,7 @@ func TestBulkDeleteMultipleTasks(t *testing.T) {
 	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", Title: taskstore.SqlStr("Task 1"), IsDeleted: "N"}
 	store.tasks["t2"] = &taskstore.Task{TaskID: "t2", Title: taskstore.SqlStr("Task 2"), IsDeleted: "N"}
 	store.tasks["t3"] = &taskstore.Task{TaskID: "t3", Title: taskstore.SqlStr("Task 3"), IsDeleted: "N"}
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	form := url.Values{}
 	form.Set("action", "delete")
@@ -724,7 +725,7 @@ func TestBulkDeleteMultipleTasks(t *testing.T) {
 
 func TestBulkActionNoSelection(t *testing.T) {
 	store := newMockTaskStore()
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	form := url.Values{}
 	form.Set("action", "complete")
@@ -742,7 +743,7 @@ func TestBulkActionNoSelection(t *testing.T) {
 func TestBulkActionUnknown(t *testing.T) {
 	store := newMockTaskStore()
 	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", IsDeleted: "N"}
-	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	form := url.Values{}
 	form.Set("action", "explode")
@@ -757,11 +758,11 @@ func TestBulkActionUnknown(t *testing.T) {
 	}
 }
 
-// TestHandleFiles_NoteStoreNil verifies AC1.6: missing UB_NOTES_PATH renders error, not crash
+// TestHandleFiles_NoteStoreNil verifies AC1.6: missing Supernote source renders error, not crash
 func TestHandleFiles_NoteStoreNil(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("GET", "/files", nil)
 	w := httptest.NewRecorder()
@@ -770,8 +771,8 @@ func TestHandleFiles_NoteStoreNil(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "UB_NOTES_PATH") {
-		t.Error("expected UB_NOTES_PATH error message in response")
+	if !strings.Contains(w.Body.String(), "No Supernote source configured") {
+		t.Error("expected 'No Supernote source configured' error message in response")
 	}
 }
 
@@ -780,7 +781,7 @@ func TestHandleFiles_PathTraversal(t *testing.T) {
 	ns := newMockNoteStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, ns, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(newMockTaskStore(), nil, ns, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	for _, badPath := range []string{"../../etc", "../secrets", "/etc/passwd"} {
 		req := httptest.NewRequest("GET", "/files?path="+badPath, nil)
@@ -801,7 +802,7 @@ func TestHandleFiles_TopLevel(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, ns, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(newMockTaskStore(), nil, ns, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("GET", "/files", nil)
 	w := httptest.NewRecorder()
@@ -830,7 +831,7 @@ func TestHandleFiles_WithPath(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, ns, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(newMockTaskStore(), nil, ns, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("GET", "/files?path=Note/Folder", nil)
 	w := httptest.NewRecorder()
@@ -853,7 +854,7 @@ func makeFilesHandler(t *testing.T, proc *mockProcessor) *Handler {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	return NewHandler(newMockTaskStore(), nil, nil, nil, proc, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	return NewHandler(newMockTaskStore(), nil, nil, nil, proc, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 }
 
 func postFiles(handler *Handler, route, path, back string) *httptest.ResponseRecorder {
@@ -971,7 +972,7 @@ func TestHandleFilesScan(t *testing.T) {
 	scanner := &mockScanner{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, scanner, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, scanner, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("POST", "/files/scan", nil)
 	w := httptest.NewRecorder()
@@ -989,7 +990,7 @@ func TestHandleFilesScan(t *testing.T) {
 func TestHandleFilesScan_NilScanner(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("POST", "/files/scan", nil)
 	w := httptest.NewRecorder()
@@ -1023,7 +1024,7 @@ func TestHandleSyncStatus_AC31(t *testing.T) {
 			AdapterActive: true,
 		},
 	}
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, syncProvider, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, syncProvider, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("GET", "/sync/status", nil)
 	w := httptest.NewRecorder()
@@ -1064,7 +1065,7 @@ func TestHandleSyncTrigger_AC32(t *testing.T) {
 		},
 		triggered: 0,
 	}
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, syncProvider, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, syncProvider, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("POST", "/sync/trigger", nil)
 	w := httptest.NewRecorder()
@@ -1098,7 +1099,7 @@ func TestHandleSyncStatus_AC33(t *testing.T) {
 			AdapterActive: true,
 		},
 	}
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, syncProvider, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, syncProvider, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("GET", "/sync/status", nil)
 	w := httptest.NewRecorder()
@@ -1118,7 +1119,7 @@ func TestHandleSyncStatus_AC33(t *testing.T) {
 func TestHandleSyncStatus_NilSafe(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	// GET /sync/status with nil syncProvider should return zero-value SyncStatus
 	req := httptest.NewRequest("GET", "/sync/status", nil)
@@ -1170,7 +1171,7 @@ func TestHandleBackfillEmbeddings(t *testing.T) {
 	embedStore := rag.NewStore(db, logger)
 
 	// Create handler with embedder and embedStore
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, embedder, embedStore, "test-model", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, embedder, embedStore, "test-model", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("POST", "/settings/backfill-embeddings", nil)
 	w := httptest.NewRecorder()
@@ -1194,7 +1195,7 @@ func TestHandleBackfillEmbeddings_NotRegisteredWhenDisabled(t *testing.T) {
 	broadcaster := logging.NewLogBroadcaster()
 
 	// Create handler with nil embedder and embedStore (embedding disabled)
-	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("POST", "/settings/backfill-embeddings", nil)
 	w := httptest.NewRecorder()
@@ -1222,7 +1223,7 @@ func TestHandleMCPTokenCreate_Success(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	// POST to create token
 	form := url.Values{}
@@ -1308,7 +1309,7 @@ func TestHandleSettings_TokenList(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	// GET /settings
 	req := httptest.NewRequest("GET", "/settings", nil)
@@ -1372,7 +1373,7 @@ func TestHandleMCPTokenRevoke_Success(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	// POST to revoke token
 	form := url.Values{}
@@ -1415,7 +1416,7 @@ func TestHandleMCPTokenCreate_EmptyLabel(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{})
+	handler := NewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	// POST with empty label
 	form := url.Values{}

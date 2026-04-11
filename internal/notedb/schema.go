@@ -102,6 +102,15 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS sources (
+			id          INTEGER PRIMARY KEY,
+			type        TEXT NOT NULL,
+			name        TEXT NOT NULL,
+			enabled     INTEGER NOT NULL DEFAULT 1,
+			config_json TEXT NOT NULL DEFAULT '{}',
+			created_at  INTEGER NOT NULL,
+			updated_at  INTEGER NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS note_embeddings (
 			note_path  TEXT NOT NULL,
 			page       INTEGER NOT NULL,
