@@ -67,6 +67,7 @@ type BooxNoteEntry struct {
 	PageCount   int
 	Version     int
 	NoteID      string // top-level directory name from ZIP, used for cache paths
+	CreatedAt   int64  // unix millis
 	UpdatedAt   int64  // unix millis
 	JobStatus   string // latest job status
 }
@@ -423,7 +424,7 @@ func (s *Store) ReclaimStuckJobs(ctx context.Context, timeout time.Duration) err
 func (s *Store) ListNotes(ctx context.Context) ([]BooxNoteEntry, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT bn.path, bn.title, bn.device_model, bn.note_type, bn.folder,
-		       bn.page_count, bn.version, bn.note_id, bn.updated_at,
+		       bn.page_count, bn.version, bn.note_id, bn.created_at, bn.updated_at,
 		       COALESCE((SELECT status FROM boox_jobs WHERE note_path = bn.path
 		                ORDER BY id DESC LIMIT 1), '') as job_status
 		FROM boox_notes bn
@@ -437,7 +438,7 @@ func (s *Store) ListNotes(ctx context.Context) ([]BooxNoteEntry, error) {
 	for rows.Next() {
 		var e BooxNoteEntry
 		if err := rows.Scan(&e.Path, &e.Title, &e.DeviceModel, &e.NoteType, &e.Folder,
-			&e.PageCount, &e.Version, &e.NoteID, &e.UpdatedAt, &e.JobStatus); err != nil {
+			&e.PageCount, &e.Version, &e.NoteID, &e.CreatedAt, &e.UpdatedAt, &e.JobStatus); err != nil {
 			return nil, fmt.Errorf("scan note row: %w", err)
 		}
 		entries = append(entries, e)

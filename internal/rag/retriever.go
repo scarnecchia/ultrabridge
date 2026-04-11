@@ -237,7 +237,7 @@ func (r *Retriever) enrichResult(ctx context.Context, notePath string, page int,
 			}
 		}
 		if snCreatedAt.Valid && snCreatedAt.Int64 > 0 {
-			result.NoteDate = time.Unix(snCreatedAt.Int64, 0)
+			result.NoteDate = time.UnixMilli(snCreatedAt.Int64)
 		}
 		return result, nil
 	}

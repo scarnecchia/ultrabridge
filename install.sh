@@ -171,6 +171,38 @@ info "Generating docker-compose.yml"
 
 mkdir -p "$DATA_DIR"
 
+# Detect if Supernote Private Cloud is running and join its network if it is.
+SN_NETWORK=""
+if docker ps --format '{{.Names}}' | grep -q "^supernote-service$"; then
+    SN_NETWORK=$(docker inspect supernote-service --format '{{range $net, $conf := .NetworkSettings.Networks}}{{$net}}{{end}}' 2>/dev/null || true)
+    if [[ -n "$SN_NETWORK" ]]; then
+        ok "Detected Supernote Private Cloud network: $SN_NETWORK"
+    fi
+fi
+
+# Detect if Supernote directory exists and mount it if it does.
+VOLUMES_BLOCK="      - ./ultrabridge-data:/data"
+if [[ -d "/mnt/supernote" ]]; then
+    ok "Detected Supernote directory at /mnt/supernote"
+    VOLUMES_BLOCK="$VOLUMES_BLOCK
+      - /mnt/supernote:/mnt/supernote"
+fi
+
+NETWORKS_BLOCK=""
+JOIN_NETWORKS=""
+if [[ -n "$SN_NETWORK" ]]; then
+    JOIN_NETWORKS="
+    networks:
+      - default
+      - $SN_NETWORK"
+    NETWORKS_BLOCK="
+networks:
+  default:
+    name: ultrabridge_default
+  $SN_NETWORK:
+    external: true"
+fi
+
 cat > "$SCRIPT_DIR/docker-compose.yml" <<EOF
 services:
   ultrabridge:
@@ -186,8 +218,8 @@ services:
       - UB_LISTEN_ADDR=:8443
       - UB_TASK_DB_PATH=/data/ultrabridge-tasks.db
     volumes:
-      - ./ultrabridge-data:/data
-    restart: unless-stopped
+$VOLUMES_BLOCK$JOIN_NETWORKS
+    restart: unless-stopped$NETWORKS_BLOCK
 EOF
 
 ok "Docker Compose file written"

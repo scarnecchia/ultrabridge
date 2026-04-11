@@ -78,7 +78,7 @@ func newMockSPCServer() *mockSPCServer {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
 
-		case "/api/official/user/account/login/equipment":
+		case "/api/official/user/account/login/new":
 			if m.loginFails {
 				w.WriteHeader(http.StatusUnauthorized)
 				json.NewEncoder(w).Encode(map[string]interface{}{"success": false})

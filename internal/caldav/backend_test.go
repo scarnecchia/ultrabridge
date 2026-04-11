@@ -67,6 +67,17 @@ func (m *mockTaskStore) Delete(ctx context.Context, taskID string) error {
 	return nil
 }
 
+func (m *mockTaskStore) DeleteCompleted(ctx context.Context) (int64, error) {
+	var count int64
+	for id, t := range m.tasks {
+		if t.Status.Valid && t.Status.String == "completed" {
+			delete(m.tasks, id)
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (m *mockTaskStore) MaxLastModified(ctx context.Context) (int64, error) {
 	var max int64
 	for _, t := range m.tasks {

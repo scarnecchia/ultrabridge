@@ -2,35 +2,35 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/sysop/ultrabridge/internal/mcpauth"
 )
 
 // mcpAPIClient calls UltraBridge's own JSON API endpoints using a
 // persistent internal bearer token for self-authentication.
 type mcpAPIClient struct {
-	baseURL      string
+	baseURL       string
 	internalToken string
-	http         *http.Client
+	http          *http.Client
+	logger        *slog.Logger
+	verbose       bool
 }
 
-func newMCPAPIClient(baseURL string, db *sql.DB) *mcpAPIClient {
-	// Create a persistent internal token for MCP→API self-calls.
-	raw, _, err := mcpauth.CreateToken(context.Background(), db, "mcp-internal")
-	if err != nil {
-		// If token creation fails, API calls will be unauthenticated and fail.
-		// This shouldn't happen since notedb is already open.
-		raw = ""
+func newMCPAPIClient(baseURL string, internalToken string, logger *slog.Logger, verbose bool) *mcpAPIClient {
+	return &mcpAPIClient{
+		baseURL:       baseURL,
+		internalToken: internalToken,
+		http:          &http.Client{},
+		logger:        logger,
+		verbose:       verbose,
 	}
-	return &mcpAPIClient{baseURL: baseURL, internalToken: raw, http: &http.Client{}}
 }
 
 func (c *mcpAPIClient) get(ctx context.Context, path string) (*http.Response, error) {
@@ -70,6 +70,9 @@ func registerMCPTools(server *mcp.Server, client *mcpAPIClient) {
 		Name:        "search_notes",
 		Description: "Search handwritten notes by keyword query. Returns matching pages with text content, metadata, and links to the UltraBridge web UI. Supports filtering by folder, device, and date range.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input searchNotesInput) (*mcp.CallToolResult, any, error) {
+		if client.verbose && client.logger != nil {
+			client.logger.Info("MCP tool call", "tool", "search_notes", "input", input)
+		}
 		if input.Query == "" {
 			return nil, nil, fmt.Errorf("query is required")
 		}
@@ -140,6 +143,10 @@ func registerMCPTools(server *mcp.Server, client *mcpAPIClient) {
 			sb.WriteString("No results found.\n")
 		}
 
+		if client.verbose && client.logger != nil {
+			client.logger.Info("MCP tool result", "tool", "search_notes", "results", len(results))
+		}
+
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: sb.String()},
@@ -152,6 +159,9 @@ func registerMCPTools(server *mcp.Server, client *mcpAPIClient) {
 		Name:        "get_note_pages",
 		Description: "Get all page text content for a specific note. Returns pages ordered by page number with body text and title.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input getNotePagesInput) (*mcp.CallToolResult, any, error) {
+		if client.verbose && client.logger != nil {
+			client.logger.Info("MCP tool call", "tool", "get_note_pages", "input", input)
+		}
 		if input.NotePath == "" {
 			return nil, nil, fmt.Errorf("note_path is required")
 		}
@@ -201,6 +211,9 @@ func registerMCPTools(server *mcp.Server, client *mcpAPIClient) {
 		Name:        "get_note_image",
 		Description: "Get the rendered page image (JPEG) from a note. Returns the image for visual inspection of handwritten content.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input getNoteImageInput) (*mcp.CallToolResult, any, error) {
+		if client.verbose && client.logger != nil {
+			client.logger.Info("MCP tool call", "tool", "get_note_image", "input", input)
+		}
 		if input.NotePath == "" {
 			return nil, nil, fmt.Errorf("note_path is required")
 		}
@@ -224,6 +237,10 @@ func registerMCPTools(server *mcp.Server, client *mcpAPIClient) {
 		imageData, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read image: %w", err)
+		}
+
+		if client.verbose && client.logger != nil {
+			client.logger.Info("MCP tool result", "tool", "get_note_image", "bytes", len(imageData))
 		}
 
 		return &mcp.CallToolResult{

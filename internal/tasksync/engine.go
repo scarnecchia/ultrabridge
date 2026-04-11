@@ -252,10 +252,11 @@ func (e *SyncEngine) reconcile(ctx context.Context, adapter DeviceAdapter) error
 					remoteID = r.RemoteID
 				}
 				if err := e.syncMap.Upsert(ctx, &SyncMapEntry{
-					TaskID:    c.TaskID,
-					AdapterID: adapterID,
-					RemoteID:  remoteID,
+					TaskID:     c.TaskID,
+					AdapterID:  adapterID,
+					RemoteID:   remoteID,
 					LastPushed: now,
+					LastPulled: now,
 				}); err != nil {
 					e.logger.Warn("upsert sync map after push failed", "task_id", c.TaskID, "error", err)
 				}

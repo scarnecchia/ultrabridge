@@ -78,10 +78,8 @@ func (s *Source) Start(ctx context.Context) error {
 	}
 
 	s.proc = processor.New(s.db, workerCfg)
-	if workerCfg.OCREnabled {
-		if err := s.proc.Start(ctx); err != nil {
-			return fmt.Errorf("start processor: %w", err)
-		}
+	if err := s.proc.Start(ctx); err != nil {
+		return fmt.Errorf("start processor: %w", err)
 	}
 
 	s.pl = pipeline.New(pipeline.Config{

@@ -47,7 +47,7 @@ func NewOCRClient(apiURL, apiKey, model, format string) *OCRClient {
 		apiKey: apiKey,
 		model:  model,
 		format: format,
-		client: &http.Client{Timeout: 60 * time.Second},
+		client: &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 

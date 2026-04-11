@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -363,7 +365,7 @@ func main() {
 	// TODO: Phase 6 will refactor handler to work directly with sources
 	var ns notestore.NoteStore
 	var pl web.FileScanner
-	var proc *processor.Store
+	var proc processor.Processor
 	var booxProc *booxpipeline.Processor
 	var booxNotesPath string
 	var snNotesPath string
@@ -431,6 +433,12 @@ func main() {
 		Prefix:  "/caldav",
 	}
 
+	// Generate a persistent internal loopback token for self-calls (MCP -> JSON API).
+	// Not stored in DB, strictly in-memory per process lifecycle.
+	internalTokenBytes := make([]byte, 32)
+	rand.Read(internalTokenBytes)
+	internalToken := hex.EncodeToString(internalTokenBytes)
+
 	authMW := auth.NewDynamic(func() (string, string) {
 		// Read credentials from DB on each request so changes from
 		// seed-user, setup page, or Settings UI take effect immediately.
@@ -445,8 +453,11 @@ func main() {
 		}
 		return u, h
 	})
-	// Enable bearer token auth (MCP tokens from Settings UI)
+	// Enable bearer token auth (MCP tokens from Settings UI + internal loopback)
 	authMW.SetTokenValidator(func(token string) error {
+		if token == internalToken {
+			return nil
+		}
 		_, err := mcpauth.ValidateToken(context.Background(), noteDB, token)
 		return err
 	})
@@ -457,6 +468,9 @@ func main() {
 	// Wire the broadcasting handler to capture logs
 	broadcastHandler := logging.NewBroadcastingHandler(logger.Handler(), broadcaster)
 	logger = slog.New(broadcastHandler)
+
+	// Set logger for auth middleware to enable verbose failure logging
+	authMW.SetLogger(logger, cfg.LogVerboseAPI)
 
 	mux := http.NewServeMux()
 	var webHandler *web.Handler // will be set later if web is enabled
@@ -480,6 +494,42 @@ func main() {
 		authMW.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/caldav/", http.StatusMovedPermanently)
 		})).ServeHTTP(w, r)
+	})
+
+	// MCP discovery for Claude/OAuth clients
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"mcp_endpoint": "/mcp",
+		})
+	})
+
+	// General OAuth discovery probes
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"providers": []string{"/mcp"},
+		})
+	})
+
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		// Detect host from request
+		host := r.Host
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		baseURL := scheme + "://" + host
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"issuer":                 baseURL,
+			"authorization_endpoint": baseURL + "/authorize",
+			"token_endpoint":         baseURL + "/token",
+			"response_types_supported": []string{"code"},
+			"grant_types_supported":    []string{"authorization_code"},
+			"token_endpoint_auth_methods_supported": []string{"none", "client_secret_post"},
+		})
 	})
 
 	// Wire Boox WebDAV server if Boox source is active
@@ -523,13 +573,20 @@ func main() {
 			ChatAPIURL:  cfg.ChatAPIURL,
 			ChatModel:   cfg.ChatModel,
 		}, cfg)
+
+		// OAuth2 flow for Claude.ai
+		// /authorize requires user auth (browser login)
+		mux.Handle("/authorize", authMW.Wrap(http.HandlerFunc(webHandler.HandleOAuthAuthorize)))
+		// /token is called by Claude's backend (no browser/user auth)
+		mux.HandleFunc("/token", webHandler.HandleOAuthToken)
+
 		mux.Handle("/", authMW.Wrap(webHandler))
 	}
 
 	// Wire MCP server at /mcp/ — speaks MCP protocol for Claude Web and other MCP clients.
 	// Tools proxy to the local JSON API using the same auth credentials.
 	{
-		mcpAPIClient := newMCPAPIClient("http://localhost"+bootstrapCfg.listenAddr, noteDB)
+		mcpAPIClient := newMCPAPIClient("http://localhost"+bootstrapCfg.listenAddr, internalToken, logger, cfg.LogVerboseAPI)
 		mcpServer := mcp.NewServer(&mcp.Implementation{
 			Name:    "ultrabridge-notes",
 			Version: "1.0.0",
@@ -538,8 +595,11 @@ func main() {
 		mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 			return mcpServer
 		}, nil)
-		mux.Handle("/mcp/", authMW.Wrap(http.StripPrefix("/mcp", mcpHandler)))
-		logger.Info("mcp server enabled", "path", "/mcp/")
+		// Register on both with and without trailing slash to avoid redirects
+		wrappedMCP := authMW.Wrap(http.StripPrefix("/mcp", mcpHandler))
+		mux.Handle("/mcp", wrappedMCP)
+		mux.Handle("/mcp/", wrappedMCP)
+		logger.Info("mcp server enabled", "path", "/mcp")
 	}
 
 	// Wire middleware layers: logging -> setup (outermost layer).

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/subtle"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -19,6 +20,8 @@ type TokenValidator func(token string) error
 type Middleware struct {
 	credsFn        CredentialFunc
 	tokenValidator TokenValidator
+	logger         *slog.Logger
+	verbose        bool
 }
 
 // New creates auth middleware with a static username and password hash.
@@ -33,6 +36,12 @@ func NewDynamic(fn CredentialFunc) *Middleware {
 	return &Middleware{credsFn: fn}
 }
 
+// SetLogger sets the logger and verbose flag for the middleware.
+func (m *Middleware) SetLogger(logger *slog.Logger, verbose bool) {
+	m.logger = logger
+	m.verbose = verbose
+}
+
 // SetTokenValidator adds bearer token validation to the auth chain.
 // When set, Authorization: Bearer <token> is checked before Basic Auth.
 func (m *Middleware) SetTokenValidator(v TokenValidator) {
@@ -45,23 +54,41 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Try bearer token first
 		if m.tokenValidator != nil {
-			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-				token := auth[len("Bearer "):]
+			if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+				token := authHeader[len("Bearer "):]
 				if m.tokenValidator(token) == nil {
 					next.ServeHTTP(w, r)
 					return
+				}
+				if m.verbose && m.logger != nil {
+					m.logger.Warn("auth failure: invalid bearer token", "remote_ip", r.RemoteAddr, "path", r.URL.Path)
 				}
 			}
 		}
 
 		// Fall back to Basic Auth
 		user, pass, ok := r.BasicAuth()
-		if ok && m.validBasic(user, pass) {
-			next.ServeHTTP(w, r)
-			return
+		if ok {
+			if m.validBasic(user, pass) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if m.verbose && m.logger != nil {
+				m.logger.Warn("auth failure: invalid basic credentials", "user", user, "remote_ip", r.RemoteAddr, "path", r.URL.Path)
+			}
+		} else if m.verbose && m.logger != nil && r.Header.Get("Authorization") != "" {
+			// They sent an Authorization header but it wasn't valid Bearer or Basic
+			m.logger.Warn("auth failure: malformed authorization header", "remote_ip", r.RemoteAddr, "path", r.URL.Path)
 		}
 
-		w.Header().Set("WWW-Authenticate", `Basic realm="UltraBridge"`)
+		if m.tokenValidator != nil {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="UltraBridge", Basic realm="UltraBridge"`)
+		} else {
+			w.Header().Set("WWW-Authenticate", `Basic realm="UltraBridge"`)
+		}
+		if m.verbose && m.logger != nil {
+			m.logger.Warn("auth failure: unauthorized request", "remote_ip", r.RemoteAddr, "path", r.URL.Path, "has_auth", r.Header.Get("Authorization") != "")
+		}
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 	})
 }

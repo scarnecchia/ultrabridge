@@ -22,7 +22,7 @@ func (s *Store) Scan(ctx context.Context) ([]string, error) {
 		return nil, nil
 	}
 
-	now := time.Now().Unix()
+	now := time.Now().UnixMilli()
 	var changed []string
 	seen := make(map[string]struct{})
 
@@ -137,7 +137,7 @@ func (s *Store) UpsertFile(ctx context.Context, path string) error {
 		return fmt.Errorf("UpsertFile rel: %w", err)
 	}
 	ft := ClassifyFileType(filepath.Ext(path))
-	now := time.Now().Unix()
+	now := time.Now().UnixMilli()
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO notes (path, rel_path, file_type, size_bytes, mtime, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)

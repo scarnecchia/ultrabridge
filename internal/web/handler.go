@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -257,6 +258,10 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 	h.mux.HandleFunc("POST /settings/save", h.handleSettingsSave)
 	if h.embedder != nil && h.embedStore != nil {
 		h.mux.HandleFunc("POST /settings/backfill-embeddings", h.handleBackfillEmbeddings)
+	} else {
+		h.mux.HandleFunc("POST /settings/backfill-embeddings", func(w http.ResponseWriter, r *http.Request) {
+			http.NotFound(w, r)
+		})
 	}
 	if h.noteDB != nil {
 		h.mux.HandleFunc("POST /settings/mcp-tokens/create", h.handleMCPTokenCreate)
@@ -291,6 +296,16 @@ func NewHandler(store ubcaldav.TaskStore, notifier ubcaldav.SyncNotifier, noteSt
 		h.mux.HandleFunc("GET /api/search", h.handleAPISearch)
 		h.mux.HandleFunc("GET /api/notes/pages", h.handleAPIGetPages)
 		h.mux.HandleFunc("GET /api/notes/pages/image", h.handleAPIGetImage)
+	} else {
+		h.mux.HandleFunc("GET /api/search", func(w http.ResponseWriter, r *http.Request) {
+			http.NotFound(w, r)
+		})
+		h.mux.HandleFunc("GET /api/notes/pages", func(w http.ResponseWriter, r *http.Request) {
+			http.NotFound(w, r)
+		})
+		h.mux.HandleFunc("GET /api/notes/pages/image", func(w http.ResponseWriter, r *http.Request) {
+			http.NotFound(w, r)
+		})
 	}
 
 	// Config and sources API endpoints
@@ -547,6 +562,57 @@ func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxImportOnyxPaths, importOnyxPaths); err != nil {
 				h.logger.Error("save setting", "key", appconfig.KeyBooxImportOnyxPaths, "error", err)
+			}
+		case "general":
+			// RAG / Embedding
+			embedEnabled := "false"
+			if r.FormValue("embed_enabled") == "true" {
+				embedEnabled = "true"
+			}
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyEmbedEnabled, embedEnabled); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyEmbedEnabled, "error", err)
+			}
+			ollamaURL := r.FormValue("ollama_url")
+			if ollamaURL != "" {
+				if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyOllamaURL, ollamaURL); err != nil {
+					h.logger.Error("save setting", "key", appconfig.KeyOllamaURL, "error", err)
+				}
+			}
+			ollamaModel := r.FormValue("ollama_embed_model")
+			if ollamaModel != "" {
+				if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyOllamaEmbedModel, ollamaModel); err != nil {
+					h.logger.Error("save setting", "key", appconfig.KeyOllamaEmbedModel, "error", err)
+				}
+			}
+
+			// Chat
+			chatEnabled := "false"
+			if r.FormValue("chat_enabled") == "true" {
+				chatEnabled = "true"
+			}
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyChatEnabled, chatEnabled); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyChatEnabled, "error", err)
+			}
+			chatAPIURL := r.FormValue("chat_api_url")
+			if chatAPIURL != "" {
+				if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyChatAPIURL, chatAPIURL); err != nil {
+					h.logger.Error("save setting", "key", appconfig.KeyChatAPIURL, "error", err)
+				}
+			}
+			chatModel := r.FormValue("chat_model")
+			if chatModel != "" {
+				if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyChatModel, chatModel); err != nil {
+					h.logger.Error("save setting", "key", appconfig.KeyChatModel, "error", err)
+				}
+			}
+
+			// Logging
+			verboseAPI := "false"
+			if r.FormValue("log_verbose_api") == "true" {
+				verboseAPI = "true"
+			}
+			if err := notedb.SetSetting(ctx, h.noteDB, appconfig.KeyLogVerboseAPI, verboseAPI); err != nil {
+				h.logger.Error("save setting", "key", appconfig.KeyLogVerboseAPI, "error", err)
 			}
 		}
 	}
@@ -845,6 +911,10 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 			if bn.UpdatedAt > 0 {
 				mtime = time.UnixMilli(bn.UpdatedAt)
 			}
+			var ctime time.Time
+			if bn.CreatedAt > 0 {
+				ctime = time.UnixMilli(bn.CreatedAt)
+			}
 			var sizeBytes int64
 			if info, err := os.Stat(bn.Path); err == nil {
 				sizeBytes = info.Size()
@@ -861,6 +931,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 				FileType:   notestore.FileTypeNote,
 				SizeBytes:  sizeBytes,
 				MTime:      mtime,
+				CTime:      ctime,
 				JobStatus:  bn.JobStatus,
 				DeviceInfo: deviceInfo,
 			})
@@ -890,6 +961,60 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		files = filtered
 	}
+
+	// Sorting
+	sortField := strings.TrimSpace(r.URL.Query().Get("sort"))
+	if sortField == "" {
+		sortField = "name" // default
+	}
+	sortOrder := strings.TrimSpace(r.URL.Query().Get("order"))
+	if sortOrder == "" {
+		sortOrder = "asc" // default
+	}
+	
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].IsDir != files[j].IsDir {
+			return files[i].IsDir
+		}
+		
+		var cmp int
+		switch sortField {
+		case "created":
+			if files[i].CTime.Equal(files[j].CTime) {
+				cmp = strings.Compare(files[i].Name, files[j].Name)
+			} else if files[i].CTime.Before(files[j].CTime) {
+				cmp = -1
+			} else {
+				cmp = 1
+			}
+		case "modified":
+			if files[i].MTime.Equal(files[j].MTime) {
+				cmp = strings.Compare(files[i].Name, files[j].Name)
+			} else if files[i].MTime.Before(files[j].MTime) {
+				cmp = -1
+			} else {
+				cmp = 1
+			}
+		case "size":
+			if files[i].SizeBytes == files[j].SizeBytes {
+				cmp = strings.Compare(files[i].Name, files[j].Name)
+			} else if files[i].SizeBytes < files[j].SizeBytes {
+				cmp = -1
+			} else {
+				cmp = 1
+			}
+		default: // "name"
+			cmp = strings.Compare(files[i].Name, files[j].Name)
+		}
+		
+		if sortOrder == "desc" {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+	
+	data["filesSort"] = sortField
+	data["filesOrder"] = sortOrder
 
 	// Pagination. Query param overrides cookie; cookie persists preference.
 	perPage := 25
@@ -1627,4 +1752,63 @@ func (h *Handler) handleMCPTokenRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/settings#mcp-tokens", http.StatusSeeOther)
+}
+
+// HandleOAuthAuthorize handles the first leg of Claude's OAuth flow.
+// It skips user consent and immediately redirects back with a fixed code.
+func (h *Handler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
+	redirectURI := r.URL.Query().Get("redirect_uri")
+	state := r.URL.Query().Get("state")
+
+	if redirectURI == "" {
+		http.Error(w, "missing redirect_uri", http.StatusBadRequest)
+		return
+	}
+
+	target, err := url.Parse(redirectURI)
+	if err != nil {
+		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
+		return
+	}
+
+	q := target.Query()
+	q.Set("code", "mcp-fixed-flow-code")
+	if state != "" {
+		q.Set("state", state)
+	}
+	target.RawQuery = q.Encode()
+
+	h.logger.Info("OAuth authorize: redirecting to client", "target", target.String())
+	http.Redirect(w, r, target.String(), http.StatusFound)
+}
+
+// HandleOAuthToken handles the token exchange leg of Claude's OAuth flow.
+// It ignores the code and returns a new persistent MCP bearer token.
+func (h *Handler) HandleOAuthToken(w http.ResponseWriter, r *http.Request) {
+	// Claude sends form-encoded data
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// Generate a new persistent bearer token for this connection.
+	// We label it "Claude-OAuth" so the user can identify it in Settings.
+	rawToken, _, err := mcpauth.CreateToken(ctx, h.noteDB, "Claude-OAuth")
+	if err != nil {
+		h.logger.Error("OAuth token: failed to create bearer token", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Info("OAuth token: issued new bearer token for Claude")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"access_token": rawToken,
+		"token_type":   "Bearer",
+		"expires_in":   315360000, // 10 years (effectively permanent)
+	})
 }

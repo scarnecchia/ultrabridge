@@ -64,6 +64,7 @@ type Config struct {
 	LogFileMaxAge    int
 	LogFileMaxBackup int
 	LogSyslogAddr    string
+	LogVerboseAPI    bool
 
 	// CalDAV
 	CalDAVCollectionName string
@@ -150,6 +151,7 @@ func loadConfigFromDB(ctx context.Context, db *sql.DB, applyEnv bool) (*Config, 
 		LogFileMaxAge:        parseIntWithDefault(dbVals[KeyLogFileMaxAge], 30),
 		LogFileMaxBackup:     parseIntWithDefault(dbVals[KeyLogFileMaxBackup], 5),
 		LogSyslogAddr:        dbVals[KeyLogSyslogAddr],
+		LogVerboseAPI:        parseBool(dbVals[KeyLogVerboseAPI]),
 		CalDAVCollectionName: dbVals[KeyCalDAVCollectionName],
 		DueTimeMode:          dbVals[KeyDueTimeMode],
 		WebEnabled:           parseBool(dbVals[KeyWebEnabled]),
@@ -275,6 +277,7 @@ func configToMap(cfg *Config) map[string]string {
 		KeyLogFileMaxAge:        strconv.Itoa(cfg.LogFileMaxAge),
 		KeyLogFileMaxBackup:     strconv.Itoa(cfg.LogFileMaxBackup),
 		KeyLogSyslogAddr:        cfg.LogSyslogAddr,
+		KeyLogVerboseAPI:        boolToString(cfg.LogVerboseAPI),
 		KeyCalDAVCollectionName: cfg.CalDAVCollectionName,
 		KeyDueTimeMode:          cfg.DueTimeMode,
 		KeyWebEnabled:           boolToString(cfg.WebEnabled),

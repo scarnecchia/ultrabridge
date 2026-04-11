@@ -38,10 +38,12 @@ const (
 	KeyLogFile          = "log_file"
 	KeyLogFileMaxMB     = "log_file_max_mb"
 	KeyLogFileMaxAge    = "log_file_max_age_days"
-	KeyLogFileMaxBackup = "log_file_max_backups"
+	KeyLogFileMaxBackup = "log_file_max_backup"
 	KeyLogSyslogAddr    = "log_syslog_addr"
+	KeyLogVerboseAPI    = "log_verbose_api"
 
 	// CalDAV
+
 	KeyCalDAVCollectionName = "caldav_collection_name"
 	KeyDueTimeMode          = "due_time_mode"
 
@@ -100,6 +102,7 @@ var envVarForKey = map[string]string{
 	KeyLogFileMaxAge:        "UB_LOG_FILE_MAX_AGE_DAYS",
 	KeyLogFileMaxBackup:     "UB_LOG_FILE_MAX_BACKUPS",
 	KeyLogSyslogAddr:        "UB_LOG_SYSLOG_ADDR",
+	KeyLogVerboseAPI:        "UB_LOG_VERBOSE_API",
 	KeyCalDAVCollectionName: "UB_CALDAV_COLLECTION_NAME",
 	KeyDueTimeMode:          "UB_DUE_TIME_MODE",
 	KeyWebEnabled:           "UB_WEB_ENABLED",

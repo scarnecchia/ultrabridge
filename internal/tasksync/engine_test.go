@@ -575,6 +575,11 @@ func TestSyncEngine_RemoteHardDelete(t *testing.T) {
 	engine.TriggerSync()
 	waitForSync(t, engine, beforeTs)
 
+	// Intermediate sync - task is pulled, updating LastPulled>0
+	beforeTsMid := engine.Status().LastSyncAt
+	engine.TriggerSync()
+	waitForSync(t, engine, beforeTsMid)
+
 	// Verify task exists before remote delete
 	task, err := store.Get(ctx, taskID)
 	if err != nil {
