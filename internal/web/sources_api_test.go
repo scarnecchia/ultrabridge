@@ -12,7 +12,9 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/sysop/ultrabridge/internal/appconfig"
 	"github.com/sysop/ultrabridge/internal/logging"
+	"github.com/sysop/ultrabridge/internal/service"
 	"github.com/sysop/ultrabridge/internal/source"
 )
 
@@ -42,19 +44,30 @@ func initSourceTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+func setupTestHandler(t *testing.T, db *sql.DB) *Handler {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	cfgService := service.NewConfigService(db, nil, &appconfig.Config{})
+
+	return NewHandler(
+		&mockTaskService{},
+		&mockNoteService{},
+		&mockSearchService{},
+		cfgService,
+		db,
+		"",
+		"",
+		logger,
+		broadcaster,
+	)
+}
+
 // TestListSourcesEmpty verifies listing sources when empty.
 func TestListSourcesEmpty(t *testing.T) {
 	db := initSourceTestDB(t)
 	defer db.Close()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	broadcaster := logging.NewLogBroadcaster()
-	h := &Handler{
-		noteDB:        db,
-		logger:        logger,
-		broadcaster:   broadcaster,
-		runningConfig: nil,
-	}
+	h := setupTestHandler(t, db)
 
 	req := httptest.NewRequest("GET", "/api/sources", nil)
 	w := httptest.NewRecorder()
@@ -79,14 +92,7 @@ func TestAddSourceValidation(t *testing.T) {
 	db := initSourceTestDB(t)
 	defer db.Close()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	broadcaster := logging.NewLogBroadcaster()
-	h := &Handler{
-		noteDB:        db,
-		logger:        logger,
-		broadcaster:   broadcaster,
-		runningConfig: nil,
-	}
+	h := setupTestHandler(t, db)
 
 	tests := []struct {
 		name        string
@@ -141,19 +147,12 @@ func TestAddSourceValidation(t *testing.T) {
 	}
 }
 
-// TestAddSourceSucceedsAndReturnsID verifies POST /api/sources creates a source.
-func TestAddSourceSucceedsAndReturnsID(t *testing.T) {
+// TestAddSourceSucceeds verifies POST /api/sources creates a source and requires restart.
+func TestAddSourceSucceeds(t *testing.T) {
 	db := initSourceTestDB(t)
 	defer db.Close()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	broadcaster := logging.NewLogBroadcaster()
-	h := &Handler{
-		noteDB:        db,
-		logger:        logger,
-		broadcaster:   broadcaster,
-		runningConfig: nil,
-	}
+	h := setupTestHandler(t, db)
 
 	row := source.SourceRow{
 		Type:       "supernote",
@@ -171,13 +170,17 @@ func TestAddSourceSucceedsAndReturnsID(t *testing.T) {
 		t.Logf("body: %s", w.Body.String())
 	}
 
-	var result map[string]int64
+	var result map[string]string
 	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if result["id"] == 0 {
-		t.Error("id = 0, want non-zero")
+	if result["status"] != "ok" {
+		t.Errorf("status = %q, want 'ok'", result["status"])
+	}
+
+	if !h.config.IsRestartRequired() {
+		t.Error("IsRestartRequired() = false, want true after adding source")
 	}
 
 	// Verify it was saved by listing
@@ -201,14 +204,7 @@ func TestUpdateSourceValidation(t *testing.T) {
 	db := initSourceTestDB(t)
 	defer db.Close()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	broadcaster := logging.NewLogBroadcaster()
-	h := &Handler{
-		noteDB:        db,
-		logger:        logger,
-		broadcaster:   broadcaster,
-		runningConfig: nil,
-	}
+	h := setupTestHandler(t, db)
 
 	// Add a source first
 	ctx := context.Background()
@@ -238,14 +234,7 @@ func TestUpdateSourceSucceeds(t *testing.T) {
 	db := initSourceTestDB(t)
 	defer db.Close()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	broadcaster := logging.NewLogBroadcaster()
-	h := &Handler{
-		noteDB:        db,
-		logger:        logger,
-		broadcaster:   broadcaster,
-		runningConfig: nil,
-	}
+	h := setupTestHandler(t, db)
 
 	// Add a source
 	ctx := context.Background()
@@ -263,14 +252,19 @@ func TestUpdateSourceSucceeds(t *testing.T) {
 		Enabled: true,
 	}
 	body, _ := json.Marshal(update)
-	req := httptest.NewRequest("PUT", "/api/sources/1", bytes.NewReader(body))
-	req.SetPathValue("id", "1")
+	idStr := strconv.FormatInt(id, 10)
+	req := httptest.NewRequest("PUT", "/api/sources/"+idStr, bytes.NewReader(body))
+	req.SetPathValue("id", idStr)
 	w := httptest.NewRecorder()
 	h.handleUpdateSource(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", w.Code)
 		t.Logf("body: %s", w.Body.String())
+	}
+
+	if !h.config.IsRestartRequired() {
+		t.Error("IsRestartRequired() = false, want true after updating source")
 	}
 
 	// Verify the update
@@ -297,30 +291,28 @@ func TestDeleteSourceSucceeds(t *testing.T) {
 	db := initSourceTestDB(t)
 	defer db.Close()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	broadcaster := logging.NewLogBroadcaster()
-	h := &Handler{
-		noteDB:        db,
-		logger:        logger,
-		broadcaster:   broadcaster,
-		runningConfig: nil,
-	}
+	h := setupTestHandler(t, db)
 
 	// Add a source
 	ctx := context.Background()
-	_, _ = source.AddSource(ctx, db, source.SourceRow{
+	id, _ := source.AddSource(ctx, db, source.SourceRow{
 		Type: "supernote",
 		Name: "ToDelete",
 	})
 
 	// Delete it
-	req := httptest.NewRequest("DELETE", "/api/sources/1", nil)
-	req.SetPathValue("id", "1")
+	idStr := strconv.FormatInt(id, 10)
+	req := httptest.NewRequest("DELETE", "/api/sources/"+idStr, nil)
+	req.SetPathValue("id", idStr)
 	w := httptest.NewRecorder()
 	h.handleDeleteSource(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", w.Code)
+	}
+
+	if !h.config.IsRestartRequired() {
+		t.Error("IsRestartRequired() = false, want true after deleting source")
 	}
 
 	// Verify it's gone
@@ -341,21 +333,19 @@ func TestDeleteSourceNotFound(t *testing.T) {
 	db := initSourceTestDB(t)
 	defer db.Close()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	broadcaster := logging.NewLogBroadcaster()
-	h := &Handler{
-		noteDB:        db,
-		logger:        logger,
-		broadcaster:   broadcaster,
-		runningConfig: nil,
-	}
+	h := setupTestHandler(t, db)
 
 	req := httptest.NewRequest("DELETE", "/api/sources/999", nil)
 	req.SetPathValue("id", "999")
 	w := httptest.NewRecorder()
 	h.handleDeleteSource(w, req)
 
+	// Note: Currently handleDeleteSource returns 200 "ok" even if ID not found 
+	// because config.DeleteSource doesn't check rows affected.
+	// If the test still wants 404, we might need to adjust implementation.
+	// For now, let's see what happens.
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", w.Code)
 	}
 }
+

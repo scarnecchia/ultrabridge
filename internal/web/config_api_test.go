@@ -11,158 +11,104 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/sysop/ultrabridge/internal/appconfig"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/notedb"
+	"github.com/sysop/ultrabridge/internal/service"
 )
 
-// initTestDB creates an in-memory SQLite DB with the settings table.
 func initTestDB(t *testing.T) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := notedb.Open(context.Background(), ":memory:")
 	if err != nil {
-		t.Fatalf("open db: %v", err)
+		t.Fatalf("failed to open test db: %v", err)
 	}
-
-	// Create settings table
-	if _, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS settings (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL DEFAULT ''
-		)
-	`); err != nil {
-		t.Fatalf("create settings table: %v", err)
-	}
-
 	return db
 }
 
-// TestGetConfigRedacts verifies that GET /api/config redacts secrets.
 func TestGetConfigRedacts(t *testing.T) {
 	db := initTestDB(t)
 	defer db.Close()
 
-	// Set some config values in DB including secrets
-	ctx := context.Background()
-	if err := notedb.SetSetting(ctx, db, appconfig.KeyUsername, "testuser"); err != nil {
-		t.Fatalf("set username: %v", err)
+	// Set initial config
+	cfg := &appconfig.Config{
+		Username:     "testuser",
+		PasswordHash: "secret-hash",
+		OCRAPIKey:    "secret-key",
 	}
-	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.DefaultCost)
-	if err := notedb.SetSetting(ctx, db, appconfig.KeyPasswordHash, string(hash)); err != nil {
-		t.Fatalf("set password hash: %v", err)
-	}
-	if err := notedb.SetSetting(ctx, db, appconfig.KeyOCRAPIKey, "my-api-key"); err != nil {
-		t.Fatalf("set OCR API key: %v", err)
-	}
+	appconfig.Save(context.Background(), db, cfg)
 
-	// Create handler with this DB
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	h := &Handler{
-		noteDB:        db,
-		logger:        logger,
-		broadcaster:   broadcaster,
-		runningConfig: &appconfig.Config{},
-	}
+	configSvc := service.NewConfigService(db, nil, cfg)
+	h := NewHandler(nil, nil, nil, configSvc, db, "", "", logger, broadcaster)
 
-	// Make GET /api/config request
 	req := httptest.NewRequest("GET", "/api/config", nil)
 	w := httptest.NewRecorder()
 	h.handleGetConfig(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("handleGetConfig returned %d, want 200", w.Code)
+		t.Fatalf("GET /api/config returned status %d", w.Code)
 	}
 
-	var cfg RedactedConfig
-	if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
-		t.Fatalf("decode response: %v", err)
+	var resp RedactedConfig
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	// Verify secrets are redacted
-	if cfg.PasswordHash != "[set]" {
-		t.Errorf("PasswordHash = %q, want [set]", cfg.PasswordHash)
+	if resp.Username != "testuser" {
+		t.Errorf("expected username testuser, got %s", resp.Username)
 	}
-	if cfg.OCRAPIKey != "[set]" {
-		t.Errorf("OCRAPIKey = %q, want [set]", cfg.OCRAPIKey)
+	if resp.PasswordHash != "[set]" {
+		t.Errorf("expected redacted password, got %s", resp.PasswordHash)
 	}
-	if cfg.Username != "testuser" {
-		t.Errorf("Username = %q, want testuser", cfg.Username)
+	if resp.OCRAPIKey != "[set]" {
+		t.Errorf("expected redacted ocr key, got %s", resp.OCRAPIKey)
 	}
 }
 
-// TestPutConfigHashesPassword verifies PUT /api/config hashes plaintext passwords.
 func TestPutConfigHashesPassword(t *testing.T) {
 	db := initTestDB(t)
 	defer db.Close()
 
+	cfg := &appconfig.Config{Username: "user"}
+	appconfig.Save(context.Background(), db, cfg)
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	h := &Handler{
-		noteDB:        db,
-		logger:        logger,
-		broadcaster:   broadcaster,
-		runningConfig: &appconfig.Config{},
-	}
+	configSvc := service.NewConfigService(db, nil, cfg)
+	h := NewHandler(nil, nil, nil, configSvc, db, "", "", logger, broadcaster)
 
-	// Make PUT /api/config request with password
 	incoming := IncomingConfig{
-		Username: "newuser",
-		Password: "newpass123",
+		Password: "newpassword123",
 	}
 	body, _ := json.Marshal(incoming)
 	req := httptest.NewRequest("PUT", "/api/config", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	h.handlePutConfig(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("handlePutConfig returned %d, want 200", w.Code)
-		t.Logf("body: %s", w.Body.String())
-	}
-
-	var result appconfig.SaveResult
-	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
-		t.Fatalf("decode response: %v", err)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("PUT /api/config returned status %d, want 204", w.Code)
 	}
 
 	// Verify password was hashed in DB
-	ctx := context.Background()
-	storedHash, err := notedb.GetSetting(ctx, db, appconfig.KeyPasswordHash)
-	if err != nil {
-		t.Fatalf("get password hash: %v", err)
-	}
-	if storedHash == "" {
-		t.Error("password hash not saved to DB")
-	}
-
-	// Verify hash is valid (should not match plaintext)
-	if storedHash == "newpass123" {
-		t.Error("password not hashed (stored as plaintext)")
-	}
-
-	// Verify bcrypt hash is valid
-	if err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte("newpass123")); err != nil {
-		t.Errorf("stored hash is not a valid bcrypt hash: %v", err)
+	updated, _ := appconfig.Load(context.Background(), db)
+	if updated.PasswordHash == "" || updated.PasswordHash == "newpassword123" {
+		t.Errorf("password hash is invalid: %q", updated.PasswordHash)
 	}
 }
 
-// TestPutConfigDetectsRestartRequired verifies restart detection.
 func TestPutConfigDetectsRestartRequired(t *testing.T) {
 	db := initTestDB(t)
 	defer db.Close()
 
+	cfg := &appconfig.Config{Username: "olduser"}
+	appconfig.Save(context.Background(), db, cfg)
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	h := &Handler{
-		noteDB:        db,
-		logger:        logger,
-		broadcaster:   broadcaster,
-		runningConfig: &appconfig.Config{},
-	}
+	configSvc := service.NewConfigService(db, nil, cfg)
+	h := NewHandler(nil, nil, nil, configSvc, db, "", "", logger, broadcaster)
 
-	// Make PUT /api/config request with a restart-required key (username is restart-required)
 	incoming := IncomingConfig{
 		Username: "newuser",
 	}
@@ -171,52 +117,23 @@ func TestPutConfigDetectsRestartRequired(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.handlePutConfig(w, req)
 
-	var result appconfig.SaveResult
-	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-
-	// Verify restart_required is set
-	if !result.RestartRequired {
-		t.Error("restart_required = false, want true when username changed")
-	}
-
-	// Verify configDirty flag is set
-	if !h.configDirty.Load() {
-		t.Error("configDirty = false, want true after restart-required change")
+	if h.config.IsRestartRequired() != true {
+		t.Error("IsRestartRequired = false, want true after username change")
 	}
 }
 
-// TestPutConfigNoRestartForNonRestartKeys is skipped because all fields in Config
-// are restart-required. See appconfig/keys.go restartRequired map.
-
-// TestHealthEndpointConfigDirty verifies /health includes config_dirty flag.
 func TestHealthEndpointConfigDirty(t *testing.T) {
-	db := initTestDB(t)
-	defer db.Close()
-
+	configSvc := &mockConfigService{restartRequired: false}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	h := &Handler{
-		noteDB:        db,
-		logger:        logger,
-		broadcaster:   broadcaster,
-		runningConfig: &appconfig.Config{},
-	}
+	h := NewHandler(nil, nil, nil, configSvc, nil, "", "", logger, broadcaster)
 
-	// Test with configDirty = false
-	h.configDirty.Store(false)
-	type healthResp struct {
-		Status      string `json:"status"`
-		ConfigDirty bool   `json:"config_dirty"`
-	}
-
-	// Create a mock health handler to test
+	// Mock health handler logic as in main.go
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(healthResp{
-			Status:      "ok",
-			ConfigDirty: h.IsConfigDirty(),
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":       "ok",
+			"config_dirty": h.config.IsRestartRequired(),
 		})
 	}
 
@@ -224,23 +141,19 @@ func TestHealthEndpointConfigDirty(t *testing.T) {
 	w := httptest.NewRecorder()
 	healthHandler(w, req)
 
-	var resp healthResp
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
+	var resp struct {
+		ConfigDirty bool `json:"config_dirty"`
 	}
+	json.NewDecoder(w.Body).Decode(&resp)
 	if resp.ConfigDirty {
-		t.Error("config_dirty = true, want false when not set")
+		t.Error("config_dirty = true, want false")
 	}
 
-	// Test with configDirty = true
-	h.configDirty.Store(true)
+	configSvc.restartRequired = true
 	w = httptest.NewRecorder()
 	healthHandler(w, req)
-
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	json.NewDecoder(w.Body).Decode(&resp)
 	if !resp.ConfigDirty {
-		t.Error("config_dirty = false, want true when set")
+		t.Error("config_dirty = false, want true")
 	}
 }

@@ -57,7 +57,7 @@ func TestSearchPage_SourceBadges(t *testing.T) {
 	booxNotesPath := "/boox"
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(
+	handler := LegacyNewHandler(
 		newMockTaskStore(),
 		&mockNotifier{},
 		newMockNoteStore(),

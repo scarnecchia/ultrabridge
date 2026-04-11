@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -19,11 +21,15 @@ import (
 	"github.com/sysop/ultrabridge/internal/appconfig"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/mcpauth"
+	"github.com/sysop/ultrabridge/internal/notedb"
 	"github.com/sysop/ultrabridge/internal/service"
 )
 
 //go:embed templates
 var templateFS embed.FS
+
+//go:embed static
+var staticFS embed.FS
 
 type Handler struct {
 	tasks    service.TaskService
@@ -31,29 +37,55 @@ type Handler struct {
 	search   service.SearchService
 	config   service.ConfigService
 	
-	noteDB      *sql.DB // for settings directly (mcp tokens)
-	tmpl        *template.Template
-	mux         *http.ServeMux
-	logger      *slog.Logger
-	broadcaster *logging.LogBroadcaster
+	noteDB          *sql.DB // for settings directly (mcp tokens)
+	notesPathPrefix string
+	booxNotesPath   string
+	booxImportPath  string
+	tmpl            *template.Template
+	mux             *http.ServeMux
+	logger          *slog.Logger
+	broadcaster     *logging.LogBroadcaster
 }
 
-// formatDueTime converts a millisecond Unix timestamp to a formatted date string.
-func formatDueTime(ms int64) string {
-	if ms == 0 {
+// formatDueTime converts a due date to a formatted string.
+func formatDueTime(val interface{}) string {
+	var t time.Time
+	switch v := val.(type) {
+	case int64:
+		if v == 0 { return "No due date" }
+		t = time.UnixMilli(v).UTC()
+	case *time.Time:
+		if v == nil { return "No due date" }
+		t = *v
+	case time.Time:
+		if v.IsZero() { return "No due date" }
+		t = v
+	default:
 		return "No due date"
 	}
-	t := time.UnixMilli(ms).UTC()
 	return t.Format("2006-01-02")
 }
 
-// formatCreated converts the CompletedTime (which per Supernote quirk holds creation time)
-// to a human-readable date.
-func formatCreated(ct sql.NullInt64) string {
-	if !ct.Valid || ct.Int64 == 0 {
+// formatCreated converts a time value to a human-readable date.
+func formatCreated(val interface{}) string {
+	var t time.Time
+	switch v := val.(type) {
+	case int64:
+		if v == 0 { return "-" }
+		t = time.UnixMilli(v).UTC()
+	case *time.Time:
+		if v == nil { return "-" }
+		t = *v
+	case time.Time:
+		if v.IsZero() { return "-" }
+		t = v
+	case sql.NullInt64:
+		if !v.Valid || v.Int64 == 0 { return "-" }
+		t = time.UnixMilli(v.Int64).UTC()
+	default:
 		return "-"
 	}
-	return time.UnixMilli(ct.Int64).UTC().Format("2006-01-02")
+	return t.Format("2006-01-02")
 }
 
 // NewHandler creates a new web handler with embedded templates.
@@ -63,18 +95,27 @@ func NewHandler(
 	search service.SearchService,
 	config service.ConfigService,
 	noteDB *sql.DB,
+	notesPathPrefix string,
+	booxNotesPath string,
 	logger *slog.Logger,
 	broadcaster *logging.LogBroadcaster,
 ) *Handler {
 	h := &Handler{
-		tasks:       tasks,
-		notes:       notes,
-		search:      search,
-		config:      config,
-		noteDB:      noteDB,
-		logger:      logger,
-		broadcaster: broadcaster,
-		mux:         http.NewServeMux(),
+		tasks:           tasks,
+		notes:           notes,
+		search:          search,
+		config:          config,
+		noteDB:          noteDB,
+		notesPathPrefix: notesPathPrefix,
+		booxNotesPath:   booxNotesPath,
+		logger:          logger,
+		broadcaster:     broadcaster,
+		mux:             http.NewServeMux(),
+	}
+
+	// Cache the import path for the noteSource template function.
+	if noteDB != nil {
+		h.booxImportPath, _ = notedb.GetSetting(context.Background(), noteDB, appconfig.KeyBooxImportPath)
 	}
 
 	// Parse the embedded templates with custom function map
@@ -87,10 +128,61 @@ func NewHandler(
 			}
 			return time.UnixMilli(ms).UTC().Format("2006-01-02 15:04")
 		},
+		"fileTypeStr": func(ft string) string { return ft },
+		"noteSource": func(path string) string {
+			if h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) {
+				return "Boox"
+			}
+			if h.booxImportPath != "" && strings.HasPrefix(path, h.booxImportPath) {
+				return "Boox"
+			}
+			return "Supernote"
+		},
 		"hasPrefix":  strings.HasPrefix,
 		"add":        func(a, b int) int { return a + b },
 		"sub":        func(a, b int) int { return a - b },
 		"trimPrefix": strings.TrimPrefix,
+		"taskLink": func(val interface{}) map[string]interface{} {
+			if val == nil { return nil }
+			
+			var link struct {
+				AppName  string `json:"appName"`
+				FilePath string `json:"filePath"`
+				Page     int    `json:"page"`
+			}
+
+			switch v := val.(type) {
+			case string:
+				if v == "" { return nil }
+				data, err := base64.StdEncoding.DecodeString(v)
+				if err != nil { return nil }
+				if err := json.Unmarshal(data, &link); err != nil { return nil }
+			case *service.TaskLink:
+				if v == nil { return nil }
+				link.AppName = v.AppName
+				link.FilePath = v.FilePath
+				link.Page = v.Page
+			case service.TaskLink:
+				link.AppName = v.AppName
+				link.FilePath = v.FilePath
+				link.Page = v.Page
+			default:
+				return nil
+			}
+
+			if link.FilePath == "" { return nil }
+			
+			// Map device path to local path.
+			const devicePrefix = "/storage/emulated/0/Note/"
+			localPath := link.FilePath
+			if h.notesPathPrefix != "" && strings.HasPrefix(link.FilePath, devicePrefix) {
+				localPath = filepath.Join(h.notesPathPrefix, link.FilePath[len(devicePrefix):])
+			}
+			return map[string]interface{}{
+				"Path": localPath,
+				"Page": link.Page,
+			}
+		},
 	}
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
@@ -101,7 +193,7 @@ func NewHandler(
 	// Register routes
 	h.mux.HandleFunc("GET /setup", h.handleSetup)
 	h.mux.HandleFunc("POST /setup/save", h.handleSetupSave)
-	h.mux.HandleFunc("GET /", h.handleIndex)
+	h.mux.HandleFunc("GET /{$}", h.handleIndex)
 	h.mux.HandleFunc("POST /tasks", h.handleCreateTask)
 	h.mux.HandleFunc("POST /tasks/{id}/complete", h.handleCompleteTask)
 	h.mux.HandleFunc("POST /tasks/bulk", h.handleBulkAction)
@@ -109,7 +201,13 @@ func NewHandler(
 	h.mux.HandleFunc("GET /logs", h.handleLogs)
 	h.mux.HandleFunc("GET /settings", h.handleSettings)
 	h.mux.HandleFunc("POST /settings/save", h.handleSettingsSave)
-	h.mux.HandleFunc("POST /settings/backfill-embeddings", h.handleBackfillEmbeddings)
+	h.mux.HandleFunc("POST /settings/backfill-embeddings", func(w http.ResponseWriter, r *http.Request) {
+		if h.search == nil || !h.search.HasEmbeddingPipeline() {
+			http.NotFound(w, r)
+			return
+		}
+		h.handleBackfillEmbeddings(w, r)
+	})
 	
 	if h.noteDB != nil {
 		h.mux.HandleFunc("POST /settings/mcp-tokens/create", h.handleMCPTokenCreate)
@@ -136,12 +234,32 @@ func NewHandler(
 	h.mux.HandleFunc("POST /files/delete-note", h.handleFilesDeleteNote)
 	h.mux.HandleFunc("POST /files/delete-bulk", h.handleFilesDeleteBulk)
 	h.mux.HandleFunc("POST /files/migrate-imports", h.handleFilesMigrateImports)
-	h.mux.HandleFunc("GET /sync/status", h.handleSyncStatus)
-	h.mux.HandleFunc("POST /sync/trigger", h.handleSyncTrigger)
+	
+	h.mux.HandleFunc("GET /sync/status", func(w http.ResponseWriter, r *http.Request) {
+		if h.config == nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(service.SyncStatus{})
+			return
+		}
+		h.handleSyncStatus(w, r)
+	})
+	h.mux.HandleFunc("POST /sync/trigger", func(w http.ResponseWriter, r *http.Request) {
+		if h.config == nil || !h.config.HasSyncProvider() {
+			http.NotFound(w, r)
+			return
+		}
+		h.handleSyncTrigger(w, r)
+	})
 	h.registerLogStreamHandler(broadcaster)
 
 	// JSON API endpoints
-	h.mux.HandleFunc("GET /api/search", h.handleAPISearch)
+	h.mux.HandleFunc("GET /api/search", func(w http.ResponseWriter, r *http.Request) {
+		if h.search == nil {
+			http.NotFound(w, r)
+			return
+		}
+		h.handleAPISearch(w, r)
+	})
 	h.mux.HandleFunc("GET /api/notes/pages", h.handleAPIGetPages)
 	h.mux.HandleFunc("GET /api/notes/pages/image", h.handleAPIGetImage)
 
@@ -160,6 +278,13 @@ func NewHandler(
 	h.mux.HandleFunc("POST /chat/ask", h.handleAsk)
 	h.mux.HandleFunc("GET /chat/sessions", h.handleChatSessions)
 	h.mux.HandleFunc("GET /chat/messages", h.handleChatMessages)
+
+	// Static files (PWA)
+	h.mux.Handle("GET /manifest.json", http.FileServer(http.FS(staticFS)))
+	h.mux.Handle("GET /sw.js", http.FileServer(http.FS(staticFS)))
+	h.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	// Serve icons from root for manifest.json compatibility
+	h.mux.Handle("GET /erb.png", http.FileServer(http.FS(staticFS)))
 
 	return h
 }
@@ -224,12 +349,13 @@ func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
 		}
 	}
 
-	cfg, _ := h.config.GetConfig(ctx)
-	if c, ok := cfg.(*appconfig.Config); ok {
-		data["BooxNotesPath"] = c.DBEnvPath // or specific path from config
+	if h.config != nil {
+		cfg, _ := h.config.GetConfig(ctx)
+		if c, ok := cfg.(*appconfig.Config); ok {
+			data["BooxNotesPath"] = c.DBEnvPath // or specific path from config
+		}
+		data["RestartRequired"] = h.config.IsRestartRequired()
 	}
-
-	data["RestartRequired"] = h.config.IsRestartRequired()
 	
 	return data
 }
@@ -275,12 +401,16 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// MCP Tokens (mcp_tokens table managed directly for now)
-	tokens, err := mcpauth.ListTokens(ctx, h.noteDB)
-	if err != nil {
-		h.logger.Error("list mcp tokens", "error", err)
+	if h.noteDB != nil {
+		tokens, err := mcpauth.ListTokens(ctx, h.noteDB)
+		if err != nil {
+			h.logger.Error("list mcp tokens", "error", err)
+		}
+		data["MCPTokens"] = tokens
+		data["MCPTokensEnabled"] = true
+	} else {
+		data["MCPTokensEnabled"] = false
 	}
-	data["MCPTokens"] = tokens
-	data["MCPTokensEnabled"] = true
 
 	// One-time flash: display raw token after creation
 	if newToken := r.URL.Query().Get("new_token"); newToken != "" {
@@ -388,6 +518,10 @@ func (h *Handler) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 
 // handleCompleteTask marks a task as completed
 func (h *Handler) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
+	if h.tasks == nil {
+		http.NotFound(w, r)
+		return
+	}
 	taskID := r.PathValue("id")
 	if taskID == "" {
 		h.logger.Warn("complete task: task ID is required")
@@ -396,6 +530,11 @@ func (h *Handler) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.tasks.Complete(r.Context(), taskID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.logger.Warn("complete task: not found", "task_id", taskID)
+			http.Error(w, "task not found", http.StatusNotFound)
+			return
+		}
 		h.logger.Error("failed to complete task", "error", err, "task_id", taskID)
 		http.Error(w, "failed to complete task", http.StatusInternalServerError)
 		return
@@ -483,6 +622,10 @@ func safeRelPath(relPath string) (string, bool) {
 
 // handleBackfillEmbeddings triggers embedding backfill in the background.
 func (h *Handler) handleBackfillEmbeddings(w http.ResponseWriter, r *http.Request) {
+	if h.search == nil {
+		http.NotFound(w, r)
+		return
+	}
 	if err := h.search.TriggerBackfill(r.Context()); err != nil {
 		h.logger.Error("backfill failed", "err", err)
 	}
@@ -497,8 +640,21 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	data := h.baseTemplateData(ctx)
 	data["activeTab"] = "files"
 
+	if !h.notes.HasSupernoteSource() {
+		data["filesError"] = "No Supernote source configured. Add a source in Settings."
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
+			h.logger.Error("failed to render template", "error", err)
+		}
+		return
+	}
+
 	rawPath := r.URL.Query().Get("path")
-	relPath, _ := safeRelPath(rawPath)
+	relPath, ok := safeRelPath(rawPath)
+	if !ok {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
 	
 	sortField := r.URL.Query().Get("sort")
 	sortOrder := r.URL.Query().Get("order")
@@ -840,6 +996,10 @@ func (h *Handler) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
+	if h.config == nil {
+		http.NotFound(w, r)
+		return
+	}
 	h.config.TriggerSync(r.Context())
 	status, _ := h.config.GetSyncStatus(r.Context())
 	w.Header().Set("Content-Type", "application/json")
@@ -871,16 +1031,18 @@ func (h *Handler) handleBooxRender(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleBooxVersions(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	
-	// Note: Currently service doesn't have ListVersions, we might need to add it or use GetNoteDetails
-	details, err := h.notes.GetNoteDetails(r.Context(), path)
+	versions, err := h.notes.ListVersions(r.Context(), path)
 	if err != nil {
 		h.logger.Error("boox versions failed", "path", path, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	if versions == nil {
+		versions = []interface{}{}
+	}
 	
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(details)
+	json.NewEncoder(w).Encode(versions)
 }
 
 // handleMCPTokenCreate creates a new MCP bearer token and redirects with one-time display.

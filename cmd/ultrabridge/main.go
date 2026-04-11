@@ -372,6 +372,7 @@ func main() {
 	}
 
 	var booxNotesPath string
+	var snNotesPath string
 
 	// Build a map from source type to source row for extracting config
 	sourceRowMap := make(map[string]source.SourceRow)
@@ -380,6 +381,12 @@ func main() {
 	}
 
 	// Extract configs from source rows
+	if snRow, hasSupernote := sourceRowMap["supernote"]; hasSupernote {
+		var snCfg supernote.Config
+		if err := json.Unmarshal([]byte(snRow.ConfigJSON), &snCfg); err == nil {
+			snNotesPath = snCfg.NotesPath
+		}
+	}
 	if booxRow, hasBoox := sourceRowMap["boox"]; hasBoox {
 		var booxCfg boox.Config
 		if err := json.Unmarshal([]byte(booxRow.ConfigJSON), &booxCfg); err == nil {
@@ -570,8 +577,7 @@ func main() {
 		syncProvider := &syncProviderAdapter{engine: syncEngine}
 		configSvc = service.NewConfigService(noteDB, syncProvider, cfg)
 
-
-		webHandler = web.NewHandler(taskSvc, noteSvc, searchSvc, configSvc, noteDB, logger, broadcaster)
+		webHandler = web.NewHandler(taskSvc, noteSvc, searchSvc, configSvc, noteDB, snNotesPath, booxNotesPath, logger, broadcaster)
 
 		// OAuth2 flow for Claude.ai
 		// /authorize requires user auth (browser login)

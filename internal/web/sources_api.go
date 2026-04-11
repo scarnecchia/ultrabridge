@@ -1,7 +1,9 @@
 package web
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -41,6 +43,12 @@ func (h *Handler) handleAddSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate config_json is valid JSON if provided.
+	if row.ConfigJSON != "" && !json.Valid([]byte(row.ConfigJSON)) {
+		apiError(w, http.StatusBadRequest, "config_json must be valid JSON")
+		return
+	}
+
 	if err := h.config.AddSource(ctx, &row); err != nil {
 		h.logger.Error("add source", "error", err)
 		apiError(w, http.StatusInternalServerError, "failed to add source")
@@ -67,6 +75,22 @@ func (h *Handler) handleUpdateSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate required fields.
+	if strings.TrimSpace(row.Type) == "" {
+		apiError(w, http.StatusBadRequest, "type must be non-empty")
+		return
+	}
+	if strings.TrimSpace(row.Name) == "" {
+		apiError(w, http.StatusBadRequest, "name must be non-empty")
+		return
+	}
+
+	// Validate config_json is valid JSON if provided.
+	if row.ConfigJSON != "" && !json.Valid([]byte(row.ConfigJSON)) {
+		apiError(w, http.StatusBadRequest, "config_json must be valid JSON")
+		return
+	}
+
 	if err := h.config.UpdateSource(ctx, id, &row); err != nil {
 		h.logger.Error("update source", "error", err)
 		apiError(w, http.StatusInternalServerError, "failed to update source")
@@ -86,6 +110,10 @@ func (h *Handler) handleDeleteSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.config.DeleteSource(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			apiError(w, http.StatusNotFound, "source not found")
+			return
+		}
 		h.logger.Error("delete source", "error", err)
 		apiError(w, http.StatusInternalServerError, "failed to delete source")
 		return

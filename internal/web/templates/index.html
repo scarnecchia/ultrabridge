@@ -4,269 +4,438 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>UltraBridge</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0066cc">
+    <link rel="apple-touch-icon" href="/erb.png">
     <style>
+        :root {
+            --brand-color: #0066cc;
+            --brand-hover: #0052a3;
+            --bg-color: #f5f5f5;
+            --surface-color: #ffffff;
+            --text-primary: #1a1a1a;
+            --text-secondary: #666666;
+            --text-muted: #999999;
+            --border-color: #dddddd;
+            --border-light: #eeeeee;
+            --shadow: 0 2px 4px rgba(0,0,0,0.1);
+            --radius: 8px;
+            --spacing: 20px;
+            --sidebar-width: 240px;
+            
+            /* Badges */
+            --status-bg-pending: #fff3cd;
+            --status-text-pending: #856404;
+            --status-bg-done: #d1e7dd;
+            --status-text-done: #0f5132;
+            --status-bg-failed: #f8d7da;
+            --status-text-failed: #842029;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #121212;
+                --surface-color: #1e1e1e;
+                --text-primary: #e0e0e0;
+                --text-secondary: #aaaaaa;
+                --text-muted: #777777;
+                --border-color: #333333;
+                --border-light: #2a2a2a;
+                --shadow: 0 4px 6px rgba(0,0,0,0.3);
+            }
+        }
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: #f5f5f5;
-            color: #333;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-primary);
+            line-height: 1.5;
+            -webkit-tap-highlight-color: transparent;
         }
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        h1 {
-            color: #1a1a1a;
-            margin-bottom: 30px;
-            font-size: 28px;
-        }
-        .tabs {
+
+        .app-layout {
             display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #ddd;
+            min-height: 100vh;
         }
-        .tab-button {
-            background: none;
-            border: none;
-            padding: 12px 20px;
-            font-size: 16px;
-            cursor: pointer;
-            color: #666;
-            border-bottom: 3px solid transparent;
+
+        /* Sidebar Navigation */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--surface-color);
+            border-right: 1px solid var(--border-color);
+            padding: var(--spacing);
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            height: 100vh;
+            z-index: 10;
+        }
+
+        .sidebar h1 {
+            font-size: 1.5rem;
+            margin-bottom: 2rem;
+            color: var(--brand-color);
+        }
+
+        .nav-links {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            text-decoration: none;
+            color: var(--text-secondary);
+            border-radius: var(--radius);
+            font-weight: 500;
             transition: all 0.2s;
         }
-        .tab-button.active {
-            color: #0066cc;
-            border-bottom-color: #0066cc;
+
+        .nav-item:hover {
+            background: var(--bg-color);
+            color: var(--brand-color);
         }
-        .tab-button:hover {
-            color: #0066cc;
+
+        .nav-item.active {
+            background: var(--brand-color);
+            color: white;
         }
-        .tab-content {
-            display: none;
+
+        /* Main Content */
+        .content {
+            flex: 1;
+            margin-left: var(--sidebar-width);
+            padding: var(--spacing);
+            max-width: 1200px;
         }
-        .tab-content.active {
-            display: block;
-        }
+
         .card {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
+            background: var(--surface-color);
+            border-radius: var(--radius);
+            padding: var(--spacing);
+            box-shadow: var(--shadow);
+            margin-bottom: var(--spacing);
+            border: 1px solid var(--border-color);
         }
+
+        h2 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        /* Forms & Inputs */
         .form-group {
-            margin-bottom: 15px;
+            margin-bottom: 1rem;
         }
+
         label {
             display: block;
-            margin-bottom: 5px;
-            font-weight: 500;
-            color: #333;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            font-size: 0.9rem;
         }
-        input {
+
+        input[type="text"],
+        input[type="date"],
+        input[type="password"],
+        input[type="number"],
+        textarea,
+        select {
             width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
             border-radius: 4px;
-            font-size: 14px;
+            font-size: 1rem;
+            background: var(--surface-color);
+            color: var(--text-primary);
             font-family: inherit;
         }
-        input:focus {
+
+        input:focus, select:focus, textarea:focus {
             outline: none;
-            border-color: #0066cc;
-            box-shadow: 0 0 0 3px rgba(0,102,204,0.1);
+            border-color: var(--brand-color);
+            ring: 2px var(--brand-color);
         }
+
         button {
-            background: #0066cc;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--brand-color);
             color: white;
             border: none;
-            padding: 10px 20px;
-            border-radius: 4px;
-            font-size: 14px;
-            font-weight: 500;
+            padding: 0.75rem 1.5rem;
+            border-radius: var(--radius);
+            font-size: 1rem;
+            font-weight: 600;
             cursor: pointer;
             transition: background 0.2s;
+            min-height: 44px; /* Mobile touch target */
         }
-        button:hover {
-            background: #0052a3;
+
+        button:hover { background: var(--brand-hover); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .btn-small {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.85rem;
+            min-height: 32px;
         }
-        button:active {
-            background: #004080;
-        }
+
+        /* Tables */
         .table-container {
             overflow-x: auto;
+            margin: 0 -1rem;
+            padding: 0 1rem;
         }
+
         table {
             width: 100%;
             border-collapse: collapse;
+            font-size: 0.95rem;
         }
+
         th {
-            background: #f9f9f9;
-            padding: 12px;
             text-align: left;
+            padding: 1rem 0.5rem;
+            border-bottom: 2px solid var(--border-color);
+            color: var(--text-secondary);
             font-weight: 600;
-            border-bottom: 2px solid #ddd;
-            font-size: 13px;
-            color: #666;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+        }
+
+        td {
+            padding: 1rem 0.5rem;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        tr:hover { background: var(--bg-color); }
+
+        /* Badges & Status */
+        .badge, .task-status {
+            display: inline-flex;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 700;
             text-transform: uppercase;
         }
-        td {
-            padding: 12px;
-            border-bottom: 1px solid #eee;
+
+        .status-needsaction, .badge-pending { background: var(--status-bg-pending); color: var(--status-text-pending); }
+        .status-completed, .badge-done { background: var(--status-bg-done); color: var(--status-text-done); }
+        .badge-failed { background: var(--status-bg-failed); color: var(--status-text-failed); }
+        .badge-progress { background: #cfe2ff; color: #084298; }
+        .badge-unprocessed { background: var(--border-color); color: var(--text-secondary); }
+        .badge-skipped { background: var(--border-light); color: var(--text-muted); }
+        .badge-unsupported { background: var(--bg-color); color: var(--text-muted); font-style: italic; }
+        .badge-boox { background: #6b7280; color: white; margin-left: 0.5rem; }
+        .badge-sn { background: #3b82f6; color: white; margin-left: 0.5rem; }
+        
+        .device-info { font-size: 0.75rem; color: var(--text-muted); }
+
+        /* Mobile Adjustments */
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 100%;
+                height: auto;
+                position: relative;
+                padding: 1rem;
+                border-right: none;
+                border-bottom: 1px solid var(--border-color);
+            }
+
+            .sidebar h1 { margin-bottom: 1rem; text-align: center; }
+
+            .nav-links {
+                flex-direction: row;
+                overflow-x: auto;
+                padding-bottom: 0.5rem;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .nav-item {
+                white-space: nowrap;
+                padding: 0.5rem 1rem;
+            }
+
+            .content {
+                margin-left: 0;
+                padding: 1rem;
+            }
+
+            .app-layout {
+                flex-direction: column;
+            }
+            
+            .task-actions button { width: 100%; margin-top: 0.5rem; }
         }
-        tr:hover {
-            background: #fafafa;
-        }
-        .task-title {
-            font-weight: 500;
-            color: #1a1a1a;
-        }
-        .task-status {
-            display: inline-block;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-        .status-needsaction {
-            background: #fff3cd;
-            color: #664d03;
-        }
-        .status-completed {
-            background: #d1e7dd;
-            color: #0f5132;
-            text-decoration: line-through;
-        }
-        .task-due-date {
-            color: #666;
-            font-size: 14px;
-        }
-        .task-actions {
-            text-align: right;
-        }
-        .btn-small {
-            background: #0066cc;
-            color: white;
-            border: none;
-            padding: 6px 12px;
-            border-radius: 4px;
-            font-size: 12px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn-small:hover {
-            background: #0052a3;
-        }
-        .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            color: #999;
-        }
-        .empty-state p {
-            font-size: 16px;
-            margin-bottom: 10px;
-        }
+
+        /* Logs */
         #log-output {
             background: #1e1e1e;
             color: #d4d4d4;
-            padding: 15px;
-            border-radius: 4px;
-            font-family: 'Monaco', 'Courier New', monospace;
-            font-size: 13px;
-            height: 400px;
+            padding: 1rem;
+            border-radius: var(--radius);
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.85rem;
+            height: 50vh;
             overflow-y: auto;
-            line-height: 1.4;
             white-space: pre-wrap;
-            word-wrap: break-word;
         }
-        .log-entry {
-            margin-bottom: 4px;
+
+        /* Toolbar & Controls */
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
         }
-        .log-debug { color: #858585; }
-        .log-info { color: #d4d4d4; }
-        .log-warn { color: #ce9178; }
-        .log-error { color: #f48771; }
-        .log-filters {
-            margin-bottom: 15px;
+
+        .status-panel {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: var(--bg-color);
+            border-radius: var(--radius);
+            border: 1px solid var(--border-color);
         }
-        .log-filter-select {
-            padding: 8px 12px;
-            border: 1px solid #ddd;
+
+        .flex-spacer { flex: 1; }
+
+        .text-small { font-size: 0.85rem; color: var(--text-secondary); }
+        .text-bold { font-weight: 600; }
+        .text-danger { color: var(--status-text-failed); }
+
+        hr {
+            margin: 1.5rem 0;
+            border: none;
+            border-top: 1px solid var(--border-color);
+        }
+
+        /* Modal Overhaul */
+        #history-modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: var(--surface-color);
+            border: 1px solid var(--border-color);
+            padding: 2rem;
+            border-radius: var(--radius);
+            width: 900px;
+            max-width: 95vw;
+            max-height: 90vh;
+            overflow-y: auto;
+            z-index: 100;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+
+        #modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(2px);
+            z-index: 99;
+        }
+
+        /* Chat UI Refinement */
+        .chat-sidebar {
+            width: 280px;
+            background: var(--bg-color);
+            border-radius: var(--radius);
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .session-item {
+            padding: 0.75rem;
+            background: var(--surface-color);
             border-radius: 4px;
-            font-size: 14px;
-            background: white;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            font-size: 0.9rem;
+            border: 1px solid var(--border-color);
+            transition: all 0.2s;
         }
-        .breadcrumb { margin-bottom: 1rem; font-size: 0.9rem; }
-        .breadcrumb a { color: #0066cc; text-decoration: none; }
-        .breadcrumb .sep { margin: 0 0.3rem; color: #999; }
-        .badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; font-weight: 600; }
-        .badge-unprocessed { background: #f0f0f0; color: #666; }
-        .badge-pending     { background: #fff3cd; color: #856404; }
-        .badge-progress    { background: #cfe2ff; color: #084298; }
-        .badge-done        { background: #d1e7dd; color: #0f5132; }
-        .badge-failed      { background: #f8d7da; color: #842029; }
-        .badge-skipped     { background: #e2e3e5; color: #41464b; }
-        .badge-unsupported { background: #f0f0f0; color: #999; font-style: italic; }
-        .badge-boox {
-            display: inline-block;
-            padding: 1px 5px;
-            font-size: 10px;
-            font-weight: bold;
-            color: #fff;
-            background-color: #6b7280;
-            border-radius: 3px;
-            margin-left: 6px;
-            vertical-align: middle;
+
+        .session-item:hover { border-color: var(--brand-color); }
+        .session-item.active { background: var(--brand-color); color: white; border-color: var(--brand-color); }
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            background: var(--bg-color);
+            border-radius: var(--radius);
+            margin-bottom: 1rem;
+            border: 1px solid var(--border-color);
         }
-        .badge-sn {
-            display: inline-block;
-            padding: 1px 5px;
-            font-size: 10px;
-            font-weight: bold;
-            color: #fff;
-            background-color: #3b82f6;
-            border-radius: 3px;
-            margin-left: 6px;
-            vertical-align: middle;
+
+        .message {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            border-radius: var(--radius);
+            max-width: 85%;
         }
-        .device-info {
-            font-size: 11px;
-            color: #6b7280;
+
+        .message-user {
+            background: var(--brand-color);
+            color: white;
+            margin-left: auto;
+            border-bottom-right-radius: 0;
         }
-        .settings-inactive {
-            opacity: 0.5;
+
+        .message-assistant {
+            background: var(--surface-color);
+            color: var(--text-primary);
+            margin-right: auto;
+            border-bottom-left-radius: 0;
+            border: 1px solid var(--border-color);
         }
-        .settings-inactive h2 {
-            color: #9ca3af;
-        }
-        .settings-inactive-note {
-            font-size: 12px;
-            color: #9ca3af;
-            font-style: italic;
+
+        @media (max-width: 768px) {
+            .chat-container { height: auto; flex-direction: column; }
+            .chat-sidebar { width: 100%; height: 250px; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>UltraBridge</h1>
+    <div class="app-layout">
+        <nav class="sidebar">
+            <h1>UltraBridge</h1>
+            <div class="nav-links">
+                <a class="nav-item {{if eq .activeTab "tasks"}}active{{end}}" href="/">Tasks</a>
+                <a class="nav-item {{if eq .activeTab "files"}}active{{end}}" href="/files">Files</a>
+                <a class="nav-item {{if eq .activeTab "search"}}active{{end}}" href="/search">Search</a>
+                {{if .chatEnabled}}<a class="nav-item {{if eq .activeTab "chat"}}active{{end}}" href="/chat">Chat</a>{{end}}
+                <a class="nav-item {{if eq .activeTab "logs"}}active{{end}}" href="/logs">Logs</a>
+                <a class="nav-item {{if eq .activeTab "settings"}}active{{end}}" href="/settings">Settings</a>
+            </div>
+        </nav>
 
-        <div class="tabs">
-            <a class="tab-button {{if eq .activeTab "tasks"}}active{{end}}" href="/" style="text-decoration:none;">Tasks</a>
-            <a class="tab-button {{if eq .activeTab "files"}}active{{end}}" href="/files" style="text-decoration:none;">Files</a>
-            <a class="tab-button {{if eq .activeTab "search"}}active{{end}}" href="/search" style="text-decoration:none;">Search</a>
-            {{if .chatEnabled}}<a class="tab-button {{if eq .activeTab "chat"}}active{{end}}" href="/chat" style="text-decoration:none;">Chat</a>{{end}}
-            <a class="tab-button {{if eq .activeTab "logs"}}active{{end}}" href="/logs" style="text-decoration:none;">Logs</a>
-            <a class="tab-button {{if eq .activeTab "settings"}}active{{end}}" href="/settings" style="text-decoration:none;">Settings</a>
-        </div>
-
-        <div id="global-status" style="font-size:0.85rem; color:#555; padding:0.3rem 0.5rem; background:#f8f9fa; border-bottom:1px solid #e5e7eb; display:none;"></div>
+        <main class="content">
+            <div id="global-status" style="margin-bottom: 1rem; font-size: 0.85rem; padding: 0.5rem 1rem; border-radius: var(--radius); background: var(--surface-color); border: 1px solid var(--border-color); display: none;"></div>
 
         <!-- Tasks Tab -->
         <div id="tasks" class="tab-content active">
@@ -288,35 +457,37 @@
 
             <!-- Task List -->
             <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <div class="toolbar">
                     <h2>Task List</h2>
-                    <label style="font-weight: normal; font-size: 14px; color: #666; cursor: pointer;">
-                        <input type="checkbox" id="show-completed" onchange="toggleCompleted()">
+                    <div class="flex-spacer"></div>
+                    <label class="text-small" style="cursor: pointer; display: flex; align-items: center; gap: 0.5rem;">
+                        <input type="checkbox" id="show-completed" onchange="toggleCompleted()" style="width: auto;">
                         Show completed
                     </label>
                 </div>
 
                 <!-- Sync Status Panel -->
-                <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px; padding:10px; background:#f8f9fa; border-radius:6px;">
-                  <span style="font-weight:600;">Sync:</span>
-                  <span id="sync-status" class="badge badge-pending">Loading...</span>
-                  <span id="sync-last" style="color:#666; font-size:0.9em;"></span>
-                  <span id="sync-next" style="color:#666; font-size:0.9em;"></span>
-                  <span id="sync-error" style="color:#c00; font-size:0.9em;"></span>
-                  <button id="sync-now-btn" class="btn-small" onclick="triggerSync()" style="margin-left:auto;">Sync Now</button>
+                <div class="status-panel">
+                  <span class="text-bold">Sync Status:</span>
+                  <span id="sync-status" class="badge">Loading...</span>
+                  <span id="sync-last" class="text-small"></span>
+                  <span id="sync-next" class="text-small"></span>
+                  <span id="sync-error" class="text-danger text-small"></span>
+                  <div class="flex-spacer"></div>
+                  <button id="sync-now-btn" class="btn-small" onclick="triggerSync()">Sync Now</button>
                 </div>
                 {{if .tasks}}
                 <form id="bulk-form" method="POST" action="/tasks/bulk">
-                <div id="bulk-actions" style="display: none; margin-bottom: 15px; padding: 10px; background: #f0f4ff; border-radius: 4px;">
-                    <span id="selected-count" style="font-size: 14px; color: #333; margin-right: 15px;">0 selected</span>
-                    <button type="submit" name="action" value="complete" class="btn-small" style="margin-right: 8px;">Complete Selected</button>
-                    <button type="submit" name="action" value="delete" class="btn-small" style="background: #dc3545;" onclick="return confirm('Delete selected tasks? This cannot be undone.')">Delete Selected</button>
+                <div id="bulk-actions" style="display: none; margin-bottom: 1rem; padding: 1rem; background: var(--bg-color); border-radius: var(--radius); border: 1px solid var(--brand-color);">
+                    <span id="selected-count" class="text-small text-bold" style="margin-right: 1rem;">0 selected</span>
+                    <button type="submit" name="action" value="complete" class="btn-small">Complete Selected</button>
+                    <button type="submit" name="action" value="delete" class="btn-small" style="background: var(--status-text-failed);" onclick="return confirm('Delete selected tasks? This cannot be undone.')">Delete Selected</button>
                 </div>
                 <div class="table-container">
                     <table id="task-table">
                         <thead>
                             <tr>
-                                <th style="width: 30px;"><input type="checkbox" id="select-all" onchange="toggleSelectAll()"></th>
+                                <th style="width: 2rem;"><input type="checkbox" id="select-all" onchange="toggleSelectAll()"></th>
                                 <th>Title</th>
                                 <th>Status</th>
                                 <th>Created</th>
@@ -326,33 +497,33 @@
                         </thead>
                         <tbody>
                             {{range .tasks}}
-                            <tr data-status="{{.Status.String}}">
-                                <td><input type="checkbox" name="task_ids" value="{{.TaskID}}" class="task-checkbox" onchange="updateBulkActions()"></td>
+                            <tr data-status="{{.Status}}">
+                                <td><input type="checkbox" name="task_ids" value="{{.ID}}" class="task-checkbox" onchange="updateBulkActions()"></td>
                                 <td class="task-title">
-                                    {{.Title.String}}
-                                    {{if .Detail.Valid}}{{if .Detail.String}}
-                                    <br><span class="device-info">{{$detail := .Detail.String}}{{if hasPrefix $detail "From Boox red ink: "}}<a href="/files?detail={{trimPrefix $detail "From Boox red ink: " | urlquery}}" style="color:#6b7280;">{{$detail}}</a>{{else}}{{$detail}}{{end}}</span>
-                                    {{end}}{{end}}
-                                    {{if .Links.Valid}}{{with taskLink .Links.String}}
+                                    {{.Title}}
+                                    {{if .Detail}}
+                                    <br><span class="device-info">{{$detail := .Detail}}{{if hasPrefix $detail "From Boox red ink: "}}<a href="/files?detail={{trimPrefix $detail "From Boox red ink: " | urlquery}}" style="color:#6b7280;">{{$detail}}</a>{{else}}{{$detail}}{{end}}</span>
+                                    {{end}}
+                                    {{if .Links}}{{with taskLink .Links}}
                                     <br><span class="device-info"><a href="/files?detail={{.Path | urlquery}}" style="color:#6b7280;">⬔ From note, page {{.Page}}</a></span>
                                     {{end}}{{end}}
                                 </td>
                                 <td>
-                                    <span class="task-status {{if eq .Status.String "completed"}}status-completed{{else}}status-needsaction{{end}}">
-                                        {{if eq .Status.String "completed"}}Completed{{else}}Needs Action{{end}}
+                                    <span class="task-status {{if eq .Status "completed"}}status-completed{{else}}status-needsaction{{end}}">
+                                        {{if eq .Status "completed"}}Completed{{else}}Needs Action{{end}}
                                     </span>
                                 </td>
-                                <td class="task-due-date">{{.CompletedTime | formatCreated}}</td>
+                                <td class="task-due-date">{{.CompletedAt | formatCreated}}</td>
                                 <td class="task-due-date">
-                                    {{if gt .DueTime 0}}
-                                        {{.DueTime | formatDueTime}}
+                                    {{if .DueAt}}
+                                        {{.DueAt | formatDueTime}}
                                     {{else}}
                                         -
                                     {{end}}
                                 </td>
                                 <td class="task-actions">
-                                    {{if ne .Status.String "completed"}}
-                                    <button type="submit" formaction="/tasks/{{.TaskID}}/complete" class="btn-small">Complete</button>
+                                    {{if ne .Status "completed"}}
+                                    <button type="submit" formaction="/tasks/{{.ID}}/complete" class="btn-small">Complete</button>
                                     {{end}}
                                 </td>
                             </tr>
@@ -393,19 +564,23 @@
         <!-- Files Tab -->
         <div id="files" class="tab-content">
           {{if .filesError}}
-            <p style="color:#842029; padding:1rem;">{{.filesError}}</p>
+            <div class="card" style="border-color: var(--status-text-failed);">
+                <p class="text-danger">{{.filesError}}</p>
+            </div>
           {{else if .files}}
-            <div id="proc-status" style="font-size:0.9rem; color:#555; padding:0.4rem 0;">Loading...</div>
+            <div class="status-panel">
+                <span class="text-bold">Pipeline Status:</span>
+                <span id="proc-status" class="text-small">Loading...</span>
+                <div class="flex-spacer"></div>
+                <form method="POST" action="/processor/start" style="display:inline;">
+                    <button type="submit" class="btn-small">▶ Start</button>
+                </form>
+                <form method="POST" action="/processor/stop" style="display:inline;">
+                    <button type="submit" class="btn-small" style="background: var(--text-secondary);">⏹ Stop</button>
+                </form>
+            </div>
 
-            <hr style="margin:0.5rem 0; border:none; border-top:1px solid #e5e7eb;">
-
-            <div style="margin-bottom:0.5rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
-              <form method="POST" action="/processor/start" style="display:inline;">
-                <button type="submit" class="btn-small">▶ Start</button>
-              </form>
-              <form method="POST" action="/processor/stop" style="display:inline;">
-                <button type="submit" class="btn-small">⏹ Stop</button>
-              </form>
+            <div class="toolbar">
               <form method="POST" action="/files/scan" style="display:inline;">
                 <button type="submit" class="btn-small">⟳ Scan Now</button>
               </form>
@@ -417,31 +592,23 @@
               <form method="POST" action="/files/retry-failed" style="display:inline;">
                 <button type="submit" class="btn-small">↻ Retry Failed</button>
               </form>
-            </div>
-
-            <hr style="margin:0.5rem 0; border:none; border-top:1px solid #e5e7eb;">
-
-            <div style="margin-bottom:0.5rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
-              {{if .filesFolders}}
-              <select onchange="filesNav({folder:this.value,page:1})" style="padding:0.3rem; border:1px solid #ccc; border-radius:3px;">
-                <option value="">All folders</option>
-                {{range .filesFolders}}
-                <option value="{{.}}" {{if eq . $.filesFolder}}selected{{end}}>{{.}}</option>
-                {{end}}
-              </select>
-              {{end}}
-              <select onchange="filesNav({per_page:this.value,page:1})" style="padding:0.3rem; border:1px solid #ccc; border-radius:3px;">
+              
+              <div class="flex-spacer"></div>
+              
+              <select onchange="filesNav({per_page:this.value,page:1})" style="width: auto;">
                 <option value="10" {{if eq .filesPerPage 10}}selected{{end}}>10 / page</option>
                 <option value="25" {{if eq .filesPerPage 25}}selected{{end}}>25 / page</option>
                 <option value="50" {{if eq .filesPerPage 50}}selected{{end}}>50 / page</option>
               </select>
-              <span style="font-size:0.85rem; color:#666;">{{.filesTotalFiles}} files</span>
+              <span class="text-small">{{.filesTotalFiles}} files</span>
             </div>
-            <div class="breadcrumb">
-              {{range .breadcrumbs}}
-                <a href="/files?path={{.RelPath}}">{{.Label}}</a><span class="sep">/</span>
-              {{end}}
-            </div>
+
+            <div class="card">
+                <div class="breadcrumb">
+                  {{range .breadcrumbs}}
+                    <a href="/files?path={{.RelPath}}">{{.Label}}</a><span class="sep">/</span>
+                  {{end}}
+                </div>
             <form id="bulk-delete-form" method="POST" action="/files/delete-bulk">
             <table class="task-table">
               <thead>
@@ -472,8 +639,8 @@
                   </td>
                   <td>{{.FileType}}</td>
                   <td>{{.SizeBytes}}</td>
-                  <td>{{if .CTime.IsZero}}-{{else}}{{.CTime.Format "2006-01-02"}}{{end}}</td>
-                  <td>{{.MTime.Format "2006-01-02"}}</td>
+                  <td>{{if .CreatedAt.IsZero}}-{{else}}{{.CreatedAt.Format "2006-01-02"}}{{end}}</td>
+                  <td>{{.ModifiedAt.Format "2006-01-02"}}</td>
                   <td>
                     {{if .IsDir}}
                       {{/* directories have no processing status */}}
@@ -512,12 +679,13 @@
                 {{end}}
               </tbody>
             </table>
-            <div id="bulk-delete-bar" style="display:none; margin-top:0.5rem;">
-              <button type="submit" class="btn-small" style="color:#842029;"
+            <div id="bulk-delete-bar" class="toolbar" style="display:none; margin-top: 1rem; padding: 0.5rem; background: var(--bg-color); border-radius: var(--radius);">
+              <button type="submit" class="btn-small" style="background: var(--status-text-failed);"
                 onclick="return confirm('Delete ' + document.querySelectorAll('.file-checkbox:checked').length + ' selected notes and all associated data?')">✗ Delete Selected</button>
-              <span id="bulk-delete-count" style="font-size:0.85rem; color:#666; margin-left:0.5rem;"></span>
+              <span id="bulk-delete-count" class="text-small"></span>
             </div>
             </form>
+            </div> {{/* end of card */}}
             {{if gt .filesTotalPages 1}}
             <div style="margin-top:0.75rem; display:flex; align-items:center; gap:0.5rem; font-size:0.9rem;">
               {{if gt .filesPage 1}}
@@ -536,43 +704,52 @@
 
         <!-- Search Tab -->
         <div id="search" class="tab-content">
-          <form method="GET" action="/search" style="margin-bottom:1rem;">
-            <input type="text" name="q" value="{{.searchQuery}}"
-                   placeholder="Search notes..."
-                   style="width:50%; padding:0.4rem; border:1px solid #ccc; border-radius:3px;">
-            {{if .searchFolders}}
-            <select name="folder" style="padding:0.4rem; margin-left:0.5rem; border:1px solid #ccc; border-radius:3px;">
-              <option value="">All folders</option>
-              {{range .searchFolders}}
-              <option value="{{.}}" {{if eq . $.searchFolder}}selected{{end}}>{{.}}</option>
-              {{end}}
-            </select>
-            {{end}}
-            <button type="submit" style="padding:0.4rem 0.8rem; margin-left:0.5rem;">Search</button>
-          </form>
-          {{if .searchResults}}
-            <table class="task-table">
-              <thead><tr><th>Source</th><th>File</th><th>Page</th><th>Match</th></tr></thead>
-              <tbody>
-                {{range .searchResults}}
-                <tr>
-                  <td>
-                    {{$src := noteSource .Path}}
-                    {{if eq $src "Boox"}}
-                      <span class="badge badge-boox" title="Boox">B</span>
-                    {{else}}
-                      <span class="badge badge-sn" title="Supernote">SN</span>
-                    {{end}}
-                  </td>
-                  <td><a href="/files?detail={{.Path}}">{{.Path}}</a></td>
-                  <td>{{.Page}}</td>
-                  <td>{{.Snippet}}</td>
-                </tr>
+          <div class="card">
+            <form method="GET" action="/search" class="toolbar">
+                <input type="text" name="q" value="{{.searchQuery}}"
+                       placeholder="Search notes..."
+                       style="flex: 1;">
+                {{if .searchFolders}}
+                <select name="folder" style="width: auto;">
+                  <option value="">All folders</option>
+                  {{range .searchFolders}}
+                  <option value="{{.}}" {{if eq . $.searchFolder}}selected{{end}}>{{.}}</option>
+                  {{end}}
+                </select>
                 {{end}}
-              </tbody>
-            </table>
+                <button type="submit">Search</button>
+            </form>
+          </div>
+
+          {{if .searchResults}}
+            <div class="card">
+                <div class="table-container">
+                    <table>
+                      <thead><tr><th>Source</th><th>File</th><th style="width: 4rem;">Page</th><th>Match</th></tr></thead>
+                      <tbody>
+                        {{range .searchResults}}
+                        <tr>
+                          <td style="width: 6rem;">
+                            {{$src := noteSource .Path}}
+                            {{if eq $src "Boox"}}
+                              <span class="badge badge-boox" title="Boox">B</span>
+                            {{else}}
+                              <span class="badge badge-sn" title="Supernote">SN</span>
+                            {{end}}
+                          </td>
+                          <td><a href="/files?detail={{.Path}}" style="color: var(--brand-color); text-decoration: none;">{{.Path}}</a></td>
+                          <td>{{.Page}}</td>
+                          <td class="text-small">{{.Snippet}}</td>
+                        </tr>
+                        {{end}}
+                      </tbody>
+                    </table>
+                </div>
+            </div>
           {{else if .searchQuery}}
-            <p style="padding:1rem; color:#666;">No results for "{{.searchQuery}}".</p>
+            <div class="empty-state">
+                <p>No results for "{{.searchQuery}}".</p>
+            </div>
           {{end}}
         </div>
 
@@ -589,195 +766,193 @@
           <div class="card">
             <h2>General Settings</h2>
 
-            <div style="margin-bottom:1.25rem;">
-              <h3 style="margin-bottom:0.5rem;">Authentication</h3>
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">Authentication</h3>
               <div class="form-group">
-                <label for="config-username" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Username</label>
-                <input id="config-username" type="text" value="{{.Config.Username}}"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-username">Username</label>
+                <input id="config-username" type="text" value="{{.Config.Username}}">
               </div>
               <div class="form-group">
-                <label for="config-password" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Password</label>
-                <p class="device-info" style="margin:0 0 0.5rem 0;">Leave empty to keep current password.</p>
-                <input id="config-password" type="password" placeholder="Leave empty to keep current"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-password">Password</label>
+                <p class="device-info" style="margin-bottom: 0.5rem;">Leave empty to keep current password.</p>
+                <input id="config-password" type="password" placeholder="Leave empty to keep current">
               </div>
             </div>
 
-            <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+            <hr>
 
-            <div style="margin-bottom:1.25rem;">
-              <h3 style="margin-bottom:0.5rem;">OCR Configuration</h3>
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">OCR Configuration</h3>
               <div class="form-group">
-                <label for="config-ocr-format" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Provider</label>
-                <select id="config-ocr-format" style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-ocr-format">Provider</label>
+                <select id="config-ocr-format">
                   <option value="anthropic" {{if eq .Config.OCRFormat "anthropic"}}selected{{end}}>Anthropic</option>
                   <option value="openai" {{if eq .Config.OCRFormat "openai"}}selected{{end}}>OpenAI</option>
                 </select>
               </div>
               <div class="form-group">
-                <label for="config-ocr-api-url" style="font-weight:bold; display:block; margin-bottom:0.3rem;">API URL</label>
-                <input id="config-ocr-api-url" type="text" value="{{.Config.OCRAPIURL}}"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-ocr-api-url">API URL</label>
+                <input id="config-ocr-api-url" type="text" value="{{.Config.OCRAPIURL}}">
               </div>
               <div class="form-group">
-                <label for="config-ocr-api-key" style="font-weight:bold; display:block; margin-bottom:0.3rem;">API Key</label>
-                <input id="config-ocr-api-key" type="password" placeholder="Leave empty to keep current"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-ocr-api-key">API Key</label>
+                <input id="config-ocr-api-key" type="password" placeholder="Leave empty to keep current">
               </div>
               <div class="form-group">
-                <label for="config-ocr-model" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Model</label>
-                <input id="config-ocr-model" type="text" value="{{.Config.OCRModel}}"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-ocr-model">Model</label>
+                <input id="config-ocr-model" type="text" value="{{.Config.OCRModel}}">
               </div>
               <div class="form-group">
-                <label for="config-ocr-concurrency" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Concurrency</label>
-                <input id="config-ocr-concurrency" type="number" value="{{.Config.OCRConcurrency}}"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-ocr-concurrency">Concurrency</label>
+                <input id="config-ocr-concurrency" type="number" value="{{.Config.OCRConcurrency}}">
               </div>
               <div class="form-group">
-                <label for="config-ocr-max-file-mb" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Max File Size (MB)</label>
-                <input id="config-ocr-max-file-mb" type="number" value="{{.Config.OCRMaxFileMB}}"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-ocr-max-file-mb">Max File Size (MB)</label>
+                <input id="config-ocr-max-file-mb" type="number" value="{{.Config.OCRMaxFileMB}}">
               </div>
             </div>
 
-            <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+            <hr>
 
-            <div style="margin-bottom:1.25rem;">
-              <h3 style="margin-bottom:0.5rem;">Embedding Configuration</h3>
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">Embedding Configuration</h3>
               <div class="form-group">
-                <label for="config-ollama-url" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Ollama URL</label>
-                <input id="config-ollama-url" type="text" value="{{.Config.OllamaURL}}"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-ollama-url">Ollama URL</label>
+                <input id="config-ollama-url" type="text" value="{{.Config.OllamaURL}}">
               </div>
               <div class="form-group">
-                <label for="config-ollama-embed-model" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Embedding Model</label>
-                <input id="config-ollama-embed-model" type="text" value="{{.Config.OllamaEmbedModel}}"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-ollama-embed-model">Embedding Model</label>
+                <input id="config-ollama-embed-model" type="text" value="{{.Config.OllamaEmbedModel}}">
               </div>
             </div>
 
-            <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+            <hr>
 
-            <div style="margin-bottom:1.25rem;">
-              <h3 style="margin-bottom:0.5rem;">Chat Configuration</h3>
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">Chat Configuration</h3>
               <div class="form-group">
-                <label for="config-chat-api-url" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Chat API URL</label>
-                <input id="config-chat-api-url" type="text" value="{{.Config.ChatAPIURL}}"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-chat-api-url">Chat API URL</label>
+                <input id="config-chat-api-url" type="text" value="{{.Config.ChatAPIURL}}">
               </div>
               <div class="form-group">
-                <label for="config-chat-model" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Chat Model</label>
-                <input id="config-chat-model" type="text" value="{{.Config.ChatModel}}"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-chat-model">Chat Model</label>
+                <input id="config-chat-model" type="text" value="{{.Config.ChatModel}}">
               </div>
             </div>
 
-            <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+            <hr>
 
-            <div style="margin-bottom:1.25rem;">
-              <h3 style="margin-bottom:0.5rem;">Supernote Device Sync</h3>
+            <div style="margin-bottom: 2rem;">
+              <h3 style="margin-bottom: 1rem;">Supernote Device Sync</h3>
               <div class="form-group">
-                <label for="config-sn-sync-enabled" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Enabled</label>
-                <select id="config-sn-sync-enabled" style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-sn-sync-enabled">Enabled</label>
+                <select id="config-sn-sync-enabled">
                   <option value="false" {{if not .Config.SNSyncEnabled}}selected{{end}}>Disabled</option>
                   <option value="true" {{if .Config.SNSyncEnabled}}selected{{end}}>Enabled</option>
                 </select>
               </div>
               <div class="form-group">
-                <label for="config-sn-sync-interval" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Sync Interval (seconds)</label>
-                <input id="config-sn-sync-interval" type="number" value="{{.Config.SNSyncInterval}}"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-sn-sync-interval">Sync Interval (seconds)</label>
+                <input id="config-sn-sync-interval" type="number" value="{{.Config.SNSyncInterval}}">
               </div>
               <div class="form-group">
-                <label for="config-sn-api-url" style="font-weight:bold; display:block; margin-bottom:0.3rem;">API URL</label>
-                <input id="config-sn-api-url" type="text" value="{{.Config.SNAPIURL}}"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-sn-api-url">API URL</label>
+                <input id="config-sn-api-url" type="text" value="{{.Config.SNAPIURL}}">
               </div>
               <div class="form-group">
-                <label for="config-sn-account" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Account</label>
-                <input id="config-sn-account" type="text" value="{{.Config.SNAccount}}"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-sn-account">Account</label>
+                <input id="config-sn-account" type="text" value="{{.Config.SNAccount}}">
               </div>
               <div class="form-group">
-                <label for="config-sn-password" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Password</label>
-                <input id="config-sn-password" type="password" placeholder="Leave empty to keep current"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
+                <label for="config-sn-password">Password</label>
+                <input id="config-sn-password" type="password" placeholder="Leave empty to keep current">
               </div>
             </div>
 
-            <button type="button" onclick="saveConfig()" style="padding:0.3rem 0.8rem;">Save Configuration</button>
-            <span id="config-status" style="margin-left:1rem; font-size:0.9rem;"></span>
+            <div class="toolbar">
+                <button type="button" onclick="saveConfig()">Save Configuration</button>
+                <span id="config-status" class="text-small"></span>
+            </div>
           </div>
 
           <div class="card">
-            <h2>Sources</h2>
+            <div class="toolbar">
+                <h2>Sources</h2>
+                <div class="flex-spacer"></div>
+                <button type="button" onclick="showAddSourceForm()" class="btn-small">+ Add Source</button>
+            </div>
 
             {{if .Sources}}
-            <table style="width:100%; border-collapse:collapse; margin-bottom:1rem; font-size:13px;">
-              <thead>
-                <tr style="border-bottom:2px solid #e5e7eb; text-align:left;">
-                  <th style="padding:0.4rem;">Name</th>
-                  <th style="padding:0.4rem;">Type</th>
-                  <th style="padding:0.4rem;">Enabled</th>
-                  <th style="padding:0.4rem;"></th>
-                </tr>
-              </thead>
-              <tbody id="sources-list">
-                {{range .Sources}}
-                <tr style="border-bottom:1px solid #f0f0f0;" data-source-id="{{.ID}}">
-                  <td style="padding:0.4rem;">{{.Name}}</td>
-                  <td style="padding:0.4rem;">{{.Type}}</td>
-                  <td style="padding:0.4rem;">
-                    <input type="checkbox" {{if .Enabled}}checked{{end}} onchange="toggleSourceEnabled({{.ID}}, this.checked)">
-                  </td>
-                  <td style="padding:0.4rem;">
-                    <button type="button" class="btn-small" onclick="editSource({{.ID}})">Edit</button>
-                    <button type="button" class="btn-small" style="background:#dc3545;" onclick="deleteSource({{.ID}})">Delete</button>
-                  </td>
-                </tr>
-                {{end}}
-              </tbody>
-            </table>
+            <div class="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Type</th>
+                      <th>Enabled</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sources-list">
+                    {{range .Sources}}
+                    <tr data-source-id="{{.ID}}">
+                      <td class="text-bold">{{.Name}}</td>
+                      <td>{{.Type}}</td>
+                      <td>
+                        <input type="checkbox" {{if .Enabled}}checked{{end}} onchange="toggleSourceEnabled({{.ID}}, this.checked)" style="width: auto;">
+                      </td>
+                      <td>
+                        <div class="toolbar" style="margin: 0;">
+                            <button type="button" class="btn-small" onclick="editSource({{.ID}})">Edit</button>
+                            <button type="button" class="btn-small" style="background: var(--status-text-failed);" onclick="deleteSource({{.ID}})">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                    {{end}}
+                  </tbody>
+                </table>
+            </div>
             {{else}}
-            <p class="device-info">No sources configured yet.</p>
+            <div class="empty-state">
+                <p>No sources configured yet.</p>
+            </div>
             {{end}}
 
-            <button type="button" onclick="showAddSourceForm()" style="padding:0.3rem 0.8rem;">+ Add Source</button>
-            <span id="sources-status" style="margin-left:1rem; font-size:0.9rem;"></span>
+            <div id="sources-status" class="text-small" style="margin-top: 0.5rem;"></div>
 
-            <div id="source-form" style="display:none; margin-top:1rem; padding:1rem; border:1px solid #e5e7eb; border-radius:6px; background:#fafafa;">
-              <h3 id="source-form-title" style="margin-bottom:0.75rem;">Add Source</h3>
+            <div id="source-form" style="display:none; margin-top:1.5rem; padding:1.5rem; border:1px solid var(--border-color); border-radius:var(--radius); background:var(--bg-color);">
+              <h3 id="source-form-title" style="margin-bottom:1rem;">Add Source</h3>
               <input type="hidden" id="source-form-id" value="">
-              <div style="margin-bottom:0.5rem;">
-                <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Type</label>
-                <select id="source-type" onchange="updateSourceConfigFields()" style="padding:0.3rem; width:100%; max-width:300px;">
+              <div class="form-group">
+                <label>Type</label>
+                <select id="source-type" onchange="updateSourceConfigFields()">
                   <option value="supernote">Supernote</option>
                   <option value="boox">Boox</option>
                 </select>
               </div>
-              <div style="margin-bottom:0.5rem;">
-                <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Name</label>
-                <input type="text" id="source-name" placeholder="e.g. My Supernote" style="padding:0.3rem; width:100%; max-width:300px;">
+              <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="source-name" placeholder="e.g. My Supernote">
               </div>
-              <div style="margin-bottom:0.5rem;">
-                <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Enabled</label>
-                <input type="checkbox" id="source-enabled" checked>
+              <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 0.5rem;">
+                    <input type="checkbox" id="source-enabled" checked style="width: auto;">
+                    Enabled
+                </label>
               </div>
               <div id="source-config-fields">
-                <div style="margin-bottom:0.5rem;" id="field-notes-path">
-                  <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Notes Path</label>
-                  <input type="text" id="source-notes-path" placeholder="/data/notes" style="padding:0.3rem; width:100%; max-width:300px;">
+                <div class="form-group" id="field-notes-path">
+                  <label>Notes Path</label>
+                  <input type="text" id="source-notes-path" placeholder="/data/notes">
                 </div>
-                <div style="margin-bottom:0.5rem;" id="field-backup-path">
-                  <label style="display:block; font-weight:600; margin-bottom:0.2rem;">Backup Path</label>
-                  <input type="text" id="source-backup-path" placeholder="/data/backup" style="padding:0.3rem; width:100%; max-width:300px;">
+                <div class="form-group" id="field-backup-path">
+                  <label>Backup Path</label>
+                  <input type="text" id="source-backup-path" placeholder="/data/backup">
                 </div>
               </div>
-              <div style="margin-top:0.75rem;">
-                <button type="button" onclick="saveSource()" style="padding:0.3rem 0.8rem;">Save</button>
-                <button type="button" onclick="cancelSourceForm()" style="padding:0.3rem 0.8rem; margin-left:0.5rem; background:#6c757d;">Cancel</button>
+              <div class="toolbar" style="margin-top: 1rem; margin-bottom: 0;">
+                <button type="button" onclick="saveSource()">Save</button>
+                <button type="button" onclick="cancelSourceForm()" style="background: var(--text-secondary);">Cancel</button>
               </div>
             </div>
           </div>
@@ -881,98 +1056,103 @@
           </div>
 
           <div class="card{{if not .SNPipelineActive}} settings-inactive{{end}}">
-            <h2>Supernote</h2>
+            <h2>Supernote Settings</h2>
             {{if not .SNPipelineActive}}
-              <p class="settings-inactive-note">Supernote notes pipeline is not configured. Add a Supernote source in Settings to enable.</p>
+              <p class="text-small">Supernote notes pipeline is not configured. Add a Supernote source in Settings to enable.</p>
             {{else}}
               <form method="POST" action="/settings/save">
                 <input type="hidden" name="section" value="supernote">
 
-                <label for="sn-inject-enabled" style="font-weight:bold; display:block; margin-bottom:0.3rem;">JIIX Text Injection</label>
-                <p class="device-info" style="margin-bottom:0.5rem;">When enabled, OCR'd text is injected back into .note files as RECOGNTEXT (JIIX format). Disable to OCR and index without modifying note files.</p>
-                <select id="sn-inject-enabled" name="inject_enabled"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:1rem;">
-                  <option value="true"{{if .SNInjectEnabled}} selected{{end}}>Enabled</option>
-                  <option value="false"{{if not .SNInjectEnabled}} selected{{end}}>Disabled</option>
-                </select>
+                <div class="form-group">
+                    <label for="sn-inject-enabled">JIIX Text Injection</label>
+                    <p class="device-info" style="margin-bottom: 0.5rem;">When enabled, OCR'd text is injected back into .note files as RECOGNTEXT. Disable to OCR and index without modifying note files.</p>
+                    <select id="sn-inject-enabled" name="inject_enabled">
+                      <option value="true"{{if .SNInjectEnabled}} selected{{end}}>Enabled</option>
+                      <option value="false"{{if not .SNInjectEnabled}} selected{{end}}>Disabled</option>
+                    </select>
+                </div>
 
-                <label for="sn-ocr-prompt" style="font-weight:bold; display:block; margin-bottom:0.3rem;">OCR Prompt</label>
-                <p class="device-info" style="margin-bottom:0.5rem;">Sent to the vision API with each rendered page image.</p>
-                <textarea id="sn-ocr-prompt" name="ocr_prompt" rows="3"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-family:inherit; font-size:13px;"
-                >{{.SNOCRPrompt}}</textarea>
-                <button type="submit" style="margin-top:0.5rem; padding:0.3rem 0.8rem;">Save</button>
+                <div class="form-group">
+                    <label for="sn-ocr-prompt">OCR Prompt</label>
+                    <textarea id="sn-ocr-prompt" name="ocr_prompt" rows="3">{{.SNOCRPrompt}}</textarea>
+                </div>
+                <button type="submit" class="btn-small">Save Supernote Settings</button>
               </form>
             {{end}}
           </div>
 
           <div class="card{{if not .BooxActive}} settings-inactive{{end}}">
-            <h2>Boox</h2>
+            <h2>Boox Settings</h2>
             {{if not .BooxActive}}
-              <p class="settings-inactive-note">Boox integration is not enabled. Add a Boox source in Settings to enable.</p>
+              <p class="text-small">Boox integration is not enabled. Add a Boox source in Settings to enable.</p>
             {{else}}
               <form method="POST" action="/settings/save">
                 <input type="hidden" name="section" value="boox">
-                <label for="boox-ocr-prompt" style="font-weight:bold; display:block; margin-bottom:0.3rem;">OCR Prompt</label>
-                <p class="device-info" style="margin-bottom:0.5rem;">Sent to the vision API with each rendered page image.</p>
-                <textarea id="boox-ocr-prompt" name="ocr_prompt" rows="3"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-family:inherit; font-size:13px;"
-                >{{.BooxOCRPrompt}}</textarea>
+                <div class="form-group">
+                    <label for="boox-ocr-prompt">OCR Prompt</label>
+                    <textarea id="boox-ocr-prompt" name="ocr_prompt" rows="3">{{.BooxOCRPrompt}}</textarea>
+                </div>
 
-                <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+                <hr>
 
-                <label for="boox-todo-enabled" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Red Ink To-Do Extraction</label>
-                <select id="boox-todo-enabled" name="todo_enabled" style="padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.3rem;">
-                  <option value="false" {{if not .BooxTodoEnabled}}selected{{end}}>Disabled</option>
-                  <option value="true" {{if .BooxTodoEnabled}}selected{{end}}>Enabled</option>
-                </select>
-                <p class="device-info" style="margin:0 0 0.5rem 0;">When enabled, a second OCR pass looks for red handwriting and creates CalDAV tasks from it.</p>
-                <label for="boox-todo-prompt" style="font-weight:bold; display:block; margin-bottom:0.3rem;">To-do Extraction Prompt</label>
-                <textarea id="boox-todo-prompt" name="todo_prompt" rows="4"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-family:inherit; font-size:13px;"
-                >{{.BooxTodoPrompt}}</textarea>
+                <div class="form-group">
+                    <label for="boox-todo-enabled">Red Ink To-Do Extraction</label>
+                    <p class="device-info" style="margin-bottom: 0.5rem;">When enabled, a second OCR pass looks for red handwriting and creates CalDAV tasks from it.</p>
+                    <select id="boox-todo-enabled" name="todo_enabled">
+                      <option value="false" {{if not .BooxTodoEnabled}}selected{{end}}>Disabled</option>
+                      <option value="true" {{if .BooxTodoEnabled}}selected{{end}}>Enabled</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="boox-todo-prompt">To-do Extraction Prompt</label>
+                    <textarea id="boox-todo-prompt" name="todo_prompt" rows="4">{{.BooxTodoPrompt}}</textarea>
+                </div>
 
-                <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+                <hr>
 
-                <label style="font-weight:bold; display:block; margin-bottom:0.3rem;">Bulk Import</label>
-                <p class="device-info" style="margin:0 0 0.5rem 0;">Scan a filesystem path for files to import into the Boox pipeline.</p>
+                <div style="margin-bottom: 1rem;">
+                    <label>Bulk Import</label>
+                    <p class="device-info">Scan a filesystem path for files to import into the Boox pipeline.</p>
+                </div>
 
-                <label style="display:block; margin-bottom:0.3rem;">Import Path</label>
-                {{if .BooxImportPath}}
-                <p style="margin:0 0 0.3rem 0; font-family:monospace; font-size:13px; padding:0.4rem; background:#f8f8f8; border:1px solid #e5e7eb; border-radius:3px;">{{.BooxImportPath}}</p>
-                <p class="device-info" style="margin:0 0 0.5rem 0;">To change, re-run install.sh (Docker volume mount required).</p>
-                {{else}}
-                <p class="device-info" style="margin:0 0 0.5rem 0;">Not configured. Run install.sh to set an import path (Docker volume mount required).</p>
-                {{end}}
+                <div class="form-group">
+                    <label>Import Path</label>
+                    {{if .BooxImportPath}}
+                    <code style="display:block; padding:0.75rem; background:var(--bg-color); border-radius:4px; margin-bottom:0.5rem;">{{.BooxImportPath}}</code>
+                    {{else}}
+                    <p class="text-small">Not configured.</p>
+                    {{end}}
+                </div>
 
-                <label for="boox-import-notes" style="display:block; margin-bottom:0.3rem;">Import Notes (.note)</label>
-                <select id="boox-import-notes" name="import_notes" style="padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
-                  <option value="false" {{if not .BooxImportNotes}}selected{{end}}>Disabled</option>
-                  <option value="true" {{if .BooxImportNotes}}selected{{end}}>Enabled</option>
-                </select>
+                <div class="toolbar">
+                    <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                        <label for="boox-import-notes">Import Notes (.note)</label>
+                        <select id="boox-import-notes" name="import_notes">
+                          <option value="false" {{if not .BooxImportNotes}}selected{{end}}>Disabled</option>
+                          <option value="true" {{if .BooxImportNotes}}selected{{end}}>Enabled</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                        <label for="boox-import-pdfs">Import PDFs (.pdf)</label>
+                        <select id="boox-import-pdfs" name="import_pdfs">
+                          <option value="false" {{if not .BooxImportPDFs}}selected{{end}}>Disabled</option>
+                          <option value="true" {{if .BooxImportPDFs}}selected{{end}}>Enabled</option>
+                        </select>
+                    </div>
+                </div>
 
-                <label for="boox-import-pdfs" style="display:block; margin-bottom:0.3rem;">Import PDFs (.pdf)</label>
-                <select id="boox-import-pdfs" name="import_pdfs" style="padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.5rem;">
-                  <option value="false" {{if not .BooxImportPDFs}}selected{{end}}>Disabled</option>
-                  <option value="true" {{if .BooxImportPDFs}}selected{{end}}>Enabled</option>
-                </select>
-
-                <label for="boox-import-onyx-paths" style="display:block; margin-bottom:0.3rem;">Onyx Export Path Structure</label>
-                <select id="boox-import-onyx-paths" name="import_onyx_paths" style="padding:0.4rem; border:1px solid #ccc; border-radius:3px; margin-bottom:0.3rem;">
-                  <option value="false" {{if not .BooxImportOnyxPaths}}selected{{end}}>Disabled</option>
-                  <option value="true" {{if .BooxImportOnyxPaths}}selected{{end}}>Enabled</option>
-                </select>
-                <p class="device-info" style="margin:0 0 0.5rem 0;">When enabled, path is parsed as {model}/{type}/{folder}/{file} for device identification. When disabled, parent directory is used as folder name.</p>
-
-                <button type="submit" style="margin-top:0.5rem; padding:0.3rem 0.8rem;">Save</button>
+                <button type="submit" class="btn-small" style="margin-top: 1rem;">Save Boox Settings</button>
               </form>
+              
               {{if .BooxImportPath}}
-              <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
-              <form method="POST" action="/files/migrate-imports" style="display:inline;">
-                <button type="submit" class="btn-small"
-                  onclick="return confirm('Copy all imported files to the Boox notes directory and update database references? This may take a while for large imports.')">⬇ Migrate Imports to File Store</button>
-              </form>
-              <p class="device-info" style="margin:0.3rem 0 0 0;">Copies imported files from the import path to the Boox notes directory so the import path can be unmounted.</p>
+              <hr>
+              <div class="toolbar">
+                  <form method="POST" action="/files/migrate-imports" style="display:inline;">
+                    <button type="submit" class="btn-small" style="background: var(--brand-hover);"
+                      onclick="return confirm('Copy all imported files to the Boox notes directory? This may take a while.')">⬇ Migrate Imports to File Store</button>
+                  </form>
+                  <p class="device-info">Copies files from import path to the permanent Boox notes directory.</p>
+              </div>
               {{end}}
             {{end}}
           </div>
@@ -980,58 +1160,60 @@
           <div class="card" id="mcp-tokens">
             <h2>MCP Tokens</h2>
             {{if not .MCPTokensEnabled}}
-              <p class="settings-inactive-note">Database not configured. Set UB_DB_PATH to enable MCP token management.</p>
+              <p class="text-small">Database not configured. Set UB_DB_PATH to enable MCP token management.</p>
             {{else}}
 
               {{if .NewMCPToken}}
-              <div style="background:#e6f9e6; border:1px solid #2d7a2d; border-radius:4px; padding:0.75rem; margin-bottom:1rem;">
-                <p style="font-weight:bold; margin:0 0 0.3rem 0;">✔ Token created — copy it now, it won't be shown again:</p>
-                <code style="display:block; background:#fff; padding:0.5rem; border:1px solid #ccc; border-radius:3px; font-size:13px; word-break:break-all; user-select:all;">{{.NewMCPToken}}</code>
+              <div style="background:var(--status-bg-done); border:1px solid var(--status-text-done); border-radius:var(--radius); padding:1rem; margin-bottom:1.5rem;">
+                <p class="text-bold" style="color: var(--status-text-done); margin-bottom: 0.5rem;">✔ Token created — copy it now, it won't be shown again:</p>
+                <code style="display:block; background:var(--surface-color); padding:1rem; border:1px solid var(--border-color); border-radius:4px; word-break:break-all; user-select:all;">{{.NewMCPToken}}</code>
               </div>
               {{end}}
 
               {{if .MCPTokens}}
-              <table style="width:100%; border-collapse:collapse; margin-bottom:1rem; font-size:13px;">
-                <thead>
-                  <tr style="border-bottom:2px solid #e5e7eb; text-align:left;">
-                    <th style="padding:0.4rem;">Label</th>
-                    <th style="padding:0.4rem;">Token (prefix)</th>
-                    <th style="padding:0.4rem;">Created</th>
-                    <th style="padding:0.4rem;">Last Used</th>
-                    <th style="padding:0.4rem;"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {{range .MCPTokens}}
-                  <tr style="border-bottom:1px solid #f0f0f0;">
-                    <td style="padding:0.4rem;">{{.Label}}</td>
-                    <td style="padding:0.4rem;"><code>{{slice .TokenHash 0 8}}…</code></td>
-                    <td style="padding:0.4rem;">{{formatTimestamp .CreatedAt}}</td>
-                    <td style="padding:0.4rem;">{{formatTimestamp .LastUsed}}</td>
-                    <td style="padding:0.4rem;">
-                      <form method="POST" action="/settings/mcp-tokens/revoke" style="margin:0;">
-                        <input type="hidden" name="token_hash" value="{{.TokenHash}}">
-                        <button type="submit" class="btn-small"
-                          onclick="return confirm('Revoke token \'{{.Label}}\'? Any client using it will immediately lose access.')"
-                          style="color:#c0392b;">✕ Revoke</button>
-                      </form>
-                    </td>
-                  </tr>
-                  {{end}}
-                </tbody>
-              </table>
+              <div class="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Label</th>
+                        <th>Token (prefix)</th>
+                        <th>Created</th>
+                        <th>Last Used</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {{range .MCPTokens}}
+                      <tr>
+                        <td class="text-bold">{{.Label}}</td>
+                        <td><code>{{slice .TokenHash 0 8}}…</code></td>
+                        <td class="text-small">{{formatTimestamp .CreatedAt}}</td>
+                        <td class="text-small">{{formatTimestamp .LastUsed}}</td>
+                        <td>
+                          <form method="POST" action="/settings/mcp-tokens/revoke" style="margin:0;">
+                            <input type="hidden" name="token_hash" value="{{.TokenHash}}">
+                            <button type="submit" class="btn-small"
+                              onclick="return confirm('Revoke token \'{{.Label}}\'?')"
+                              style="background: var(--status-text-failed);">✕ Revoke</button>
+                          </form>
+                        </td>
+                      </tr>
+                      {{end}}
+                    </tbody>
+                  </table>
+              </div>
               {{else}}
-              <p class="device-info" style="margin-bottom:0.75rem;">No tokens created yet.</p>
+              <p class="device-info" style="margin-bottom:1.5rem;">No tokens created yet.</p>
               {{end}}
 
-              <hr style="margin:1rem 0; border:none; border-top:1px solid #e5e7eb;">
+              <hr>
 
-              <form method="POST" action="/settings/mcp-tokens/create">
-                <label for="mcp-token-label" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Create Token</label>
-                <p class="device-info" style="margin:0 0 0.5rem 0;">Generate a bearer token for MCP clients (e.g., claude.ai).</p>
-                <input id="mcp-token-label" name="label" type="text" placeholder="Token label (e.g., claude.ai)"
-                  style="width:100%; padding:0.4rem; border:1px solid #ccc; border-radius:3px; font-size:13px; margin-bottom:0.5rem;" required>
-                <button type="submit" style="padding:0.3rem 0.8rem;">Create Token</button>
+              <form method="POST" action="/settings/mcp-tokens/create" class="toolbar">
+                <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                    <label for="mcp-token-label">Create Token</label>
+                    <input id="mcp-token-label" name="label" type="text" placeholder="Token label (e.g., claude.ai)" required>
+                </div>
+                <button type="submit" style="align-self: flex-end;">Create Token</button>
               </form>
 
             {{end}}
@@ -1042,36 +1224,36 @@
         <!-- Chat Tab -->
         {{if .chatEnabled}}
         <div id="chat" class="tab-content">
-          <div style="display: flex; gap: 15px; height: 600px;">
+          <div class="chat-container">
             <!-- Session Sidebar -->
-            <div style="width: 250px; background: white; border-radius: 8px; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow-y: auto;">
-              <h3 style="margin-bottom: 15px;">Conversations</h3>
-              <div id="sessions-list" style="font-size: 14px;">
-                <p style="color: #999;">Loading...</p>
+            <div class="chat-sidebar">
+              <h3 style="margin-bottom: 1rem;">Conversations</h3>
+              <div id="sessions-list" style="flex: 1; overflow-y: auto;">
+                <p class="text-muted">Loading...</p>
               </div>
-              <button onclick="createNewSession()" style="width: 100%; margin-top: 15px;">+ New Chat</button>
+              <button onclick="createNewSession()" style="width: 100%; margin-top: 1rem;">+ New Chat</button>
             </div>
 
             <!-- Chat Area -->
-            <div style="flex: 1; background: white; border-radius: 8px; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; flex-direction: column;">
-              <div id="messages-container" style="flex: 1; overflow-y: auto; margin-bottom: 15px; border: 1px solid #eee; border-radius: 4px; padding: 10px; background: #fafafa;">
-                <p style="color: #999; text-align: center; margin-top: 50px;">Select a conversation or start a new one</p>
+            <div style="flex: 1; display: flex; flex-direction: column;">
+              <div id="messages-container" class="messages-container">
+                <p class="text-muted" style="text-align: center; margin-top: 2rem;">Select a conversation or start a new one</p>
               </div>
 
-              <div id="error-container" style="display: none; background: #f8d7da; color: #842029; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+              <div id="error-container" style="display: none; margin-bottom: 1rem; padding: 1rem; background: var(--status-bg-failed); color: var(--status-text-failed); border-radius: var(--radius);">
                 <span id="error-message"></span>
               </div>
 
-              <form id="chat-form" style="display: none; gap: 10px;">
+              <form id="chat-form" class="toolbar" style="display: none; margin-bottom: 0;">
                 <input type="hidden" id="current-session-id" value="">
-                <input type="text" id="question-input" placeholder="Ask a question..." style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
-                <button type="submit" style="padding: 10px 20px;">Send</button>
+                <input type="text" id="question-input" placeholder="Ask a question..." style="flex: 1;">
+                <button type="submit">Send</button>
               </form>
             </div>
           </div>
         </div>
         {{end}}
-
+        </main>
     </div>
 
     <!-- Note details modal -->
@@ -1337,6 +1519,15 @@
         // Poll sync status every 5 seconds (matches Files tab pattern)
         setInterval(updateSyncStatus, 5000);
         updateSyncStatus();
+
+        // Register Service Worker for PWA
+        if ('serviceWorker' in navigator) {
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js')
+              .then(reg => console.log('SW registered:', reg))
+              .catch(err => console.log('SW registration failed:', err));
+          });
+        }
 
         function connectLogs() {
             if (logWebSocket !== null && logWebSocket.readyState === WebSocket.OPEN) {
