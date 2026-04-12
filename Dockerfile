@@ -2,9 +2,11 @@ FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /ultrabridge ./cmd/ultrabridge/ && \
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 go build -o /ultrabridge ./cmd/ultrabridge/ && \
     CGO_ENABLED=0 go build -o /ub-mcp ./cmd/ub-mcp/
 
 FROM alpine:3.20 AS ub-mcp

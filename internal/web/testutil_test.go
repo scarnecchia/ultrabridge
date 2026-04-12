@@ -1,0 +1,171 @@
+package web
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"time"
+
+	"github.com/sysop/ultrabridge/internal/logging"
+	"github.com/sysop/ultrabridge/internal/service"
+)
+
+// newTestHandler creates a Handler with default mocks for testing.
+func newTestHandler() *Handler {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	
+	tasks := &mockTaskService{}
+	notes := &mockNoteService{
+		docs: make(map[string][]service.SearchResult),
+		contents: make(map[string]interface{}),
+		pipelineConfigured: true,
+		booxEnabled: true,
+	}
+	search := &mockSearchService{
+		embeddingPipelineConfigured: true,
+		chatEnabled: true,
+	}
+	config := &mockConfigService{
+		syncConfigured: true,
+	}
+	
+	return NewHandler(tasks, notes, search, config, nil, "", "", logger, broadcaster)
+}
+
+// mockTaskService implements TaskService for testing
+type mockTaskService struct {
+	tasks []service.Task
+}
+
+func (m *mockTaskService) List(ctx context.Context) ([]service.Task, error) {
+	return m.tasks, nil
+}
+func (m *mockTaskService) Create(ctx context.Context, title string, dueAt *time.Time) (service.Task, error) {
+	t := service.Task{ID: "test-id", Title: title, Status: service.StatusNeedsAction}
+	if dueAt != nil {
+		t.DueAt = dueAt
+	}
+	m.tasks = append(m.tasks, t)
+	return t, nil
+}
+func (m *mockTaskService) Complete(ctx context.Context, id string) error { return nil }
+func (m *mockTaskService) Delete(ctx context.Context, id string) error   { return nil }
+func (m *mockTaskService) PurgeCompleted(ctx context.Context) error     {
+	var active []service.Task
+	for _, t := range m.tasks {
+		if t.Status != service.StatusCompleted {
+			active = append(active, t)
+		}
+	}
+	m.tasks = active
+	return nil
+}
+func (m *mockTaskService) BulkComplete(ctx context.Context, ids []string) error { return nil }
+func (m *mockTaskService) BulkDelete(ctx context.Context, ids []string) error   { return nil }
+
+// mockNoteService implements NoteService for testing
+type mockNoteService struct {
+	files []service.NoteFile
+	docs  map[string][]service.SearchResult
+	contents map[string]interface{}
+	renders  map[string]io.ReadCloser
+	
+	processorStarted bool
+	importTriggered bool
+	migrateTriggered bool
+	
+	// Settings for section visibility
+	pipelineConfigured bool
+	booxEnabled bool
+}
+
+func (m *mockNoteService) ListFiles(ctx context.Context, path, sort, order string, page, perPage int) ([]service.NoteFile, int, error) {
+	return m.files, len(m.files), nil
+}
+func (m *mockNoteService) GetNoteDetails(ctx context.Context, path string) (interface{}, error) {
+	return nil, nil
+}
+func (m *mockNoteService) GetContent(ctx context.Context, path string) (interface{}, error) {
+	return m.contents[path], nil
+}
+func (m *mockNoteService) RenderPage(ctx context.Context, path string, page int) (io.ReadCloser, string, error) {
+	return m.renders[path], "image/jpeg", nil
+}
+func (m *mockNoteService) ScanFiles(ctx context.Context) error { return nil }
+func (m *mockNoteService) Enqueue(ctx context.Context, path string, force bool) error { return nil }
+func (m *mockNoteService) Skip(ctx context.Context, path, reason string) error { return nil }
+func (m *mockNoteService) Unskip(ctx context.Context, path string) error { return nil }
+func (m *mockNoteService) RetryFailed(ctx context.Context) error { return nil }
+func (m *mockNoteService) DeleteNote(ctx context.Context, path string) error { return nil }
+func (m *mockNoteService) BulkDelete(ctx context.Context, paths []string) error { return nil }
+func (m *mockNoteService) StartProcessor(ctx context.Context) error {
+	m.processorStarted = true
+	return nil
+}
+func (m *mockNoteService) StopProcessor(ctx context.Context) error {
+	m.processorStarted = false
+	return nil
+}
+func (m *mockNoteService) GetProcessorStatus(ctx context.Context) (service.EmbeddingJobStatus, error) {
+	return service.EmbeddingJobStatus{Running: m.processorStarted}, nil
+}
+func (m *mockNoteService) ImportFiles(ctx context.Context) error {
+	m.importTriggered = true
+	return nil
+}
+func (m *mockNoteService) MigrateImports(ctx context.Context) error {
+	m.migrateTriggered = true
+	return nil
+}
+func (m *mockNoteService) HasSupernoteSource() bool { return m.pipelineConfigured }
+func (m *mockNoteService) HasBooxSource() bool { return m.booxEnabled }
+func (m *mockNoteService) ListVersions(ctx context.Context, path string) (interface{}, error) { return nil, nil }
+
+// mockSearchService implements SearchService for testing
+type mockSearchService struct {
+	results []service.SearchResult
+	sessions interface{}
+	messages interface{}
+	
+	embeddingPipelineConfigured bool
+	chatEnabled bool
+}
+
+func (m *mockSearchService) Search(ctx context.Context, query, folder string) ([]service.SearchResult, error) {
+	return m.results, nil
+}
+func (m *mockSearchService) Ask(ctx context.Context, question string, sessionID int) (<-chan service.ChatResponse, error) {
+	return nil, nil
+}
+func (m *mockSearchService) ListSessions(ctx context.Context) (interface{}, error) {
+	return m.sessions, nil
+}
+func (m *mockSearchService) GetMessages(ctx context.Context, sessionID int) (interface{}, error) {
+	return m.messages, nil
+}
+func (m *mockSearchService) TriggerBackfill(ctx context.Context) error { return nil }
+func (m *mockSearchService) GetEmbeddingCount(ctx context.Context) int { return 0 }
+func (m *mockSearchService) HasEmbeddingPipeline() bool { return m.embeddingPipelineConfigured }
+
+// mockConfigService implements ConfigService for testing
+type mockConfigService struct {
+	config interface{}
+	sources interface{}
+	syncStatus service.SyncStatus
+	restartRequired bool
+	syncConfigured bool
+}
+
+func (m *mockConfigService) GetConfig(ctx context.Context) (interface{}, error) { return m.config, nil }
+func (m *mockConfigService) UpdateConfig(ctx context.Context, config interface{}) error { return nil }
+func (m *mockConfigService) IsRestartRequired() bool { return m.restartRequired }
+func (m *mockConfigService) ListSources(ctx context.Context) (interface{}, error) { return m.sources, nil }
+func (m *mockConfigService) AddSource(ctx context.Context, source interface{}) error { return nil }
+func (m *mockConfigService) UpdateSource(ctx context.Context, id string, source interface{}) error { return nil }
+func (m *mockConfigService) DeleteSource(ctx context.Context, id string) error { return nil }
+func (m *mockConfigService) GetSyncStatus(ctx context.Context) (service.SyncStatus, error) {
+	return m.syncStatus, nil
+}
+func (m *mockConfigService) TriggerSync(ctx context.Context) error { return nil }
+func (m *mockConfigService) HasSyncProvider() bool { return m.syncConfigured }

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -35,6 +36,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/processor"
 	"github.com/sysop/ultrabridge/internal/rag"
 	"github.com/sysop/ultrabridge/internal/search"
+	"github.com/sysop/ultrabridge/internal/service"
 	"github.com/sysop/ultrabridge/internal/source"
 	"github.com/sysop/ultrabridge/internal/source/boox"
 	"github.com/sysop/ultrabridge/internal/source/supernote"
@@ -48,19 +50,28 @@ import (
 // syncProviderAdapter wraps tasksync.SyncEngine to satisfy web.SyncStatusProvider.
 type syncProviderAdapter struct{ engine *tasksync.SyncEngine }
 
-func (a *syncProviderAdapter) Status() web.SyncStatus {
+func (a *syncProviderAdapter) Status() service.SyncStatus {
+	if a.engine == nil {
+		return service.SyncStatus{}
+	}
 	s := a.engine.Status()
-	return web.SyncStatus{
-		LastSyncAt:    s.LastSyncAt,
-		NextSyncAt:    s.NextSyncAt,
+	last := time.UnixMilli(s.LastSyncAt).UTC()
+	next := time.UnixMilli(s.NextSyncAt).UTC()
+	return service.SyncStatus{
+		LastSyncAt:    &last,
+		NextSyncAt:    &next,
 		InProgress:    s.InProgress,
-		LastError:     s.LastError,
+		LastError:     &s.LastError,
 		AdapterID:     s.AdapterID,
 		AdapterActive: s.AdapterActive,
 	}
 }
 
-func (a *syncProviderAdapter) TriggerSync() { a.engine.TriggerSync() }
+func (a *syncProviderAdapter) TriggerSync() {
+	if a.engine != nil {
+		a.engine.TriggerSync()
+	}
+}
 
 func main() {
 	if len(os.Args) >= 3 && os.Args[1] == "hash-password" {
@@ -361,12 +372,6 @@ func main() {
 		logger.Info("source started", "type", s.Type(), "name", s.Name())
 	}
 
-	// Extract components for web handler backward compatibility (Phase 5)
-	// TODO: Phase 6 will refactor handler to work directly with sources
-	var ns notestore.NoteStore
-	var pl web.FileScanner
-	var proc processor.Processor
-	var booxProc *booxpipeline.Processor
 	var booxNotesPath string
 	var snNotesPath string
 
@@ -387,21 +392,6 @@ func main() {
 		var booxCfg boox.Config
 		if err := json.Unmarshal([]byte(booxRow.ConfigJSON), &booxCfg); err == nil {
 			booxNotesPath = booxCfg.NotesPath
-		}
-	}
-
-	for _, s := range sources {
-		switch s.Type() {
-		case "supernote":
-			if snSource, ok := s.(*supernote.Source); ok {
-				ns = snSource.NoteStore()
-				pl = snSource.Pipeline()
-				proc = snSource.Processor()
-			}
-		case "boox":
-			if booxSource, ok := s.(*boox.Source); ok {
-				booxProc = booxSource.Processor()
-			}
 		}
 	}
 
@@ -474,11 +464,12 @@ func main() {
 
 	mux := http.NewServeMux()
 	var webHandler *web.Handler // will be set later if web is enabled
+	var configSvc service.ConfigService
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		configDirty := false
-		if webHandler != nil {
-			configDirty = webHandler.IsConfigDirty()
+		if configSvc != nil {
+			configDirty = configSvc.IsRestartRequired()
 		}
 		type healthResp struct {
 			Status       string `json:"status"`
@@ -532,47 +523,66 @@ func main() {
 		})
 	})
 
-	// Wire Boox WebDAV server if Boox source is active
-	if booxProc != nil && booxNotesPath != "" {
-		davHandler := ubwebdav.NewHandler(booxNotesPath, func(absPath string) {
-			logger.Info("boox note uploaded", "path", absPath)
-			if err := booxProc.Enqueue(context.Background(), absPath); err != nil {
-				logger.Error("enqueue boox job", "error", err, "path", absPath)
-			}
-		})
-		mux.Handle("/webdav/", authMW.Wrap(davHandler))
-		logger.Info("boox webdav enabled", "path", booxNotesPath)
-	}
-
 	// Wire web UI (always enabled — setup page, settings, and source config depend on it)
 	{
-		// If sync is enabled, wrap syncEngine for web UI; otherwise nil
-		var syncProvider web.SyncStatusProvider
-		if cfg.SNSyncEnabled && syncEngine != nil {
-			syncProvider = &syncProviderAdapter{engine: syncEngine}
-		}
-		// If Boox is enabled, pass the store and processor; otherwise nil
-		var booxStore web.BooxStore
-		var booxImporter web.BooxImporter
-		if booxProc != nil {
-			booxStore = booxProc.Store()
-			booxImporter = booxProc
+		// Create Services
+		// 1. Task Service
+		taskSvc := service.NewTaskService(store, notifier)
+
+		// 2. Note Service
+		// We need to identify Supernote and Boox components from sources
+		var ns notestore.NoteStore
+		var proc processor.Processor
+		var scanner service.FileScanner
+		var booxStore service.BooxStore
+		var booxImporter service.BooxImporter
+		
+		for _, s := range sources {
+			switch s.Type() {
+			case "supernote":
+				if snSource, ok := s.(*supernote.Source); ok {
+					ns = snSource.NoteStore()
+					proc = snSource.Processor()
+					scanner = snSource.Pipeline()
+				}
+			case "boox":
+				if booxSource, ok := s.(*boox.Source); ok {
+					booxStore = booxSource.Processor().Store()
+					booxImporter = booxSource.Processor()
+				}
+			}
 		}
 
-		// Wire chat handler if enabled
-		var chatHandler *chat.Handler
+		// Wire Boox WebDAV server if Boox source is active
+		if booxImporter != nil && booxNotesPath != "" {
+			davHandler := ubwebdav.NewHandler(booxNotesPath, func(absPath string) {
+				logger.Info("boox note uploaded", "path", absPath)
+				if err := booxImporter.Enqueue(context.Background(), absPath); err != nil {
+					logger.Error("enqueue boox job", "error", err, "path", absPath)
+				}
+			})
+			mux.Handle("/webdav/", authMW.Wrap(davHandler))
+			logger.Info("boox webdav enabled", "path", booxNotesPath)
+		}
+		
+		booxCachePath := ""
+		if booxNotesPath != "" {
+			booxCachePath = filepath.Join(booxNotesPath, ".cache")
+		}
+		noteSvc := service.NewNoteService(ns, proc, booxStore, booxImporter, si, scanner, noteDB, booxCachePath, booxNotesPath, logger)
+
+		// 3. Search Service
 		var chatStore *chat.Store
 		if cfg.ChatEnabled {
 			chatStore = chat.NewStore(noteDB)
-			chatHandler = chat.NewHandler(chatStore, retriever, cfg.ChatAPIURL, cfg.ChatModel, logger)
 		}
+		searchSvc := service.NewSearchService(si, retriever, embedder, embedStore, cfg.OllamaEmbedModel, chatStore, cfg.ChatAPIURL, cfg.ChatModel, logger)
 
-		webHandler = web.NewHandler(store, notifier, ns, si, proc, pl, syncProvider, booxStore, booxImporter, booxNotesPath, snNotesPath, noteDB, logger, broadcaster, embedder, embedStore, cfg.OllamaEmbedModel, retriever, chatHandler, chatStore, web.RAGDisplayConfig{
-			OllamaURL:   cfg.OllamaURL,
-			OllamaModel: cfg.OllamaEmbedModel,
-			ChatAPIURL:  cfg.ChatAPIURL,
-			ChatModel:   cfg.ChatModel,
-		}, cfg)
+		// 4. Config Service
+		syncProvider := &syncProviderAdapter{engine: syncEngine}
+		configSvc = service.NewConfigService(noteDB, syncProvider, cfg)
+
+		webHandler = web.NewHandler(taskSvc, noteSvc, searchSvc, configSvc, noteDB, snNotesPath, booxNotesPath, logger, broadcaster)
 
 		// OAuth2 flow for Claude.ai
 		// /authorize requires user auth (browser login)

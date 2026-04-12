@@ -3,3 +3,10 @@ docs/
 *.md
 sndata/
 snapshots/
+ultrabridge-data/
+.gemini/
+.claude/
+.ed3d/
+tests/
+testdata/
+tmp/

@@ -124,14 +124,26 @@ func (s *Store) Status() ProcessorStatus {
 	running := s.cancel != nil
 	s.mu.Unlock()
 
-	var pending, inFlight int
+	var pending, inFlight, done, failed int
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status=?", StatusPending).Scan(&pending); err != nil {
 		s.logger.Error("failed to count pending jobs", "error", err)
 	}
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status=?", StatusInProgress).Scan(&inFlight); err != nil {
 		s.logger.Error("failed to count in-flight jobs", "error", err)
 	}
-	return ProcessorStatus{Running: running, Pending: pending, InFlight: inFlight}
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status=?", StatusDone).Scan(&done); err != nil {
+		s.logger.Error("failed to count done jobs", "error", err)
+	}
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM jobs WHERE status=?", StatusFailed).Scan(&failed); err != nil {
+		s.logger.Error("failed to count failed jobs", "error", err)
+	}
+	return ProcessorStatus{
+		Running:  running,
+		Pending:  pending,
+		InFlight: inFlight,
+		Done:     done,
+		Failed:   failed,
+	}
 }
 
 func (s *Store) Enqueue(ctx context.Context, path string, opts ...EnqueueOption) error {
