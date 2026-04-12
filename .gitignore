@@ -6,3 +6,5 @@
 /*.jpg
 # test .note files live on main, not feature branches
 *.note
+node_modules/
+ultrabridge-data/

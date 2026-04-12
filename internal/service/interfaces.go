@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"time"
+
+	"github.com/sysop/ultrabridge/internal/booxpipeline"
 )
 
 // TaskStatus is a type-safe status for tasks.
@@ -60,12 +62,13 @@ type SyncStatus struct {
 
 // EmbeddingJobStatus represents the background processing state.
 type EmbeddingJobStatus struct {
-	Running        bool        `json:"running"`
-	PendingCount   int         `json:"pending_count"`
-	InFlightCount  int         `json:"in_flight_count"`
-	ProcessedCount int         `json:"processed_count"`
-	FailedCount    int         `json:"failed_count"`
-	ActiveTask     *ActiveTask `json:"active_task,omitempty"`
+	Running        bool                     `json:"running"`
+	PendingCount   int                      `json:"pending_count"`
+	InFlightCount  int                      `json:"in_flight_count"`
+	ProcessedCount int                      `json:"processed_count"`
+	FailedCount    int                      `json:"failed_count"`
+	ActiveTask     *ActiveTask              `json:"active_task,omitempty"`
+	Boox           *booxpipeline.QueueStatus `json:"boox,omitempty"`
 }
 
 type ActiveTask struct {

@@ -30,6 +30,7 @@ func (h *Handler) RegisterAPIv1() {
 	h.mux.HandleFunc("GET /api/v1/status", h.handleV1Status)
 	h.mux.HandleFunc("GET /api/v1/config", h.handleV1GetConfig)
 	h.mux.HandleFunc("PUT /api/v1/config", h.handleV1UpdateConfig)
+	h.mux.HandleFunc("POST /api/v1/client-error", h.handleV1ClientError)
 }
 
 // --- Tasks ---
@@ -201,4 +202,24 @@ func (h *Handler) handleV1GetConfig(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleV1UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	h.handlePutConfig(w, r)
+}
+
+func (h *Handler) handleV1ClientError(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		URL     string `json:"url"`
+		Status  int    `json:"status"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	h.logger.Warn("frontend client error",
+		"url", payload.URL,
+		"status", payload.Status,
+		"message", payload.Message,
+	)
+
+	w.WriteHeader(http.StatusNoContent)
 }

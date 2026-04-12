@@ -82,7 +82,8 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 		}
 
 		if m.tokenValidator != nil {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="UltraBridge", Basic realm="UltraBridge"`)
+			w.Header().Add("WWW-Authenticate", `Bearer realm="UltraBridge"`)
+			w.Header().Add("WWW-Authenticate", `Basic realm="UltraBridge"`)
 		} else {
 			w.Header().Set("WWW-Authenticate", `Basic realm="UltraBridge"`)
 		}

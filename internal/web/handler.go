@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -37,7 +38,7 @@ type Handler struct {
 	search   service.SearchService
 	config   service.ConfigService
 	
-	noteDB          *sql.DB // for settings directly (mcp tokens)
+	noteDB          *sql.DB
 	notesPathPrefix string
 	booxNotesPath   string
 	booxImportPath  string
@@ -47,7 +48,6 @@ type Handler struct {
 	broadcaster     *logging.LogBroadcaster
 }
 
-// formatDueTime converts a due date to a formatted string.
 func formatDueTime(val interface{}) string {
 	var t time.Time
 	switch v := val.(type) {
@@ -66,7 +66,6 @@ func formatDueTime(val interface{}) string {
 	return t.Format("2006-01-02")
 }
 
-// formatCreated converts a time value to a human-readable date.
 func formatCreated(val interface{}) string {
 	var t time.Time
 	switch v := val.(type) {
@@ -88,7 +87,6 @@ func formatCreated(val interface{}) string {
 	return t.Format("2006-01-02")
 }
 
-// NewHandler creates a new web handler with embedded templates.
 func NewHandler(
 	tasks service.TaskService,
 	notes service.NoteService,
@@ -113,29 +111,21 @@ func NewHandler(
 		mux:             http.NewServeMux(),
 	}
 
-	// Cache the import path for the noteSource template function.
 	if noteDB != nil {
 		h.booxImportPath, _ = notedb.GetSetting(context.Background(), noteDB, appconfig.KeyBooxImportPath)
 	}
 
-	// Parse the embedded templates with custom function map
 	funcMap := template.FuncMap{
 		"formatDueTime": formatDueTime,
 		"formatCreated": formatCreated,
 		"formatTimestamp": func(ms int64) string {
-			if ms == 0 {
-				return "Never"
-			}
+			if ms == 0 { return "Never" }
 			return time.UnixMilli(ms).UTC().Format("2006-01-02 15:04")
 		},
 		"fileTypeStr": func(ft string) string { return ft },
 		"noteSource": func(path string) string {
-			if h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) {
-				return "Boox"
-			}
-			if h.booxImportPath != "" && strings.HasPrefix(path, h.booxImportPath) {
-				return "Boox"
-			}
+			if h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) { return "Boox" }
+			if h.booxImportPath != "" && strings.HasPrefix(path, h.booxImportPath) { return "Boox" }
 			return "Supernote"
 		},
 		"hasPrefix":  strings.HasPrefix,
@@ -144,53 +134,38 @@ func NewHandler(
 		"trimPrefix": strings.TrimPrefix,
 		"taskLink": func(val interface{}) map[string]interface{} {
 			if val == nil { return nil }
-			
 			var link struct {
 				AppName  string `json:"appName"`
 				FilePath string `json:"filePath"`
 				Page     int    `json:"page"`
 			}
-
 			switch v := val.(type) {
 			case string:
 				if v == "" { return nil }
-				data, err := base64.StdEncoding.DecodeString(v)
-				if err != nil { return nil }
-				if err := json.Unmarshal(data, &link); err != nil { return nil }
+				data, _ := base64.StdEncoding.DecodeString(v)
+				json.Unmarshal(data, &link)
 			case *service.TaskLink:
 				if v == nil { return nil }
-				link.AppName = v.AppName
-				link.FilePath = v.FilePath
-				link.Page = v.Page
+				link.AppName, link.FilePath, link.Page = v.AppName, v.FilePath, v.Page
 			case service.TaskLink:
-				link.AppName = v.AppName
-				link.FilePath = v.FilePath
-				link.Page = v.Page
+				link.AppName, link.FilePath, link.Page = v.AppName, v.FilePath, v.Page
 			default:
 				return nil
 			}
-
 			if link.FilePath == "" { return nil }
-			
-			// Map device path to local path.
 			const devicePrefix = "/storage/emulated/0/Note/"
 			localPath := link.FilePath
 			if h.notesPathPrefix != "" && strings.HasPrefix(link.FilePath, devicePrefix) {
 				localPath = filepath.Join(h.notesPathPrefix, link.FilePath[len(devicePrefix):])
 			}
-			return map[string]interface{}{
-				"Path": localPath,
-				"Page": link.Page,
-			}
+			return map[string]interface{}{"Path": localPath, "Page": link.Page}
 		},
 	}
+
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html")
-	if err != nil {
-		panic(fmt.Sprintf("failed to parse templates: %v", err))
-	}
+	if err != nil { panic(fmt.Sprintf("failed to parse templates: %v", err)) }
 	h.tmpl = tmpl
 
-	// Register routes
 	h.mux.HandleFunc("GET /setup", h.handleSetup)
 	h.mux.HandleFunc("POST /setup/save", h.handleSetupSave)
 	h.mux.HandleFunc("GET /{$}", h.handleIndex)
@@ -201,13 +176,7 @@ func NewHandler(
 	h.mux.HandleFunc("GET /logs", h.handleLogs)
 	h.mux.HandleFunc("GET /settings", h.handleSettings)
 	h.mux.HandleFunc("POST /settings/save", h.handleSettingsSave)
-	h.mux.HandleFunc("POST /settings/backfill-embeddings", func(w http.ResponseWriter, r *http.Request) {
-		if h.search == nil || !h.search.HasEmbeddingPipeline() {
-			http.NotFound(w, r)
-			return
-		}
-		h.handleBackfillEmbeddings(w, r)
-	})
+	h.mux.HandleFunc("POST /settings/backfill-embeddings", h.handleBackfillEmbeddings)
 	
 	if h.noteDB != nil {
 		h.mux.HandleFunc("POST /settings/mcp-tokens/create", h.handleMCPTokenCreate)
@@ -252,9 +221,8 @@ func NewHandler(
 	})
 	h.registerLogStreamHandler(broadcaster)
 
-	// JSON API endpoints
 	h.mux.HandleFunc("GET /api/search", func(w http.ResponseWriter, r *http.Request) {
-		if h.search == nil {
+		if h.search == nil || !h.search.HasEmbeddingPipeline() {
 			http.NotFound(w, r)
 			return
 		}
@@ -263,7 +231,6 @@ func NewHandler(
 	h.mux.HandleFunc("GET /api/notes/pages", h.handleAPIGetPages)
 	h.mux.HandleFunc("GET /api/notes/pages/image", h.handleAPIGetImage)
 
-	// Config and sources API endpoints
 	if h.noteDB != nil {
 		h.mux.HandleFunc("GET /api/config", h.handleGetConfig)
 		h.mux.HandleFunc("PUT /api/config", h.handlePutConfig)
@@ -273,562 +240,374 @@ func NewHandler(
 		h.mux.HandleFunc("DELETE /api/sources/{id}", h.handleDeleteSource)
 	}
 
-	// Chat routes
 	h.mux.HandleFunc("GET /chat", h.handleChat)
 	h.mux.HandleFunc("POST /chat/ask", h.handleAsk)
 	h.mux.HandleFunc("GET /chat/sessions", h.handleChatSessions)
 	h.mux.HandleFunc("GET /chat/messages", h.handleChatMessages)
 
-	// Register V1 API standard routes
 	h.RegisterAPIv1()
 
-	// Static files (PWA)
-	h.mux.Handle("GET /manifest.json", http.FileServer(http.FS(staticFS)))
-	h.mux.Handle("GET /sw.js", http.FileServer(http.FS(staticFS)))
-	h.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
-	// Serve icons from root for manifest.json compatibility
-	h.mux.Handle("GET /erb.png", http.FileServer(http.FS(staticFS)))
+	subFS, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		panic(err)
+	}
+	fileServer := http.FileServer(http.FS(subFS))
+
+	h.mux.Handle("GET /manifest.json", fileServer)
+	h.mux.Handle("GET /sw.js", fileServer)
+	h.mux.Handle("GET /htmx.min.js", fileServer)
+	h.mux.Handle("GET /static/", http.StripPrefix("/static/", fileServer))
+	h.mux.Handle("GET /erb.png", fileServer)
 
 	return h
 }
 
-// handleAsk handles POST /chat/ask. Orchestrates retrieval → prompt → vLLM → SSE proxy.
-func (h *Handler) handleAsk(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		SessionID int    `json:"session_id"`
-		Question  string `json:"question"`
+func (h *Handler) renderTemplate(w http.ResponseWriter, r *http.Request, name string, data map[string]interface{}) {
+	if data == nil {
+		data = h.baseTemplateData(r.Context())
+	} else {
+		base := h.baseTemplateData(r.Context())
+		for k, v := range base {
+			if _, ok := data[k]; !ok {
+				data[k] = v
+			}
+		}
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
-		return
-	}
-	if req.Question == "" {
-		http.Error(w, `{"error":"question is required"}`, http.StatusBadRequest)
-		return
+	if _, ok := data["activeTab"]; !ok {
+		data["activeTab"] = name
 	}
 
-	responses, err := h.search.Ask(r.Context(), req.Question, req.SessionID)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// Clone to avoid race condition when defining "content" template
+	t, err := h.tmpl.Clone()
 	if err != nil {
-		h.logger.Error("ask failed", "error", err)
-		http.Error(w, "chat failed", http.StatusInternalServerError)
+		h.logger.Error("failed to clone template", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-
-	flusher, _ := w.(http.Flusher)
-	for resp := range responses {
-		fmt.Fprintf(w, "data: %s\n\n", mustJSON(resp))
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
-}
-
-func mustJSON(v interface{}) string {
-	b, _ := json.Marshal(v)
-	return string(b)
-}
-
-// ServeHTTP implements http.Handler
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.mux.ServeHTTP(w, r)
-}
-
-// baseTemplateData returns shared data needed by all routes that render index.html.
-// This ensures the task list is always available regardless of which tab is active.
-func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
-	data := map[string]interface{}{}
-	
-	if h.tasks != nil {
-		tasks, err := h.tasks.List(ctx)
-		if err != nil {
-			h.logger.Error("failed to list tasks for template", "error", err)
-		} else {
-			data["tasks"] = tasks
-		}
+	// Define "content" as the specific fragment being rendered
+	fragmentPath := "templates/" + name + ".html"
+	content, err := templateFS.ReadFile(fragmentPath)
+	if err != nil {
+		h.logger.Error("failed to read fragment", "path", fragmentPath, "error", err)
+		http.Error(w, "template not found", http.StatusInternalServerError)
+		return
 	}
 
-	if h.config != nil {
-		cfg, _ := h.config.GetConfig(ctx)
-		if c, ok := cfg.(*appconfig.Config); ok {
-			data["BooxNotesPath"] = c.DBEnvPath // or specific path from config
-		}
-		data["RestartRequired"] = h.config.IsRestartRequired()
+	_, err = t.New("content").Parse(string(content))
+	if err != nil {
+		h.logger.Error("failed to parse fragment", "name", name, "error", err)
+		http.Error(w, "template error", http.StatusInternalServerError)
+		return
 	}
-	
-	return data
+
+	if r.Header.Get("HX-Request") == "true" {
+		t.ExecuteTemplate(w, "content", data)
+		return
+	}
+	t.ExecuteTemplate(w, "layout.html", data)
 }
 
-// handleIndex renders the task list page
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	data := h.baseTemplateData(ctx)
-	data["activeTab"] = "tasks"
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
-		h.logger.Error("failed to render template", "error", err)
-		http.Error(w, "failed to render page", http.StatusInternalServerError)
-	}
+	h.renderTemplate(w, r, "tasks", nil)
 }
 
-// DefaultBooxTodoPrompt is the default prompt for red ink to-do extraction.
-const DefaultBooxTodoPrompt = `Find any passages on this page written in RED ink. For each red passage, return a JSON object on its own line like: {"type":"todo","text":"the red text content"}. If there are no red passages, return nothing.`
+func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	data := map[string]interface{}{"activeTab": "files"}
+	if detail := r.URL.Query().Get("detail"); detail != "" {
+		data["detailPath"] = detail
+	}
+	if !h.notes.HasSupernoteSource() {
+		data["filesError"] = "No Supernote source configured. Add a source in Settings."
+		h.renderTemplate(w, r, "files", data)
+		return
+	}
+	rawPath := r.URL.Query().Get("path")
+	relPath, ok := safeRelPath(rawPath)
+	if !ok { http.Error(w, "invalid path", http.StatusBadRequest); return }
+	sortField, sortOrder := r.URL.Query().Get("sort"), r.URL.Query().Get("order")
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage <= 0 { perPage = 25 }
+	if page <= 0 { page = 1 }
 
-// handleSettings renders the settings page
+	files, total, err := h.notes.ListFiles(ctx, relPath, sortField, sortOrder, page, perPage)
+	if err != nil { http.Error(w, "internal error", http.StatusInternalServerError); return }
+	data["files"], data["relPath"], data["breadcrumbs"], data["filesTotalFiles"] = files, relPath, buildBreadcrumbs(relPath), total
+	data["filesPage"], data["filesPerPage"] = page, perPage
+	data["filesTotalPages"] = (total + perPage - 1) / perPage
+	if data["filesTotalPages"] == 0 { data["filesTotalPages"] = 1 }
+	h.renderTemplate(w, r, "files", data)
+}
+
+func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
+	data := map[string]interface{}{"activeTab": "search"}
+	query, folder := strings.TrimSpace(r.URL.Query().Get("q")), strings.TrimSpace(r.URL.Query().Get("folder"))
+	data["searchQuery"], data["searchFolder"] = query, folder
+	if query != "" {
+		results, _ := h.search.Search(r.Context(), query, folder)
+		data["searchResults"] = results
+	}
+	h.renderTemplate(w, r, "search", data)
+}
+
+func (h *Handler) handleChat(w http.ResponseWriter, r *http.Request) {
+	sessions, _ := h.search.ListSessions(r.Context())
+	h.renderTemplate(w, r, "chat", map[string]interface{}{"chatSessions": sessions})
+}
+
+func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) { h.renderTemplate(w, r, "logs", nil) }
+
 func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	data := h.baseTemplateData(ctx)
-	data["activeTab"] = "settings"
-
-	cfg, err := h.config.GetConfig(ctx)
-	if err != nil {
-		h.logger.Error("failed to get config", "error", err)
-	} else {
-		data["Config"] = cfg
-	}
-
-	sources, err := h.config.ListSources(ctx)
-	if err != nil {
-		h.logger.Error("failed to list sources", "error", err)
-	} else {
-		data["Sources"] = sources
-	}
-
-	// MCP Tokens (mcp_tokens table managed directly for now)
+	ctx := r.Context()
+	cfg, _ := h.config.GetConfig(ctx)
+	srcs, _ := h.config.ListSources(ctx)
+	data := map[string]interface{}{"Config": cfg, "Sources": srcs, "activeTab": "settings"}
 	if h.noteDB != nil {
-		tokens, err := mcpauth.ListTokens(ctx, h.noteDB)
-		if err != nil {
-			h.logger.Error("list mcp tokens", "error", err)
-		}
-		data["MCPTokens"] = tokens
-		data["MCPTokensEnabled"] = true
-	} else {
-		data["MCPTokensEnabled"] = false
+		tokens, _ := mcpauth.ListTokens(ctx, h.noteDB)
+		data["MCPTokens"], data["MCPTokensEnabled"] = tokens, true
 	}
-
-	// One-time flash: display raw token after creation
-	if newToken := r.URL.Query().Get("new_token"); newToken != "" {
-		data["NewMCPToken"] = newToken
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
-		h.logger.Error("failed to render template", "error", err)
-	}
+	if nt := r.URL.Query().Get("new_token"); nt != "" { data["NewMCPToken"] = nt }
+	h.renderTemplate(w, r, "settings", data)
 }
 
-// handleSettingsSave saves a settings form submission.
-func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	// Get current config to update it
-	cObj, err := h.config.GetConfig(ctx)
-	if err != nil {
-		h.logger.Error("failed to get config for save", "error", err)
-		http.Error(w, "failed to load configuration", http.StatusInternalServerError)
-		return
-	}
-	cfg := cObj.(*appconfig.Config)
-
-	section := r.FormValue("section")
-	switch section {
-	case "supernote":
-		cfg.SNSyncEnabled = r.FormValue("inject_enabled") != "false"
-	case "general":
-		cfg.EmbedEnabled = r.FormValue("embed_enabled") == "true"
-		cfg.OllamaURL = r.FormValue("ollama_url")
-		cfg.OllamaEmbedModel = r.FormValue("ollama_embed_model")
-		cfg.ChatEnabled = r.FormValue("chat_enabled") == "true"
-		cfg.ChatAPIURL = r.FormValue("chat_api_url")
-		cfg.ChatModel = r.FormValue("chat_model")
-		cfg.LogVerboseAPI = r.FormValue("log_verbose_api") == "true"
-	}
-
-	if err := h.config.UpdateConfig(ctx, cfg); err != nil {
-		h.logger.Error("failed to update config", "error", err)
-		http.Error(w, "failed to save configuration", http.StatusInternalServerError)
-		return
-	}
-
-	http.Redirect(w, r, "/settings", http.StatusSeeOther)
-}
-
-// handleLogs renders the logs page
-func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	data := h.baseTemplateData(ctx)
-	data["activeTab"] = "logs"
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
-		h.logger.Error("failed to render template", "error", err)
-	}
-}
-
-// handleCreateTask creates a new task from form data
 func (h *Handler) handleCreateTask(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		h.logger.Warn("failed to parse form", "error", err)
-		http.Error(w, "failed to parse form", http.StatusBadRequest)
-		return
-	}
-
 	title := strings.TrimSpace(r.FormValue("title"))
 	if title == "" {
-		h.logger.Warn("create task: title is required")
 		http.Error(w, "title is required", http.StatusBadRequest)
 		return
 	}
-
 	dueDateStr := strings.TrimSpace(r.FormValue("due_date"))
 	var dueAt *time.Time
 	if dueDateStr != "" {
-		t, err := time.Parse("2006-01-02", dueDateStr)
-		if err != nil {
-			h.logger.Warn("invalid due date", "error", err, "value", dueDateStr)
-			http.Error(w, "invalid due date format", http.StatusBadRequest)
+		if t, err := time.Parse("2006-01-02", dueDateStr); err == nil {
+			utc := t.UTC()
+			dueAt = &utc
+		} else {
+			http.Error(w, "invalid due date", http.StatusBadRequest)
 			return
 		}
-		utc := t.UTC()
-		dueAt = &utc
 	}
-
 	if _, err := h.tasks.Create(r.Context(), title, dueAt); err != nil {
-		h.logger.Error("failed to create task", "error", err)
 		http.Error(w, "failed to create task", http.StatusInternalServerError)
 		return
 	}
-
+	if r.Header.Get("HX-Request") == "true" { h.handleIndex(w, r); return }
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// handleCompleteTask marks a task as completed
 func (h *Handler) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
 	if h.tasks == nil {
 		http.NotFound(w, r)
 		return
 	}
 	taskID := r.PathValue("id")
-	if taskID == "" {
-		h.logger.Warn("complete task: task ID is required")
-		http.Error(w, "task ID is required", http.StatusBadRequest)
-		return
-	}
-
 	if err := h.tasks.Complete(r.Context(), taskID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			h.logger.Warn("complete task: not found", "task_id", taskID)
 			http.Error(w, "task not found", http.StatusNotFound)
 			return
 		}
-		h.logger.Error("failed to complete task", "error", err, "task_id", taskID)
 		http.Error(w, "failed to complete task", http.StatusInternalServerError)
 		return
 	}
-
+	if r.Header.Get("HX-Request") == "true" { h.handleIndex(w, r); return }
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// handleBulkAction completes or deletes multiple tasks at once
 func (h *Handler) handleBulkAction(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "failed to parse form", http.StatusBadRequest)
-		return
-	}
-
-	action := r.FormValue("action")
-	taskIDs := r.Form["task_ids"]
-
-	if len(taskIDs) == 0 {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
-
-	var err error
-	switch action {
-	case "complete":
-		err = h.tasks.BulkComplete(r.Context(), taskIDs)
-	case "delete":
-		err = h.tasks.BulkDelete(r.Context(), taskIDs)
-	default:
+	action, ids := r.FormValue("action"), r.Form["task_ids"]
+	if action != "complete" && action != "delete" {
 		http.Error(w, "unknown action", http.StatusBadRequest)
 		return
 	}
-
-	if err != nil {
-		h.logger.Error("bulk action failure", "action", action, "error", err)
+	if len(ids) > 0 {
+		if action == "complete" { h.tasks.BulkComplete(r.Context(), ids) } else if action == "delete" { h.tasks.BulkDelete(r.Context(), ids) }
 	}
-
+	if r.Header.Get("HX-Request") == "true" { h.handleIndex(w, r); return }
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (h *Handler) handlePurgeCompleted(w http.ResponseWriter, r *http.Request) {
-	if err := h.tasks.PurgeCompleted(r.Context()); err != nil {
-		h.logger.Error("purge completed tasks", "error", err)
-	}
-
+	h.tasks.PurgeCompleted(r.Context())
+	if r.Header.Get("HX-Request") == "true" { h.handleIndex(w, r); return }
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// breadcrumb is a navigation segment for the Files tab.
-type breadcrumb struct {
-	Label   string
-	RelPath string
-}
-
-// buildBreadcrumbs returns the crumb chain for a relative path.
-// e.g. "Note/Folder" → [{Home,""},{Note,"Note"},{Folder,"Note/Folder"}]
-func buildBreadcrumbs(relPath string) []breadcrumb {
-	crumbs := []breadcrumb{{Label: "Home", RelPath: ""}}
-	if relPath == "" {
-		return crumbs
+func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
+	cObj, _ := h.config.GetConfig(r.Context())
+	cfg := cObj.(*appconfig.Config)
+	switch r.FormValue("section") {
+	case "supernote": cfg.SNSyncEnabled = r.FormValue("inject_enabled") != "false"
+	case "general":
+		cfg.EmbedEnabled = r.FormValue("embed_enabled") == "true"
+		cfg.OllamaURL, cfg.OllamaEmbedModel = r.FormValue("ollama_url"), r.FormValue("ollama_embed_model")
+		cfg.ChatEnabled = r.FormValue("chat_enabled") == "true"
+		cfg.ChatAPIURL, cfg.ChatModel = r.FormValue("chat_api_url"), r.FormValue("chat_model")
+		cfg.LogVerboseAPI = r.FormValue("log_verbose_api") == "true"
 	}
-	parts := strings.Split(relPath, "/")
-	for i, p := range parts {
-		crumbs = append(crumbs, breadcrumb{
-			Label:   p,
-			RelPath: strings.Join(parts[:i+1], "/"),
-		})
-	}
-	return crumbs
-}
-
-// safeRelPath validates and cleans a user-supplied relative path.
-// Returns the cleaned path and true on success, or "", false on traversal attempt.
-func safeRelPath(relPath string) (string, bool) {
-	if relPath == "" {
-		return "", true
-	}
-	cleaned := filepath.Clean(relPath)
-	if filepath.IsAbs(cleaned) || strings.HasPrefix(cleaned, "..") {
-		return "", false
-	}
-	return cleaned, true
-}
-
-// handleBackfillEmbeddings triggers embedding backfill in the background.
-func (h *Handler) handleBackfillEmbeddings(w http.ResponseWriter, r *http.Request) {
-	if h.search == nil {
-		http.NotFound(w, r)
-		return
-	}
-	if err := h.search.TriggerBackfill(r.Context()); err != nil {
-		h.logger.Error("backfill failed", "err", err)
-	}
-
+	h.config.UpdateConfig(r.Context(), cfg)
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
-func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	data := h.baseTemplateData(ctx)
-	data["activeTab"] = "files"
-
-	if !h.notes.HasSupernoteSource() {
-		data["filesError"] = "No Supernote source configured. Add a source in Settings."
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
-			h.logger.Error("failed to render template", "error", err)
-		}
+func (h *Handler) handleBackfillEmbeddings(w http.ResponseWriter, r *http.Request) {
+	if h.search == nil || !h.search.HasEmbeddingPipeline() {
+		http.NotFound(w, r)
 		return
 	}
-
-	rawPath := r.URL.Query().Get("path")
-	relPath, ok := safeRelPath(rawPath)
-	if !ok {
-		http.Error(w, "invalid path", http.StatusBadRequest)
-		return
-	}
-	
-	sortField := r.URL.Query().Get("sort")
-	sortOrder := r.URL.Query().Get("order")
-	
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
-
-	files, total, err := h.notes.ListFiles(ctx, relPath, sortField, sortOrder, page, perPage)
-	if err != nil {
-		h.logger.Error("handleFiles list", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	data["files"] = files
-	data["relPath"] = relPath
-	data["breadcrumbs"] = buildBreadcrumbs(relPath)
-	data["filesTotalFiles"] = total
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
-		h.logger.Error("failed to render template", "error", err)
-	}
+	h.search.TriggerBackfill(r.Context())
+	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
-func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	data := h.baseTemplateData(ctx)
-	data["activeTab"] = "search"
-
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	folder := strings.TrimSpace(r.URL.Query().Get("folder"))
-	data["searchQuery"] = query
-	data["searchFolder"] = folder
-
-	if query != "" {
-		results, err := h.search.Search(ctx, query, folder)
-		if err != nil {
-			h.logger.Error("handleSearch", "err", err)
-		} else {
-			data["searchResults"] = results
-		}
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
-		h.logger.Error("failed to render template", "error", err)
-	}
+func (h *Handler) handleProcessorStart(w http.ResponseWriter, r *http.Request) {
+	h.notes.StartProcessor(r.Context())
+	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
-// handleChat renders the chat page
-func (h *Handler) handleChat(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	data := h.baseTemplateData(ctx)
-	data["activeTab"] = "chat"
-	
-	sessions, _ := h.search.ListSessions(ctx)
-	data["chatSessions"] = sessions
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
-		h.logger.Error("failed to render template", "error", err)
-	}
+func (h *Handler) handleProcessorStop(w http.ResponseWriter, r *http.Request) {
+	h.notes.StopProcessor(r.Context())
+	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
-// handleChatSessions returns JSON list of chat sessions
-func (h *Handler) handleChatSessions(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
+func (h *Handler) handleFilesScan(w http.ResponseWriter, r *http.Request) {
+	h.notes.ScanFiles(r.Context())
+	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
 
-	sessions, err := h.search.ListSessions(ctx)
-	if err != nil {
-		h.logger.Error("list sessions", "err", err)
-		http.Error(w, "failed to list sessions", http.StatusInternalServerError)
-		return
-	}
+func (h *Handler) handleFilesImport(w http.ResponseWriter, r *http.Request) {
+	h.notes.ImportFiles(r.Context())
+	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
 
+func (h *Handler) handleFilesRetryFailed(w http.ResponseWriter, r *http.Request) {
+	h.notes.RetryFailed(r.Context())
+	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesDeleteNote(w http.ResponseWriter, r *http.Request) {
+	h.notes.DeleteNote(r.Context(), r.FormValue("path"))
+	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesDeleteBulk(w http.ResponseWriter, r *http.Request) {
+	paths := r.Form["paths"]
+	if len(paths) > 0 { h.notes.BulkDelete(r.Context(), paths) }
+	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesMigrateImports(w http.ResponseWriter, r *http.Request) {
+	h.notes.MigrateImports(r.Context())
+	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func (h *Handler) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
+	status, _ := h.config.GetSyncStatus(r.Context())
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(sessions)
+	json.NewEncoder(w).Encode(status)
 }
 
-// handleChatMessages returns JSON list of messages for a session
-func (h *Handler) handleChatMessages(w http.ResponseWriter, r *http.Request) {
-	sessionIDStr := r.URL.Query().Get("session_id")
-	sessionID, _ := strconv.Atoi(sessionIDStr)
-
-	if sessionID == 0 {
-		http.Error(w, "session_id required", http.StatusBadRequest)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	messages, err := h.search.GetMessages(ctx, sessionID)
-	if err != nil {
-		h.logger.Error("get messages", "err", err)
-		http.Error(w, "failed to get messages", http.StatusInternalServerError)
-		return
-	}
-
+func (h *Handler) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
+	h.config.TriggerSync(r.Context())
+	status, _ := h.config.GetSyncStatus(r.Context())
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(messages)
+	json.NewEncoder(w).Encode(status)
 }
 
 func (h *Handler) handleFilesQueue(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		h.logger.Error("failed to parse form", "error", err)
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	path := r.FormValue("path")
-	back := r.FormValue("back")
-	if path != "" {
-		if err := h.notes.Enqueue(r.Context(), path, false); err != nil {
-			h.logger.Error("failed to enqueue", "path", path, "error", err)
-		}
-	}
-	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
+	h.notes.Enqueue(r.Context(), r.FormValue("path"), false)
+	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesSkip(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		h.logger.Error("failed to parse form", "error", err)
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	path := r.FormValue("path")
-	back := r.FormValue("back")
-	if path != "" {
-		if err := h.notes.Skip(r.Context(), path, "manual"); err != nil {
-			h.logger.Error("failed to skip", "path", path, "error", err)
-		}
-	}
-	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
+	h.notes.Skip(r.Context(), r.FormValue("path"), "manual")
+	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesUnskip(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		h.logger.Error("failed to parse form", "error", err)
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	path := r.FormValue("path")
-	back := r.FormValue("back")
-	if path != "" {
-		if err := h.notes.Unskip(r.Context(), path); err != nil {
-			h.logger.Error("failed to unskip", "path", path, "error", err)
-		}
-	}
-	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
+	h.notes.Unskip(r.Context(), r.FormValue("path"))
+	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesForce(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		h.logger.Error("failed to parse form", "error", err)
-		http.Error(w, "bad request", http.StatusBadRequest)
+	h.notes.Enqueue(r.Context(), r.FormValue("path"), true)
+	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
+}
+
+func (h *Handler) handleBooxRender(w http.ResponseWriter, r *http.Request) {
+	p, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	stream, ct, err := h.notes.RenderPage(r.Context(), r.URL.Query().Get("path"), p)
+	if err != nil { http.Error(w, "not found", http.StatusNotFound); return }
+	defer stream.Close()
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	io.Copy(w, stream)
+}
+
+func (h *Handler) handleBooxVersions(w http.ResponseWriter, r *http.Request) {
+	v, _ := h.notes.ListVersions(r.Context(), r.URL.Query().Get("path"))
+	if v == nil { v = []interface{}{} }
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
+
+func (h *Handler) handleMCPTokenCreate(w http.ResponseWriter, r *http.Request) {
+	label := strings.TrimSpace(r.FormValue("label"))
+	if label == "" {
+		http.Error(w, "token label is required", http.StatusBadRequest)
 		return
 	}
-	path := r.FormValue("path")
-	back := r.FormValue("back")
-	if path != "" {
-		if err := h.notes.Enqueue(r.Context(), path, true); err != nil {
-			h.logger.Error("failed to force enqueue", "path", path, "error", err)
-		}
+	t, _, err := mcpauth.CreateToken(r.Context(), h.noteDB, label)
+	if err != nil {
+		h.logger.Error("failed to create token", "error", err)
+		http.Error(w, "failed to create token", http.StatusInternalServerError)
+		return
 	}
-	http.Redirect(w, r, "/files?path="+url.QueryEscape(back), http.StatusSeeOther)
+	if r.Header.Get("HX-Request") == "true" {
+		h.renderTemplate(w, r, "settings", map[string]interface{}{"NewMCPToken": t})
+		return
+	}
+	http.Redirect(w, r, "/settings?new_token="+url.QueryEscape(t)+"#mcp-tokens", http.StatusSeeOther)
+}
+
+func (h *Handler) handleMCPTokenRevoke(w http.ResponseWriter, r *http.Request) {
+	mcpauth.RevokeToken(r.Context(), h.noteDB, r.FormValue("token_hash"))
+	if r.Header.Get("HX-Request") == "true" { h.handleSettings(w, r); return }
+	http.Redirect(w, r, "/settings#mcp-tokens", http.StatusSeeOther)
+}
+
+func (h *Handler) handleAsk(w http.ResponseWriter, r *http.Request) {
+	var req struct { SessionID int `json:"session_id"`; Question string `json:"question"` }
+	json.NewDecoder(r.Body).Decode(&req)
+	responses, err := h.search.Ask(r.Context(), req.Question, req.SessionID)
+	if err != nil { http.Error(w, "chat failed", http.StatusInternalServerError); return }
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	flusher, _ := w.(http.Flusher)
+	for resp := range responses {
+		fmt.Fprintf(w, "data: %s\n\n", mustJSON(resp))
+		if flusher != nil { flusher.Flush() }
+	}
+}
+
+func (h *Handler) handleChatSessions(w http.ResponseWriter, r *http.Request) {
+	s, _ := h.search.ListSessions(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s)
 }
 
 func (h *Handler) handleFilesStatus(w http.ResponseWriter, r *http.Request) {
@@ -840,8 +619,6 @@ func (h *Handler) handleFilesStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
-// handleFilesHistory returns JSON job history for a single file (AC7.6).
-// GET /files/history?path=<absolute_path>
 func (h *Handler) handleFilesHistory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	path := r.URL.Query().Get("path")
@@ -849,10 +626,7 @@ func (h *Handler) handleFilesHistory(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("null"))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	details, err := h.notes.GetNoteDetails(ctx, path)
+	details, err := h.notes.GetNoteDetails(r.Context(), path)
 	if err != nil {
 		h.logger.Error("failed to get note details", "path", path, "error", err)
 		w.Write([]byte("null"))
@@ -861,8 +635,6 @@ func (h *Handler) handleFilesHistory(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(details)
 }
 
-// handleFilesContent returns indexed note_content for a single file as JSON.
-// GET /files/content?path=<absolute_path>
 func (h *Handler) handleFilesContent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	path := r.URL.Query().Get("path")
@@ -870,9 +642,7 @@ func (h *Handler) handleFilesContent(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("[]"))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	docs, err := h.notes.GetContent(ctx, path)
+	docs, err := h.notes.GetContent(r.Context(), path)
 	if err != nil {
 		h.logger.Error("failed to get content", "path", path, "error", err)
 		w.Write([]byte("[]"))
@@ -881,8 +651,6 @@ func (h *Handler) handleFilesContent(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(docs)
 }
 
-// handleFilesRender renders a single page of a .note file as JPEG.
-// GET /files/render?path=<absolute_path>&page=<int>
 func (h *Handler) handleFilesRender(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	pageStr := r.URL.Query().Get("page")
@@ -908,199 +676,19 @@ func (h *Handler) handleFilesRender(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, stream)
 }
 
-func (h *Handler) handleProcessorStart(w http.ResponseWriter, r *http.Request) {
-	if err := h.notes.StartProcessor(r.Context()); err != nil {
-		h.logger.Error("failed to start processor", "error", err)
-	}
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+func mustJSON(v interface{}) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
-func (h *Handler) handleProcessorStop(w http.ResponseWriter, r *http.Request) {
-	if err := h.notes.StopProcessor(r.Context()); err != nil {
-		h.logger.Error("failed to stop processor", "error", err)
-	}
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
-}
-
-func (h *Handler) handleFilesScan(w http.ResponseWriter, r *http.Request) {
-	if err := h.notes.ScanFiles(r.Context()); err != nil {
-		h.logger.Error("scan failed", "error", err)
-	}
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
-}
-
-func (h *Handler) handleFilesImport(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
-
-	if err := h.notes.ImportFiles(ctx); err != nil {
-		h.logger.Error("import failed", "error", err)
-	}
-
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
-}
-
-func (h *Handler) handleFilesRetryFailed(w http.ResponseWriter, r *http.Request) {
-	if err := h.notes.RetryFailed(r.Context()); err != nil {
-		h.logger.Error("retry failed jobs", "error", err)
-	}
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
-}
-
-func (h *Handler) handleFilesDeleteNote(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	path := r.FormValue("path")
-	if path == "" {
-		http.Error(w, "path required", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.notes.DeleteNote(r.Context(), path); err != nil {
-		h.logger.Error("delete failed", "path", path, "error", err)
-		http.Error(w, "delete failed", http.StatusInternalServerError)
-		return
-	}
-
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
-}
-
-func (h *Handler) handleFilesDeleteBulk(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	paths := r.Form["paths"]
-	if len(paths) == 0 {
-		http.Redirect(w, r, "/files", http.StatusSeeOther)
-		return
-	}
-
-	if err := h.notes.BulkDelete(r.Context(), paths); err != nil {
-		h.logger.Error("bulk delete failure", "error", err)
-	}
-
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
-}
-
-func (h *Handler) handleFilesMigrateImports(w http.ResponseWriter, r *http.Request) {
-	if err := h.notes.MigrateImports(r.Context()); err != nil {
-		h.logger.Error("migrate failed", "error", err)
-	}
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
-}
-
-func (h *Handler) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleChatMessages(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.URL.Query().Get("session_id"))
+	m, _ := h.search.GetMessages(r.Context(), id)
 	w.Header().Set("Content-Type", "application/json")
-	status, _ := h.config.GetSyncStatus(r.Context())
-	json.NewEncoder(w).Encode(status)
-}
-
-func (h *Handler) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
-	if h.config == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.config.TriggerSync(r.Context())
-	status, _ := h.config.GetSyncStatus(r.Context())
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
-}
-
-// handleBooxRender serves cached JPEG page images for Boox notes.
-// GET /files/boox/render?path=<absolute_path>&page=<int>
-func (h *Handler) handleBooxRender(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
-	pageStr := r.URL.Query().Get("page")
-	page, _ := strconv.Atoi(pageStr)
-
-	stream, contentType, err := h.notes.RenderPage(r.Context(), path, page)
-	if err != nil {
-		h.logger.Debug("boox render failed", "path", path, "error", err)
-		http.Error(w, "Note not found", http.StatusNotFound)
-		return
-	}
-	defer stream.Close()
-
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "public, max-age=300")
-	io.Copy(w, stream)
-}
-
-// handleBooxVersions returns a list of archived versions for a Boox note.
-// GET /files/boox/versions?path=<absolute_path>
-func (h *Handler) handleBooxVersions(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
-	
-	versions, err := h.notes.ListVersions(r.Context(), path)
-	if err != nil {
-		h.logger.Error("boox versions failed", "path", path, "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if versions == nil {
-		versions = []interface{}{}
-	}
-	
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(versions)
-}
-
-// handleMCPTokenCreate creates a new MCP bearer token and redirects with one-time display.
-func (h *Handler) handleMCPTokenCreate(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	label := strings.TrimSpace(r.FormValue("label"))
-	if label == "" {
-		http.Error(w, "token label is required", http.StatusBadRequest)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	rawToken, _, err := mcpauth.CreateToken(ctx, h.noteDB, label)
-	if err != nil {
-		h.logger.Error("create mcp token", "error", err)
-		http.Error(w, "failed to create token", http.StatusInternalServerError)
-		return
-	}
-
-	http.Redirect(w, r, "/settings?new_token="+url.QueryEscape(rawToken)+"#mcp-tokens", http.StatusSeeOther)
-}
-
-// handleMCPTokenRevoke revokes an MCP token by its hash.
-func (h *Handler) handleMCPTokenRevoke(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	tokenHash := r.FormValue("token_hash")
-	if tokenHash == "" {
-		http.Error(w, "token hash is required", http.StatusBadRequest)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	if err := mcpauth.RevokeToken(ctx, h.noteDB, tokenHash); err != nil {
-		h.logger.Error("revoke mcp token", "error", err)
-		http.Error(w, "failed to revoke token", http.StatusInternalServerError)
-		return
-	}
-
-	http.Redirect(w, r, "/settings#mcp-tokens", http.StatusSeeOther)
+	json.NewEncoder(w).Encode(m)
 }
 
 // HandleOAuthAuthorize handles the first leg of Claude's OAuth flow.
-// It skips user consent and immediately redirects back with a fixed code.
 func (h *Handler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	redirectURI := r.URL.Query().Get("redirect_uri")
 	state := r.URL.Query().Get("state")
@@ -1128,9 +716,7 @@ func (h *Handler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleOAuthToken handles the token exchange leg of Claude's OAuth flow.
-// It ignores the code and returns a new persistent MCP bearer token.
 func (h *Handler) HandleOAuthToken(w http.ResponseWriter, r *http.Request) {
-	// Claude sends form-encoded data
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
@@ -1139,8 +725,6 @@ func (h *Handler) HandleOAuthToken(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	// Generate a new persistent bearer token for this connection.
-	// We label it "Claude-OAuth" so the user can identify it in Settings.
 	rawToken, _, err := mcpauth.CreateToken(ctx, h.noteDB, "Claude-OAuth")
 	if err != nil {
 		h.logger.Error("OAuth token: failed to create bearer token", "error", err)
@@ -1154,6 +738,40 @@ func (h *Handler) HandleOAuthToken(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"access_token": rawToken,
 		"token_type":   "Bearer",
-		"expires_in":   315360000, // 10 years (effectively permanent)
+		"expires_in":   315360000,
 	})
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
+
+func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
+	data := map[string]interface{}{}
+	if h.tasks != nil {
+		if t, err := h.tasks.List(ctx); err == nil {
+			data["tasks"] = t
+		}
+	}
+	data["BooxNotesPath"] = h.booxNotesPath
+	data["BooxImportPath"] = h.booxImportPath
+	if h.config != nil {
+		data["RestartRequired"] = h.config.IsRestartRequired()
+	}
+	data["chatEnabled"] = h.search != nil
+	return data
+}
+
+type breadcrumb struct { Label, RelPath string }
+func buildBreadcrumbs(p string) []breadcrumb {
+	res := []breadcrumb{{Label: "Home", RelPath: ""}}
+	if p == "" { return res }
+	parts := strings.Split(p, "/")
+	for i := range parts { res = append(res, breadcrumb{Label: parts[i], RelPath: strings.Join(parts[:i+1], "/")}) }
+	return res
+}
+
+func safeRelPath(p string) (string, bool) {
+	if p == "" { return "", true }
+	c := filepath.Clean(p)
+	if filepath.IsAbs(c) || strings.HasPrefix(c, "..") { return "", false }
+	return c, true
 }

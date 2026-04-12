@@ -1,0 +1,150 @@
+<!-- Files Tab -->
+<div id="files" class="tab-content active">
+  {{if .filesError}}
+    <div class="card" style="border-color: var(--status-text-failed);">
+        <p class="text-danger">{{.filesError}}</p>
+    </div>
+  {{else if .files}}
+    <div class="status-panel">
+        <span class="text-bold">Pipeline Status:</span>
+        <span id="proc-status" class="text-small">Loading...</span>
+        <div class="flex-spacer"></div>
+        <form hx-post="/processor/start" hx-target="#main-content" style="display:inline;">
+            <button type="submit" class="btn-small">▶ Start</button>
+        </form>
+        <form hx-post="/processor/stop" hx-target="#main-content" style="display:inline;">
+            <button type="submit" class="btn-small" style="background: var(--text-secondary);">⏹ Stop</button>
+        </form>
+    </div>
+
+    <div class="toolbar">
+      <form hx-post="/files/scan" hx-target="#main-content" style="display:inline;">
+        <button type="submit" class="btn-small">⟳ Scan Now</button>
+      </form>
+      {{if .BooxImportPath}}
+      <form hx-post="/files/import" hx-target="#main-content" style="display:inline;">
+        <button type="submit" class="btn-small" onclick="return confirmImport()">⬇ Import</button>
+      </form>
+      {{end}}
+      <form hx-post="/files/retry-failed" hx-target="#main-content" style="display:inline;">
+        <button type="submit" class="btn-small">↻ Retry Failed</button>
+      </form>
+      
+      <div class="flex-spacer"></div>
+      
+      <select onchange="filesNav({per_page:this.value,page:1})" style="width: auto;">
+        <option value="10" {{if eq .filesPerPage 10}}selected{{end}}>10 / page</option>
+        <option value="25" {{if eq .filesPerPage 25}}selected{{end}}>25 / page</option>
+        <option value="50" {{if eq .filesPerPage 50}}selected{{end}}>50 / page</option>
+      </select>
+      <span class="text-small">{{.filesTotalFiles}} files</span>
+    </div>
+
+    <div class="card">
+        <div class="breadcrumb">
+          {{range .breadcrumbs}}
+            <a href="/files?path={{.RelPath}}" hx-get="/files?path={{.RelPath}}" hx-target="#main-content" hx-push-url="true">{{.Label}}</a><span class="sep">/</span>
+          {{end}}
+        </div>
+    <form id="bulk-delete-form" hx-post="/files/delete-bulk" hx-target="#main-content">
+    <div class="table-container">
+    <table class="task-table">
+      <thead>
+        <tr>
+          <th style="width:2rem;"><input type="checkbox" id="select-all-files" onclick="toggleAllFiles(this)"></th>
+          <th><a href="#" onclick="filesNav({sort:'name', order: '{{if and (eq $.filesSort "name") (eq $.filesOrder "asc")}}desc{{else}}asc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Name {{if eq $.filesSort "name"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th>Type</th>
+          <th><a href="#" onclick="filesNav({sort:'size', order: '{{if and (eq $.filesSort "size") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Size {{if eq $.filesSort "size"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th><a href="#" onclick="filesNav({sort:'created', order: '{{if and (eq $.filesSort "created") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Created {{if eq $.filesSort "created"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th><a href="#" onclick="filesNav({sort:'modified', order: '{{if and (eq $.filesSort "modified") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Modified {{if eq $.filesSort "modified"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th>Status</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .files}}
+        <tr>
+          <td>{{if not .IsDir}}<input type="checkbox" name="paths" value="{{.Path}}" class="file-checkbox">{{end}}</td>
+          <td>
+            {{if .IsDir}}📁{{else if eq .FileType "note"}}📝{{else if eq .FileType "pdf"}}📄{{else if eq .FileType "epub"}}📚{{else}}📎{{end}}
+            {{if .IsDir}}<a href="/files?path={{.RelPath}}" hx-get="/files?path={{.RelPath}}" hx-target="#main-content" hx-push-url="true">{{.Name}}</a>{{else}}{{.Name}}{{end}}
+            {{$src := noteSource .Path}}
+            {{if eq $src "Boox"}}
+              <span class="badge badge-boox" title="Boox">B</span>
+            {{else}}
+              <span class="badge badge-sn" title="Supernote">SN</span>
+            {{end}}
+            {{if .DeviceInfo}}<br><span class="device-info">{{.DeviceInfo}}</span>{{end}}
+          </td>
+          <td>{{.FileType}}</td>
+          <td>{{.SizeBytes}}</td>
+          <td>{{if .CreatedAt.IsZero}}-{{else}}{{.CreatedAt.Format "2006-01-02"}}{{end}}</td>
+          <td>{{.ModifiedAt.Format "2006-01-02"}}</td>
+          <td>
+            {{if .IsDir}}
+              {{/* directories have no processing status */}}
+            {{else if eq .FileType "note"}}
+              {{if eq .JobStatus ""}}<span class="badge badge-unprocessed">unprocessed</span>
+              {{else if eq .JobStatus "pending"}}<span class="badge badge-pending">queued</span>
+              {{else if eq .JobStatus "in_progress"}}<span class="badge badge-progress">processing</span>
+              {{else if eq .JobStatus "done"}}<span class="badge badge-done">done</span>
+              {{else if eq .JobStatus "failed"}}<span class="badge badge-failed">failed</span>
+              {{else if eq .JobStatus "skipped"}}<span class="badge badge-skipped">skipped</span>
+              {{end}}
+            {{else}}
+              <span class="badge badge-unsupported">unsupported</span>
+            {{end}}
+          </td>
+          <td>
+            {{if eq .FileType "note"}}
+            <div style="display:inline-flex; gap: 0.25rem;">
+              {{if or (eq .JobStatus "") (eq .JobStatus "done") (eq .JobStatus "failed")}}
+                <button type="button" hx-post="/files/queue?path={{.Path | urlquery}}&back={{$.relPath | urlquery}}" hx-target="#main-content" class="btn-small">Queue</button>
+              {{end}}
+              {{if eq .JobStatus "skipped"}}
+                <button type="button" hx-post="/files/unskip?path={{.Path | urlquery}}&back={{$.relPath | urlquery}}" hx-target="#main-content" class="btn-small">Unskip</button>
+                <button type="button" hx-post="/files/force?path={{.Path | urlquery}}&back={{$.relPath | urlquery}}" hx-target="#main-content" class="btn-small">Force</button>
+              {{else if ne .JobStatus "in_progress"}}
+                <button type="button" hx-post="/files/skip?path={{.Path | urlquery}}&back={{$.relPath | urlquery}}" hx-target="#main-content" class="btn-small">Skip</button>
+              {{end}}
+              <button type="button" class="btn-small" onclick="showHistory('{{.Path}}')">Details</button>
+            </div>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    </div>
+    <div id="bulk-delete-bar" class="toolbar" style="display:none; margin-top: 1rem; padding: 0.5rem; background: var(--bg-color); border-radius: var(--radius);">
+      <button type="submit" class="btn-small" style="background: var(--status-text-failed);"
+        onclick="return confirm('Delete selected notes?')">✗ Delete Selected</button>
+      <span id="bulk-delete-count" class="text-small"></span>
+    </div>
+    </form>
+    </div> {{/* end of card */}}
+    
+    {{if gt .filesTotalPages 1}}
+    <div style="margin-top:0.75rem; display:flex; align-items:center; gap:0.5rem; font-size:0.9rem;">
+      {{if gt .filesPage 1}}
+        <button class="btn-small" hx-get="/files?path={{.relPath | urlquery}}&page={{sub .filesPage 1}}" hx-target="#main-content" hx-push-url="true">◂ Prev</button>
+      {{end}}
+      <span>Page {{.filesPage}} of {{.filesTotalPages}}</span>
+      {{if lt .filesPage .filesTotalPages}}
+        <button class="btn-small" hx-get="/files?path={{.relPath | urlquery}}&page={{add .filesPage 1}}" hx-target="#main-content" hx-push-url="true">Next ▸</button>
+      {{end}}
+    </div>
+    {{end}}
+  {{else}}
+    <div class="empty-state">
+        <p>No files found.</p>
+    </div>
+  {{end}}
+</div>
+
+<script>
+    updateBulkDeleteBar();
+    updateProcessorStatus();
+    {{if .detailPath}}
+    showHistory("{{.detailPath}}");
+    {{end}}
+</script>

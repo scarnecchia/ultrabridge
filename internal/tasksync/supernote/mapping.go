@@ -38,6 +38,14 @@ func RemoteToSPCTask(rt tasksync.RemoteTask, remoteID string) SPCTask {
 	if ct == 0 {
 		ct = now // Supernote quirk: completedTime holds creation time
 	}
+	sortVal := 0
+	sortCompleted := 0
+	if rt.Status == "completed" {
+		sortCompleted = 1
+	} else {
+		sortVal = 1
+	}
+
 	return SPCTask{
 		ID:             remoteID,
 		Title:          rt.Title,
@@ -50,12 +58,15 @@ func RemoteToSPCTask(rt tasksync.RemoteTask, remoteID string) SPCTask {
 		Recurrence:     rt.Recurrence,
 		IsReminderOn:   rt.IsReminderOn,
 		Links:          rt.Links,
-		IsDeleted:      "N",
-		Sort:           0,
-		SortCompleted:  0,
-		SortTime:       now,
-		PlanerSort:     0,
-		PlanerSortTime: now,
+		IsDeleted:        "N",
+		Sort:             sortVal,
+		SortCompleted:    sortCompleted,
+		SortTime:         now,
+		PlanerSort:       sortVal,
+		PlanerSortTime:   now,
+		AllSort:          sortVal,
+		AllSortCompleted: sortCompleted,
+		AllSortTime:      now,
 	}
 }
 

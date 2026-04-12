@@ -1,0 +1,54 @@
+<!-- Search Tab -->
+<div id="search" class="tab-content active">
+  <div class="card">
+    <form hx-get="/search" hx-target="#main-content" hx-push-url="true" class="toolbar">
+        <input type="text" name="q" value="{{.searchQuery}}"
+               placeholder="Search notes..."
+               style="flex: 1;">
+        {{if .searchFolders}}
+        <select name="folder" style="width: auto;">
+          <option value="">All folders</option>
+          {{range .searchFolders}}
+          <option value="{{.}}" {{if eq . $.searchFolder}}selected{{end}}>{{.}}</option>
+          {{end}}
+        </select>
+        {{end}}
+        <button type="submit">Search</button>
+    </form>
+  </div>
+
+  {{if .searchResults}}
+    <div class="card">
+        <div class="table-container">
+            <table>
+              <thead><tr><th>Source</th><th>File</th><th style="width: 4rem;">Page</th><th>Match</th></tr></thead>
+              <tbody>
+                {{range .searchResults}}
+                <tr>
+                  <td style="width: 6rem;">
+                    {{$src := noteSource .Path}}
+                    {{if eq $src "Boox"}}
+                      <span class="badge badge-boox" title="Boox">B</span>
+                    {{else}}
+                      <span class="badge badge-sn" title="Supernote">SN</span>
+                    {{end}}
+                  </td>
+                  <td><a href="#" onclick="showHistory('{{.Path | js}}'); return false;" style="color: var(--brand-color); text-decoration: none;">{{.Path}}</a></td>
+                  <td>{{.Page}}</td>
+                  <td class="text-small">{{.Snippet}}</td>
+                </tr>
+                {{end}}
+              </tbody>
+            </table>
+        </div>
+    </div>
+  {{else if .searchQuery}}
+    <div class="empty-state">
+        <p>No results for "{{.searchQuery}}".</p>
+    </div>
+  {{end}}
+</div>
+
+<script>
+    updateProcessorStatus();
+</script>

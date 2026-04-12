@@ -251,12 +251,22 @@ func (e *SyncEngine) reconcile(ctx context.Context, adapter DeviceAdapter) error
 				if r, ok := resultByTaskID[c.TaskID]; ok && r.RemoteID != "" {
 					remoteID = r.RemoteID
 				}
+				
+				remoteETag := ""
+				lastPulled := int64(0)
+				entry, _ := e.syncMap.GetByTaskID(ctx, c.TaskID, adapterID)
+				if entry != nil {
+					remoteETag = entry.RemoteETag
+					lastPulled = entry.LastPulled
+				}
+
 				if err := e.syncMap.Upsert(ctx, &SyncMapEntry{
 					TaskID:     c.TaskID,
 					AdapterID:  adapterID,
 					RemoteID:   remoteID,
+					RemoteETag: remoteETag,
 					LastPushed: now,
-					LastPulled: now,
+					LastPulled: lastPulled,
 				}); err != nil {
 					e.logger.Warn("upsert sync map after push failed", "task_id", c.TaskID, "error", err)
 				}
@@ -292,6 +302,7 @@ func (e *SyncEngine) processRemoteTask(ctx context.Context, adapterID string, rt
 			AdapterID:  adapterID,
 			RemoteID:   rt.RemoteID,
 			RemoteETag: rt.ETag,
+			LastPushed: 0,
 			LastPulled: now,
 		})
 	}
@@ -333,6 +344,7 @@ func (e *SyncEngine) processRemoteTask(ctx context.Context, adapterID string, rt
 		AdapterID:  adapterID,
 		RemoteID:   rt.RemoteID,
 		RemoteETag: rt.ETag,
+		LastPushed: entry.LastPushed,
 		LastPulled: now,
 	})
 }
@@ -374,7 +386,11 @@ func (e *SyncEngine) findLocalChanges(ctx context.Context, adapterID string) ([]
 		if t.LastModified.Valid {
 			localModified = t.LastModified.Int64
 		}
+		
+		e.logger.Info("findLocalChanges debug", "task_id", t.TaskID, "local_mod", localModified, "last_pushed", entry.LastPushed, "last_pulled", entry.LastPulled, "remote_id", entry.RemoteID)
+
 		if localModified > maxInt64(entry.LastPushed, entry.LastPulled) {
+			e.logger.Info("findLocalChanges appending update", "task_id", t.TaskID)
 			changes = append(changes, Change{
 				Type:     ChangeUpdate,
 				TaskID:   t.TaskID,

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -564,7 +565,11 @@ func main() {
 			logger.Info("boox webdav enabled", "path", booxNotesPath)
 		}
 		
-		noteSvc := service.NewNoteService(ns, proc, booxStore, booxImporter, si, scanner, noteDB, booxNotesPath, booxNotesPath, logger)
+		booxCachePath := ""
+		if booxNotesPath != "" {
+			booxCachePath = filepath.Join(booxNotesPath, ".cache")
+		}
+		noteSvc := service.NewNoteService(ns, proc, booxStore, booxImporter, si, scanner, noteDB, booxCachePath, booxNotesPath, logger)
 
 		// 3. Search Service
 		var chatStore *chat.Store

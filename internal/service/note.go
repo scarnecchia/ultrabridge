@@ -34,6 +34,7 @@ type BooxStore interface {
 	DeleteNote(ctx context.Context, path string) error
 	SkipNote(ctx context.Context, path, reason string) error
 	UnskipNote(ctx context.Context, path string) error
+	GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error)
 }
 
 // BooxImporter is the interface required by the NoteService for Boox imports.
@@ -366,17 +367,27 @@ func (s *noteService) StopProcessor(ctx context.Context) error {
 }
 
 func (s *noteService) GetProcessorStatus(ctx context.Context) (EmbeddingJobStatus, error) {
-	if s.proc == nil {
-		return EmbeddingJobStatus{}, nil
+	status := EmbeddingJobStatus{}
+	
+	if s.proc != nil {
+		procStatus := s.proc.Status()
+		status.Running = procStatus.Running
+		status.PendingCount = procStatus.Pending
+		status.InFlightCount = procStatus.InFlight
+		status.ProcessedCount = procStatus.Done
+		status.FailedCount = procStatus.Failed
 	}
-	status := s.proc.Status()
-	return EmbeddingJobStatus{
-		Running:        status.Running,
-		PendingCount:   status.Pending,
-		InFlightCount:  status.InFlight,
-		ProcessedCount: status.Done,
-		FailedCount:    status.Failed,
-	}, nil
+	
+	if s.booxStore != nil {
+		booxStatus, err := s.booxStore.GetQueueStatus(ctx)
+		if err == nil {
+			status.Boox = &booxStatus
+		} else {
+			s.logger.Error("failed to get boox queue status", "error", err)
+		}
+	}
+	
+	return status, nil
 }
 
 func (s *noteService) ImportFiles(ctx context.Context) error {

@@ -86,8 +86,8 @@ func TestPutConfigHashesPassword(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.handlePutConfig(w, req)
 
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("PUT /api/config returned status %d, want 204", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT /api/config returned status %d, want 200", w.Code)
 	}
 
 	// Verify password was hashed in DB

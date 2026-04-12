@@ -69,6 +69,7 @@ func (m *mockBooxStore) RetryAllFailed(ctx context.Context) (int64, error) { ret
 func (m *mockBooxStore) DeleteNote(ctx context.Context, path string) error    { return nil }
 func (m *mockBooxStore) SkipNote(ctx context.Context, path, reason string) error { return nil }
 func (m *mockBooxStore) UnskipNote(ctx context.Context, path string) error       { return nil }
+func (m *mockBooxStore) GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error) { return booxpipeline.QueueStatus{}, nil }
 
 type mockFileScanner struct {
 	scanned int

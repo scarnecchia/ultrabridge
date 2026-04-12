@@ -15,6 +15,7 @@ import (
 // TestAPISearchSuccess verifies AC3.1: GET /api/search?q=... returns JSON array
 func TestAPISearchSuccess(t *testing.T) {
 	searchSvc := &mockSearchService{
+		embeddingPipelineConfigured: true,
 		results: []service.SearchResult{
 			{
 				Path:    "/home/user/test.note",

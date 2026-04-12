@@ -1,0 +1,1312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UltraBridge</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0066cc">
+    <link rel="apple-touch-icon" href="/erb.png">
+    <script src="/htmx.min.js"></script>
+    <script>htmx.config.withCredentials = true;</script>
+    <style>
+        :root {
+            --brand-color: #0066cc;
+            --brand-hover: #0052a3;
+            --bg-color: #f5f5f5;
+            --surface-color: #ffffff;
+            --text-primary: #1a1a1a;
+            --text-secondary: #666666;
+            --text-muted: #999999;
+            --border-color: #dddddd;
+            --border-light: #eeeeee;
+            --shadow: 0 2px 4px rgba(0,0,0,0.1);
+            --radius: 8px;
+            --spacing: 20px;
+            --sidebar-width: 240px;
+            
+            /* Badges */
+            --status-bg-pending: #fff3cd;
+            --status-text-pending: #856404;
+            --status-bg-done: #d1e7dd;
+            --status-text-done: #0f5132;
+            --status-bg-failed: #f8d7da;
+            --status-text-failed: #842029;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #121212;
+                --surface-color: #1e1e1e;
+                --text-primary: #e0e0e0;
+                --text-secondary: #aaaaaa;
+                --text-muted: #777777;
+                --border-color: #333333;
+                --border-light: #2a2a2a;
+                --shadow: 0 4px 6px rgba(0,0,0,0.3);
+            }
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-primary);
+            line-height: 1.5;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .app-layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar Navigation */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--surface-color);
+            border-right: 1px solid var(--border-color);
+            padding: var(--spacing);
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            height: 100vh;
+            z-index: 10;
+        }
+
+        .sidebar h1 {
+            font-size: 1.5rem;
+            margin-bottom: 2rem;
+            color: var(--brand-color);
+        }
+
+        .nav-links {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            text-decoration: none;
+            color: var(--text-secondary);
+            border-radius: var(--radius);
+            font-weight: 500;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .nav-item:hover {
+            background: var(--bg-color);
+            color: var(--brand-color);
+        }
+
+        .nav-item.active {
+            background: var(--brand-color);
+            color: white;
+        }
+
+        /* Main Content */
+        .content {
+            flex: 1;
+            margin-left: var(--sidebar-width);
+            padding: var(--spacing);
+            max-width: 1200px;
+        }
+
+        .card {
+            background: var(--surface-color);
+            border-radius: var(--radius);
+            padding: var(--spacing);
+            box-shadow: var(--shadow);
+            margin-bottom: var(--spacing);
+            border: 1px solid var(--border-color);
+        }
+
+        h2 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        /* Forms & Inputs */
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        input[type="text"],
+        input[type="date"],
+        input[type="password"],
+        input[type="number"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 1rem;
+            background: var(--surface-color);
+            color: var(--text-primary);
+            font-family: inherit;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--brand-color);
+            ring: 2px var(--brand-color);
+        }
+
+        button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--brand-color);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: var(--radius);
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            min-height: 44px; /* Mobile touch target */
+        }
+
+        button:hover { background: var(--brand-hover); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .btn-small {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.85rem;
+            min-height: 32px;
+        }
+
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+            margin: 0 -1rem;
+            padding: 0 1rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95rem;
+        }
+
+        th {
+            text-align: left;
+            padding: 1rem 0.5rem;
+            border-bottom: 2px solid var(--border-color);
+            color: var(--text-secondary);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+        }
+
+        td {
+            padding: 1rem 0.5rem;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        tr:hover { background: var(--bg-color); }
+
+        /* Badges & Status */
+        .badge, .task-status {
+            display: inline-flex;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .status-needsaction, .badge-pending { background: var(--status-bg-pending); color: var(--status-text-pending); }
+        .status-completed, .badge-done { background: var(--status-bg-done); color: var(--status-text-done); }
+        .badge-failed { background: var(--status-bg-failed); color: var(--status-text-failed); }
+        .badge-progress { background: #cfe2ff; color: #084298; }
+        .badge-unprocessed { background: var(--border-color); color: var(--text-secondary); }
+        .badge-skipped { background: var(--border-light); color: var(--text-muted); }
+        .badge-unsupported { background: var(--bg-color); color: var(--text-muted); font-style: italic; }
+        .badge-boox { background: #6b7280; color: white; margin-left: 0.5rem; }
+        .badge-sn { background: #3b82f6; color: white; margin-left: 0.5rem; }
+        
+        .device-info { font-size: 0.75rem; color: var(--text-muted); }
+
+        /* Toolbar & Controls */
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .status-panel {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: var(--bg-color);
+            border-radius: var(--radius);
+            border: 1px solid var(--border-color);
+        }
+
+        .flex-spacer { flex: 1; }
+
+        .text-small { font-size: 0.85rem; color: var(--text-secondary); }
+        .text-bold { font-weight: 600; }
+        .text-danger { color: var(--status-text-failed); }
+
+        hr {
+            margin: 1.5rem 0;
+            border: none;
+            border-top: 1px solid var(--border-color);
+        }
+
+        /* Mobile Adjustments */
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 100%;
+                height: auto;
+                position: relative;
+                padding: 1rem;
+                border-right: none;
+                border-bottom: 1px solid var(--border-color);
+            }
+
+            .sidebar h1 { margin-bottom: 1rem; text-align: center; }
+
+            .nav-links {
+                flex-direction: row;
+                overflow-x: auto;
+                padding-bottom: 0.5rem;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .nav-item {
+                white-space: nowrap;
+                padding: 0.5rem 1rem;
+            }
+
+            .content {
+                margin-left: 0;
+                padding: 1rem;
+            }
+
+            .app-layout {
+                flex-direction: column;
+            }
+            
+            .task-actions button { width: 100%; margin-top: 0.5rem; }
+        }
+
+        /* Logs */
+        #log-output {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 1rem;
+            border-radius: var(--radius);
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.85rem;
+            height: 50vh;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        /* Chat */
+        .chat-container {
+            display: flex;
+            gap: 1rem;
+            height: calc(100vh - 150px);
+        }
+
+        .chat-sidebar {
+            width: 280px;
+            background: var(--bg-color);
+            border-radius: var(--radius);
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .session-item {
+            padding: 0.75rem;
+            background: var(--surface-color);
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            font-size: 0.9rem;
+            border: 1px solid var(--border-color);
+            transition: all 0.2s;
+        }
+
+        .session-item:hover { border-color: var(--brand-color); }
+        .session-item.active { background: var(--brand-color); color: white; border-color: var(--brand-color); }
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            background: var(--bg-color);
+            border-radius: var(--radius);
+            margin-bottom: 1rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .message {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            border-radius: var(--radius);
+            max-width: 85%;
+        }
+
+        .message-user {
+            background: var(--brand-color);
+            color: white;
+            margin-left: auto;
+            border-bottom-right-radius: 0;
+        }
+
+        .message-assistant {
+            background: var(--surface-color);
+            color: var(--text-primary);
+            margin-right: auto;
+            border-bottom-left-radius: 0;
+            border: 1px solid var(--border-color);
+        }
+
+        @media (max-width: 768px) {
+            .chat-container { height: auto; flex-direction: column; }
+            .chat-sidebar { width: 100%; height: 250px; }
+        }
+
+        /* HTMX Loading Indicator */
+        .htmx-indicator {
+            display: none;
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: var(--brand-color);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            z-index: 1000;
+        }
+        .htmx-request .htmx-indicator {
+            display: inline;
+        }
+        .htmx-request.htmx-indicator {
+            display: inline;
+        }
+    </style>
+</head>
+<body hx-boost="true">
+    <div id="loading-bar" class="htmx-indicator">Loading...</div>
+    <div class="app-layout">
+        <nav class="sidebar">
+            <h1>UltraBridge</h1>
+            <div class="nav-links">
+                <a class="nav-item {{if eq .activeTab "tasks"}}active{{end}}" 
+                   href="/" hx-get="/" hx-target="#main-content" hx-push-url="true">Tasks</a>
+                <a class="nav-item {{if eq .activeTab "files"}}active{{end}}" 
+                   href="/files" hx-get="/files" hx-target="#main-content" hx-push-url="true">Files</a>
+                <a class="nav-item {{if eq .activeTab "search"}}active{{end}}" 
+                   href="/search" hx-get="/search" hx-target="#main-content" hx-push-url="true">Search</a>
+                {{if .chatEnabled}}
+                <a class="nav-item {{if eq .activeTab "chat"}}active{{end}}" 
+                   href="/chat" hx-get="/chat" hx-target="#main-content" hx-push-url="true">Chat</a>
+                {{end}}
+                <a class="nav-item {{if eq .activeTab "logs"}}active{{end}}" 
+                   href="/logs" hx-get="/logs" hx-target="#main-content" hx-push-url="true">Logs</a>
+                <a class="nav-item {{if eq .activeTab "settings"}}active{{end}}" 
+                   href="/settings" hx-get="/settings" hx-target="#main-content" hx-push-url="true">Settings</a>
+            </div>
+        </nav>
+
+        <main id="main-content" class="content">
+            <div id="global-status" style="margin-bottom: 1rem; font-size: 0.85rem; padding: 0.5rem 1rem; border-radius: var(--radius); background: var(--surface-color); border: 1px solid var(--border-color); display: none;"></div>
+            
+            {{template "content" .}}
+        </main>
+    </div>
+
+    <!-- Modals & Overlays -->
+    <div id="modal-overlay" onclick="closeModals()"></div>
+    <div id="history-modal" style="display:none; position:fixed; top:5%; left:50%;
+         transform:translateX(-50%); background:var(--surface-color); border:1px solid var(--border-color);
+         padding:1.5rem; border-radius:6px; width:800px; max-width:90vw; max-height:85vh;
+         overflow-y:auto; z-index:100; box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <h3 style="margin:0;">Note Details</h3>
+        <div style="display:flex; gap:0.5rem;">
+          <form id="delete-note-form" hx-post="/files/delete-note" hx-target="#main-content" style="display:inline;" onsubmit="document.getElementById('history-modal').style.display='none'">
+            <input type="hidden" id="delete-note-path" name="path" value="">
+            <button type="submit" class="btn-small" style="color:var(--status-text-failed);"
+              onclick="return confirm('Delete this note, all job records, and cached renders?')">✗ Delete</button>
+          </form>
+          <button onclick="document.getElementById('history-modal').style.display='none'" class="btn-small">Close</button>
+        </div>
+      </div>
+      <div id="history-job" style="margin-bottom:1rem;">
+        <h4 style="margin:0 0 0.5rem;">Job Info</h4>
+        <pre id="history-content" style="font-size:0.8rem; white-space:pre-wrap; background:var(--body-bg); padding:0.5rem; border-radius:3px; max-height:150px; overflow-y:auto;"></pre>
+      </div>
+      <div id="history-pages"></div>
+    </div>
+
+    <script>
+        // Global error logging
+        document.body.addEventListener('htmx:responseError', function(evt) {
+            fetch('/api/v1/client-error', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    url: evt.detail.requestConfig.path,
+                    status: evt.detail.xhr.status,
+                    message: evt.detail.xhr.responseText || evt.detail.xhr.statusText
+                })
+            });
+        });
+        document.body.addEventListener('htmx:sendError', function(evt) {
+            fetch('/api/v1/client-error', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    url: evt.detail.requestConfig.path,
+                    status: 0,
+                    message: 'Network error or connection refused'
+                })
+            });
+        });
+
+        // Global initialization
+        document.body.addEventListener('htmx:afterSwap', function(evt) {
+            if (evt.detail.target.id === 'main-content') {
+                // Re-initialize scripts for swapped content if needed
+                initTabScripts();
+                if (document.getElementById('task-table')) {
+                    toggleCompleted();
+                }
+            }
+        });
+
+        function initTabScripts() {
+            // Find current active tab from DOM or URL
+            const path = window.location.pathname;
+            if (path === '/logs') connectLogs();
+            if (path === '/chat') { /* chat init */ }
+            
+            // Update nav active state
+            document.querySelectorAll('.nav-item').forEach(el => {
+                if (el.getAttribute('href') === path) el.classList.add('active');
+                else el.classList.remove('active');
+            });
+        }
+
+        // Shared background pollers
+        setInterval(updateSyncStatus, 5000);
+        setInterval(updateProcessorStatus, 5000);
+
+        // ... remaining JS will be in layout.html but some might move to fragments
+
+        // Global Boox notes path for client-side source detection
+        var booxNotesPath = "{{.BooxNotesPath}}";
+        var booxImportPath = "{{.BooxImportPath}}";
+
+        // Bulk file selection for delete.
+        function toggleAllFiles(master) {
+            var boxes = document.querySelectorAll('.file-checkbox');
+            boxes.forEach(function(cb) { cb.checked = master.checked; });
+            updateBulkDeleteBar();
+        }
+        document.addEventListener('change', function(e) {
+            if (e.target.classList.contains('file-checkbox')) updateBulkDeleteBar();
+        });
+        function updateBulkDeleteBar() {
+            var checked = document.querySelectorAll('.file-checkbox:checked').length;
+            var bar = document.getElementById('bulk-delete-bar');
+            var count = document.getElementById('bulk-delete-count');
+            if (bar) {
+                bar.style.display = checked > 0 ? '' : 'none';
+                count.textContent = checked + ' selected';
+            }
+        }
+
+        // Navigate files tab preserving current query params.
+        function filesNav(overrides) {
+            var params = new URLSearchParams(window.location.search);
+            for (var key in overrides) {
+                if (overrides[key] === '' || overrides[key] === null) {
+                    params.delete(key);
+                } else {
+                    params.set(key, overrides[key]);
+                }
+            }
+            if (overrides.per_page) {
+                document.cookie = 'files_per_page=' + overrides.per_page + ';path=/;max-age=31536000;SameSite=Lax';
+            }
+            window.location = '/files?' + params.toString();
+        }
+
+        // Confirm import with todo extraction warning.
+        function confirmImport() {
+            {{if .BooxTodoEnabled}}
+            return confirm(
+                'WARNING: Red Ink To-Do Extraction is enabled.\n\n' +
+                'Importing old notes will create CalDAV tasks from any red ' +
+                'handwriting found in them. This could generate hundreds of ' +
+                'unwanted tasks.\n\n' +
+                'To avoid this, cancel and disable it in Settings first.\n\n' +
+                'Scan import path and enqueue new files?'
+            );
+            {{else}}
+            return confirm('Scan import path and enqueue new files?');
+            {{end}}
+        }
+
+        // Hide completed tasks by default on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            toggleCompleted();
+        });
+
+        function toggleCompleted() {
+            const show = document.getElementById('show-completed').checked;
+            const rows = document.querySelectorAll('#task-table tbody tr[data-status="completed"]');
+            rows.forEach(function(row) {
+                row.style.display = show ? '' : 'none';
+                if (!show) {
+                    var cb = row.querySelector('.task-checkbox');
+                    if (cb) cb.checked = false;
+                }
+            });
+            updateBulkActions();
+        }
+
+        function toggleSelectAll() {
+            const checked = document.getElementById('select-all').checked;
+            document.querySelectorAll('#task-table tbody tr').forEach(function(row) {
+                if (row.style.display !== 'none') {
+                    var cb = row.querySelector('.task-checkbox');
+                    if (cb) cb.checked = checked;
+                }
+            });
+            updateBulkActions();
+        }
+
+        function updateBulkActions() {
+            const checked = document.querySelectorAll('.task-checkbox:checked');
+            const bar = document.getElementById('bulk-actions');
+            const count = document.getElementById('selected-count');
+            if (checked.length > 0) {
+                bar.style.display = 'block';
+                count.textContent = checked.length + ' selected';
+            } else {
+                bar.style.display = 'none';
+            }
+        }
+
+        let statusInterval = null;
+
+        function updateProcessorStatus() {
+          fetch('/files/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              // Update Files tab detail view (if on Files page).
+              var el = document.getElementById('proc-status');
+              if (el) {
+                var parts = [];
+                var state = data.running ? '▶ SN Running' : '⏹ SN Stopped';
+                parts.push(state);
+                if (data.pending_count > 0 || data.in_flight_count > 0) {
+                  parts.push('SN Queue: ' + data.pending_count);
+                }
+                if (data.boox) {
+                  var b = data.boox;
+                  if (b.in_progress > 0 && b.active_title) {
+                    parts.push('⚙ ' + b.active_title);
+                  }
+                  var queueParts = [];
+                  if (b.pending > 0) queueParts.push(b.pending + ' queued');
+                  if (b.failed > 0) queueParts.push(b.failed + ' failed');
+                  queueParts.push(b.done + ' done');
+                  parts.push('Boox: ' + queueParts.join(', '));
+                }
+                el.textContent = parts.join(' | ');
+              }
+
+              // Update global status bar (visible on all pages).
+              var gs = document.getElementById('global-status');
+              if (gs) {
+                var gParts = [];
+                if (data.boox) {
+                  var b = data.boox;
+                  if (b.in_progress > 0 && b.active_title) {
+                    gParts.push('⚙ Processing: ' + b.active_title);
+                  }
+                  if (b.pending > 0) gParts.push(b.pending + ' queued');
+                  if (b.failed > 0) gParts.push(b.failed + ' failed');
+                  if (b.done > 0) gParts.push(b.done + ' done');
+                  if (b.unmigrated_count > 0) gParts.push('⬇ ' + b.unmigrated_count + ' unmigrated');
+                }
+                if (data.pending_count > 0 || data.in_flight_count > 0) {
+                  gParts.push('SN: ' + data.pending_count + ' queued');
+                }
+                if (gParts.length > 0) {
+                  gs.textContent = gParts.join(' | ');
+                  gs.style.display = '';
+                } else {
+                  gs.style.display = 'none';
+                }
+              }
+
+            })
+            .catch(function() {});
+        }
+
+        function updateSyncStatus() {
+          fetch('/sync/status')
+            .then(r => r.json())
+            .then(data => {
+              const statusEl = document.getElementById('sync-status');
+              if (!statusEl) return;
+              const lastEl = document.getElementById('sync-last');
+              const nextEl = document.getElementById('sync-next');
+              const errorEl = document.getElementById('sync-error');
+              const btn = document.getElementById('sync-now-btn');
+
+              if (!data.adapter_active) {
+                statusEl.textContent = 'Disabled';
+                statusEl.className = 'badge';
+                if (btn) btn.disabled = true;
+                if (lastEl) lastEl.textContent = '';
+                if (nextEl) nextEl.textContent = '';
+                if (errorEl) errorEl.textContent = '';
+                return;
+              }
+
+              if (data.in_progress) {
+                statusEl.textContent = 'Syncing...';
+                statusEl.className = 'badge badge-progress';
+                if (btn) btn.disabled = true;
+              } else {
+                statusEl.textContent = 'Active';
+                statusEl.className = 'badge badge-done';
+                if (btn) btn.disabled = false;
+              }
+
+              function formatTime(isoStr) {
+                if (!isoStr) return 'never';
+                const d = new Date(isoStr);
+                if (d.getFullYear() < 2000) return 'never';
+                return d.toLocaleTimeString();
+              }
+
+              if (lastEl) lastEl.textContent = data.last_sync_at ? 'Last: ' + formatTime(data.last_sync_at) : 'Last: never';
+              if (nextEl) nextEl.textContent = data.next_sync_at && formatTime(data.next_sync_at) !== 'never' ? 'Next: ' + formatTime(data.next_sync_at) : '';
+              if (errorEl) errorEl.textContent = data.last_error ? 'Error: ' + data.last_error : '';
+            })
+            .catch(() => {
+              const statusEl = document.getElementById('sync-status');
+              if (statusEl) {
+                statusEl.textContent = 'Offline';
+                statusEl.className = 'badge';
+              }
+            });
+        }
+
+        function triggerSync() {
+          const btn = document.getElementById('sync-now-btn');
+          btn.disabled = true;
+          document.getElementById('sync-status').textContent = 'Syncing...';
+          document.getElementById('sync-status').className = 'badge badge-progress';
+          fetch('/sync/trigger', {method: 'POST'})
+            .then(() => setTimeout(updateSyncStatus, 1000))
+            .catch(() => { btn.disabled = false; });
+        }
+
+        let logWebSocket = null;
+
+        // On page load, activate the tab the server designated (for /files and /search routes).
+        (function() {
+            // Start global status polling on every page.
+            updateProcessorStatus();
+
+            const active = "{{.activeTab}}";
+            if (active && active !== "tasks") {
+                const tabs = document.querySelectorAll('.tab-content');
+                tabs.forEach(t => t.classList.remove('active'));
+                const el = document.getElementById(active);
+                if (el) el.classList.add('active');
+                if (active === 'files') {
+                    // Auto-open detail modal if ?detail= parameter is present
+                    const params = new URLSearchParams(window.location.search);
+                    const detailPath = params.get('detail');
+                    if (detailPath) {
+                        showHistory(detailPath);
+                    }
+                }
+                if (active === 'logs') {
+                    connectLogs();
+                }
+            }
+        })();
+
+        // Poll sync status every 5 seconds (matches Files tab pattern)
+        updateSyncStatus();
+
+        // Register Service Worker for PWA
+        if ('serviceWorker' in navigator) {
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js')
+              .then(reg => console.log('SW registered:', reg))
+              .catch(err => console.log('SW registration failed:', err));
+          });
+        }
+
+        function connectLogs() {
+            if (logWebSocket !== null && logWebSocket.readyState === WebSocket.OPEN) {
+                return;
+            }
+
+            const level = document.getElementById('log-level').value;
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const url = protocol + '//' + window.location.host + '/ws/logs?level=' + level;
+
+            logWebSocket = new WebSocket(url);
+
+            logWebSocket.onmessage = function(event) {
+                const logOutput = document.getElementById('log-output');
+                let lines = logOutput.textContent.split('\n');
+
+                // Keep only last 100 lines
+                if (lines.length > 100) {
+                    lines = lines.slice(-100);
+                }
+
+                lines.push(event.data);
+                logOutput.textContent = lines.join('\n');
+                logOutput.scrollTop = logOutput.scrollHeight;
+            };
+
+            logWebSocket.onerror = function(error) {
+                const logOutput = document.getElementById('log-output');
+                logOutput.textContent += '\n[Error] WebSocket connection failed\n';
+                logOutput.scrollTop = logOutput.scrollHeight;
+            };
+
+            logWebSocket.onclose = function() {
+                const logOutput = document.getElementById('log-output');
+                logOutput.textContent += '\n[Info] WebSocket connection closed\n';
+            };
+        }
+
+        function changeLogLevel() {
+            if (logWebSocket !== null && logWebSocket.readyState === WebSocket.OPEN) {
+                logWebSocket.close();
+            }
+            logWebSocket = null;
+            document.getElementById('log-output').textContent = '';
+            connectLogs();
+        }
+
+        function showHistory(path) {
+          var modal = document.getElementById('history-modal');
+          var jobPre = document.getElementById('history-content');
+          var pagesDiv = document.getElementById('history-pages');
+          jobPre.textContent = 'Loading...';
+          pagesDiv.innerHTML = '';
+          modal.style.display = 'block';
+          document.getElementById('delete-note-path').value = path;
+
+          // Fetch job info
+          fetch('/files/history?path=' + encodeURIComponent(path))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              jobPre.textContent = data ? JSON.stringify(data, null, 2) : 'No job record found.';
+            })
+            .catch(function() { jobPre.textContent = 'Failed to load job info.'; });
+
+          // Fetch indexed content + render images
+          fetch('/files/content?path=' + encodeURIComponent(path))
+            .then(function(r) { return r.json(); })
+            .then(function(pages) {
+              if (!pages || pages.length === 0) {
+                pagesDiv.innerHTML = '<p style="color:#666;">No indexed content.</p>';
+                return;
+              }
+
+              // Detect source from path: if path starts with booxNotesPath, it's a Boox note
+              var isBoox = (booxNotesPath && path.startsWith(booxNotesPath)) || (booxImportPath && path.startsWith(booxImportPath));
+
+              pagesDiv.innerHTML = '<h4 style="margin:0 0 0.5rem;">Pages</h4>';
+              pages.forEach(function(pg) {
+                var div = document.createElement('div');
+                div.style.cssText = 'display:flex; gap:1rem; margin-bottom:1rem; padding:0.5rem; border:1px solid #eee; border-radius:4px;';
+
+                var imgDiv = document.createElement('div');
+                imgDiv.style.cssText = 'flex-shrink:0;';
+                var img = document.createElement('img');
+                var renderUrl = '/files/render?path=' + encodeURIComponent(path) + '&page=' + pg.Page + '&v=2';
+                img.src = renderUrl;
+                img.alt = 'Page ' + (pg.Page + 1);
+                img.style.cssText = 'width:200px; border:1px solid #ddd; border-radius:3px; background:#fafafa;';
+                img.onerror = function() { this.alt = 'No render'; this.style.display = 'none'; };
+                imgDiv.appendChild(img);
+
+                var textDiv = document.createElement('div');
+                textDiv.style.cssText = 'flex:1; min-width:0;';
+                var header = '<strong>Page ' + (pg.Page + 1) + '</strong> <span style="color:#888; font-size:0.8rem;">[' + pg.Source + ']</span>';
+                var bodyText = pg.BodyText || '<em style="color:#999;">empty</em>';
+                textDiv.innerHTML = header + '<pre style="font-size:0.8rem; white-space:pre-wrap; margin-top:0.3rem; max-height:200px; overflow-y:auto;">' + escapeHtml(bodyText) + '</pre>';
+                if (pg.Keywords) {
+                  textDiv.innerHTML += '<div style="font-size:0.8rem; color:#555; margin-top:0.3rem;">Keywords: ' + escapeHtml(pg.Keywords) + '</div>';
+                }
+
+                div.appendChild(imgDiv);
+                div.appendChild(textDiv);
+                pagesDiv.appendChild(div);
+              });
+
+              // If Boox note, fetch and display version history
+              if (isBoox) {
+                fetch('/files/boox/versions?path=' + encodeURIComponent(path))
+                  .then(function(r) { return r.json(); })
+                  .then(function(versions) {
+                    if (!versions || versions.length === 0) {
+                      return;
+                    }
+                    var versionsHtml = '<h4 style="margin:1rem 0 0.5rem;">Version History</h4>';
+                    versionsHtml += '<ul style="font-size:0.9rem; color:#555; padding-left:1.5rem;">';
+                    versions.forEach(function(v) {
+                      versionsHtml += '<li>' + v.Timestamp + ' (' + (v.SizeBytes / 1024).toFixed(1) + ' KB)</li>';
+                    });
+                    versionsHtml += '</ul>';
+                    pagesDiv.innerHTML += versionsHtml;
+                  })
+                  .catch(function() {
+                    // silently fail if versions can't be loaded
+                  });
+              }
+            })
+            .catch(function() {
+              pagesDiv.innerHTML = '<p style="color:#842029;">Failed to load content.</p>';
+            });
+        }
+
+        // Chat functions
+        var currentSessionId = 0;
+        var searchResults = [];
+
+        function loadChatSessions() {
+          fetch('/chat/sessions')
+            .then(r => r.json())
+            .then(sessions => {
+              var html = '';
+              if (!sessions || sessions.length === 0) {
+                html = '<p style="color: #999;">No conversations</p>';
+              } else {
+                sessions.forEach(s => {
+                  html += '<div style="padding: 8px; background: ' + (s.ID === currentSessionId ? '#e3f2fd' : '#f5f5f5') +
+                          '; border-radius: 4px; margin-bottom: 5px; cursor: pointer;" onclick="selectSession(' + s.ID + ')">' +
+                          escapeHtml(s.Title) + '</div>';
+                });
+              }
+              document.getElementById('sessions-list').innerHTML = html;
+            })
+            .catch(e => console.error('Failed to load sessions:', e));
+        }
+
+        function createNewSession() {
+          currentSessionId = 0;
+          searchResults = [];
+          document.getElementById('current-session-id').value = '';
+          document.getElementById('messages-container').innerHTML = '<p style="color: #999; text-align: center; margin-top: 50px;">Start typing to begin</p>';
+          document.getElementById('chat-form').style.display = 'flex';
+          document.getElementById('question-input').focus();
+        }
+
+        function selectSession(sessionId) {
+          currentSessionId = sessionId;
+          document.getElementById('current-session-id').value = sessionId;
+          document.getElementById('chat-form').style.display = 'flex';
+          document.getElementById('question-input').focus();
+          loadSessionMessages();
+          loadChatSessions();
+        }
+
+        function loadSessionMessages() {
+          fetch('/chat/messages?session_id=' + currentSessionId)
+            .then(r => r.json())
+            .then(messages => {
+              var html = '';
+              if (!messages || messages.length === 0) {
+                html = '<p style="color: #999; text-align: center;">New conversation</p>';
+              } else {
+                messages.forEach(m => {
+                  var isUser = m.Role === 'user';
+                  html += '<div style="margin-bottom: 10px; padding: 8px; background: ' + (isUser ? '#e3f2fd' : '#f5f5f5') +
+                          '; border-radius: 4px; text-align: ' + (isUser ? 'right' : 'left') + ';">' +
+                          '<strong style="color: ' + (isUser ? '#1976d2' : '#666') + ';">' + (isUser ? 'You' : 'Assistant') + ':</strong><br>' +
+                          escapeHtml(m.Content) + '</div>';
+                });
+              }
+              document.getElementById('messages-container').innerHTML = html;
+              document.getElementById('messages-container').scrollTop = document.getElementById('messages-container').scrollHeight;
+            })
+            .catch(e => console.error('Failed to load messages:', e));
+        }
+
+        document.getElementById('chat-form')?.addEventListener('submit', function(e) {
+          e.preventDefault();
+          var question = document.getElementById('question-input').value.trim();
+          if (!question) return;
+
+          var sessionId = parseInt(document.getElementById('current-session-id').value) || 0;
+          var payload = { question: question, session_id: sessionId };
+
+          // Hide error container
+          document.getElementById('error-container').style.display = 'none';
+
+          // Disable form
+          var input = document.getElementById('question-input');
+          var submit = document.querySelector('#chat-form button');
+          input.disabled = true;
+          submit.disabled = true;
+
+          // Clear input
+          input.value = '';
+
+          // Add user message to display
+          var container = document.getElementById('messages-container');
+          container.innerHTML += '<div style="margin-bottom: 10px; padding: 8px; background: #e3f2fd; border-radius: 4px; text-align: right;">' +
+                                '<strong style="color: #1976d2;">You:</strong><br>' + escapeHtml(question) + '</div>';
+          container.scrollTop = container.scrollHeight;
+
+          // Stream from server
+          fetch('/chat/ask', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          })
+            .then(r => r.body.getReader())
+            .then(reader => {
+              var decoder = new TextDecoder();
+              var fullText = '';
+              var assistantDiv = null;
+
+              function read() {
+                reader.read().then(({ done, value }) => {
+                  if (done) {
+                    // Linkify citations in final response
+                    if (assistantDiv) {
+                      linkifyCitations(assistantDiv, searchResults);
+                    }
+                    input.disabled = false;
+                    submit.disabled = false;
+                    loadChatSessions();
+                    return;
+                  }
+
+                  var text = decoder.decode(value);
+                  var lines = text.split('\n');
+                  lines.forEach(line => {
+                    if (line.startsWith('data: ')) {
+                      try {
+                        var json = JSON.parse(line.substring(6));
+                        if (json.type === 'session') {
+                          currentSessionId = json.session_id;
+                          document.getElementById('current-session-id').value = currentSessionId;
+                          searchResults = json.context || [];
+                        } else if (json.type === 'content') {
+                          fullText += json.content;
+                          if (!assistantDiv) {
+                            assistantDiv = document.createElement('div');
+                            assistantDiv.style.cssText = 'margin-bottom: 10px; padding: 8px; background: #f5f5f5; border-radius: 4px;';
+                            container.appendChild(assistantDiv);
+                          }
+                          assistantDiv.innerHTML = '<strong style="color: #666;">Assistant:</strong><br>' + escapeHtml(fullText);
+                          container.scrollTop = container.scrollHeight;
+                        } else if (json.type === 'error') {
+                          document.getElementById('error-message').textContent = json.error;
+                          document.getElementById('error-container').style.display = 'block';
+                          input.disabled = false;
+                          submit.disabled = false;
+                        }
+                      } catch(e) {
+                        // Skip invalid JSON
+                      }
+                    }
+                  });
+
+                  read();
+                })
+                .catch(e => {
+                  console.error('Stream error:', e);
+                  document.getElementById('error-message').textContent = 'Connection error';
+                  document.getElementById('error-container').style.display = 'block';
+                  input.disabled = false;
+                  submit.disabled = false;
+                });
+              }
+
+              read();
+            })
+            .catch(e => {
+              console.error('Request error:', e);
+              document.getElementById('error-message').textContent = 'Failed to send message';
+              document.getElementById('error-container').style.display = 'block';
+              input.disabled = false;
+              submit.disabled = false;
+            });
+        });
+
+        function linkifyCitations(element, searchResults) {
+          var regex = /\[([^,]+),\s*p\.(\d+)\]/g;
+          var html = element.innerHTML;
+          html = html.replace(regex, function(match, filename, page) {
+            // Find matching note path from searchResults
+            var result = searchResults.find(r => r.NotePath && r.NotePath.endsWith(filename));
+            if (result) {
+              return '<a href="/files/history?path=' + encodeURIComponent(result.NotePath) + '" style="color: #0066cc; text-decoration: none;">' +
+                     escapeHtml(match) + '</a>';
+            }
+            return match;
+          });
+          element.innerHTML = html;
+        }
+
+        // Load sessions on page load if chat tab is visible
+        if (document.getElementById('sessions-list')) {
+          loadChatSessions();
+        }
+
+        function escapeHtml(text) {
+          var div = document.createElement('div');
+          div.textContent = text;
+          return div.innerHTML;
+        }
+
+        // Configuration API functions
+        function saveConfig() {
+          var statusEl = document.getElementById('config-status');
+          statusEl.textContent = 'Saving...';
+
+          var config = {
+            username: document.getElementById('config-username').value,
+            password: document.getElementById('config-password').value,
+            ocr_format: document.getElementById('config-ocr-format').value,
+            ocr_api_url: document.getElementById('config-ocr-api-url').value,
+            ocr_api_key: document.getElementById('config-ocr-api-key').value,
+            ocr_model: document.getElementById('config-ocr-model').value,
+            ocr_concurrency: parseInt(document.getElementById('config-ocr-concurrency').value) || 1,
+            ocr_max_file_mb: parseInt(document.getElementById('config-ocr-max-file-mb').value) || 0,
+            ollama_url: document.getElementById('config-ollama-url').value,
+            ollama_embed_model: document.getElementById('config-ollama-embed-model').value,
+            chat_api_url: document.getElementById('config-chat-api-url').value,
+            chat_model: document.getElementById('config-chat-model').value,
+            sn_sync_enabled: document.getElementById('config-sn-sync-enabled').value === 'true',
+            sn_sync_interval: parseInt(document.getElementById('config-sn-sync-interval').value) || 300,
+            sn_api_url: document.getElementById('config-sn-api-url').value,
+            sn_account: document.getElementById('config-sn-account').value,
+            sn_password: document.getElementById('config-sn-password').value
+          };
+
+          fetch('/api/config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+          })
+          .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+          })
+          .then(data => {
+            if (data.restart_required) {
+              statusEl.textContent = 'Saved. ⚠ Restart required!';
+              statusEl.style.color = '#c00';
+              setTimeout(() => location.reload(), 1000);
+            } else {
+              statusEl.textContent = 'Saved.';
+              statusEl.style.color = '#090';
+              setTimeout(() => { statusEl.textContent = ''; }, 2000);
+            }
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
+        }
+
+        // Sources API functions
+        function toggleSourceEnabled(sourceId, enabled) {
+          var statusEl = document.getElementById('sources-status');
+          statusEl.textContent = 'Updating...';
+          // Fetch current source, toggle enabled, PUT back
+          fetch('/api/sources')
+          .then(r => r.json())
+          .then(sources => {
+            var src = sources.find(s => s.ID === sourceId);
+            if (!src) throw new Error('Source not found');
+            src.enabled = enabled;
+            return fetch('/api/sources/' + sourceId, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(src)
+            });
+          })
+          .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            statusEl.textContent = enabled ? 'Enabled. Restart to apply.' : 'Disabled. Restart to apply.';
+            statusEl.style.color = '#090';
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
+        }
+
+        function updateSourceConfigFields() {
+          var type = document.getElementById('source-type').value;
+          var backupField = document.getElementById('field-backup-path');
+          backupField.style.display = (type === 'supernote') ? 'block' : 'none';
+        }
+
+        function showAddSourceForm() {
+          document.getElementById('source-form').style.display = 'block';
+          document.getElementById('source-form-title').textContent = 'Add Source';
+          document.getElementById('source-form-id').value = '';
+          document.getElementById('source-type').value = 'supernote';
+          document.getElementById('source-type').disabled = false;
+          document.getElementById('source-name').value = '';
+          document.getElementById('source-enabled').checked = true;
+          document.getElementById('source-notes-path').value = '';
+          document.getElementById('source-backup-path').value = '';
+          updateSourceConfigFields();
+        }
+
+        function editSource(sourceId) {
+          var statusEl = document.getElementById('sources-status');
+          statusEl.textContent = 'Loading...';
+          fetch('/api/sources')
+          .then(r => r.json())
+          .then(sources => {
+            var src = sources.find(s => s.ID === sourceId);
+            if (!src) throw new Error('Source not found');
+            statusEl.textContent = '';
+            document.getElementById('source-form').style.display = 'block';
+            document.getElementById('source-form-title').textContent = 'Edit Source';
+            document.getElementById('source-form-id').value = src.ID;
+            document.getElementById('source-type').value = src.Type;
+            document.getElementById('source-type').disabled = true;
+            document.getElementById('source-name').value = src.Name;
+            document.getElementById('source-enabled').checked = src.Enabled;
+            var cfg = {};
+            try { cfg = JSON.parse(src.ConfigJSON || '{}'); } catch(e) {}
+            document.getElementById('source-notes-path').value = cfg.notes_path || '';
+            document.getElementById('source-backup-path').value = cfg.backup_path || '';
+            updateSourceConfigFields();
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
+        }
+
+        function cancelSourceForm() {
+          document.getElementById('source-form').style.display = 'none';
+        }
+
+        function saveSource() {
+          var statusEl = document.getElementById('sources-status');
+          var id = document.getElementById('source-form-id').value;
+          var type = document.getElementById('source-type').value;
+          var name = document.getElementById('source-name').value.trim();
+          var enabled = document.getElementById('source-enabled').checked;
+          var notesPath = document.getElementById('source-notes-path').value.trim();
+          var backupPath = document.getElementById('source-backup-path').value.trim();
+
+          if (!name) { statusEl.textContent = 'Name is required.'; statusEl.style.color = '#c00'; return; }
+          if (!notesPath) { statusEl.textContent = 'Notes path is required.'; statusEl.style.color = '#c00'; return; }
+
+          var configObj = { notes_path: notesPath };
+          if (type === 'supernote' && backupPath) {
+            configObj.backup_path = backupPath;
+          }
+
+          var body = {
+            type: type,
+            name: name,
+            enabled: enabled,
+            config_json: JSON.stringify(configObj)
+          };
+
+          var method = id ? 'PUT' : 'POST';
+          var url = id ? '/api/sources/' + id : '/api/sources';
+
+          statusEl.textContent = 'Saving...';
+          fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          })
+          .then(r => {
+            if (!r.ok) return r.json().then(j => { throw new Error(j.error || 'HTTP ' + r.status); });
+            return r.json();
+          })
+          .then(() => {
+            statusEl.textContent = 'Saved. Reload to see changes.';
+            statusEl.style.color = '#090';
+            document.getElementById('source-form').style.display = 'none';
+            setTimeout(() => location.reload(), 500);
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
+        }
+
+        function deleteSource(sourceId) {
+          if (!confirm('Delete this source? Requires restart to take effect.')) return;
+
+          var statusEl = document.getElementById('sources-status');
+          statusEl.textContent = 'Deleting...';
+
+          fetch('/api/sources/' + sourceId, { method: 'DELETE' })
+          .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            var row = document.querySelector('[data-source-id="' + sourceId + '"]');
+            if (row) row.remove();
+            statusEl.textContent = 'Deleted. Restart to apply.';
+            statusEl.style.color = '#090';
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+          })
+          .catch(e => {
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.style.color = '#c00';
+          });
+        }
+
+    </script>
+</body>
+</html>

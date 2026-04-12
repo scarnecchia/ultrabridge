@@ -17,6 +17,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/booxpipeline"
 	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/notestore"
+	"github.com/sysop/ultrabridge/internal/service"
 )
 
 // mockBooxStore implements BooxStore for testing
@@ -463,35 +464,27 @@ func TestFilesPage_NoBooxStore(t *testing.T) {
 
 // TestNoteSourceFunction verifies noteSource template function correctly identifies sources
 func TestNoteSourceFunction(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	broadcaster := logging.NewLogBroadcaster()
-	booxStore := &mockBooxStore{}
-
-	// The template function should be in the funcMap
-	// We can't directly test the function from outside the package,
-	// but we verify it's used by checking the HTML output handles both sources
-	noteStore := newMockNoteStore()
-	noteStore.files[""] = []notestore.NoteFile{
+	handler := newTestHandler()
+	notes := handler.notes.(*mockNoteService)
+	handler.booxNotesPath = "/boox/notes"
+	
+	notes.files = []service.NoteFile{
 		{
 			Path:      "/boox/notes/test.note",
 			RelPath:   "test.note",
 			Name:      "test.note",
-			IsDir:     false,
-			FileType:  notestore.FileTypeNote,
-			JobStatus: "done",
+			FileType:  "note",
 		},
 		{
 			Path:      "/sn/notes/test2.note",
 			RelPath:   "test2.note",
 			Name:      "test2.note",
-			IsDir:     false,
-			FileType:  notestore.FileTypeNote,
-			JobStatus: "done",
+			FileType:  "note",
 		},
 	}
 
-	handler := LegacyNewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, booxStore, nil, "/boox/notes", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 	req := httptest.NewRequest("GET", "/files", nil)
+	req.Header.Set("HX-Request", "true")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -500,11 +493,16 @@ func TestNoteSourceFunction(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	// Verify that both paths are in the output
 	if !strings.Contains(body, "test.note") {
-		t.Errorf("Response should contain 'test.note', got:\n%s", body)
+		t.Errorf("Response should contain test.note, got:\n%s", body)
 	}
 	if !strings.Contains(body, "test2.note") {
-		t.Errorf("Response should contain 'test2.note', got:\n%s", body)
+		t.Errorf("Response should contain test2.note, got:\n%s", body)
+	}
+	if !strings.Contains(body, "badge badge-boox") {
+		t.Errorf("Response should contain Boox source badge, got:\n%s", body)
+	}
+	if !strings.Contains(body, "badge badge-sn") {
+		t.Errorf("Response should contain Supernote source badge, got:\n%s", body)
 	}
 }

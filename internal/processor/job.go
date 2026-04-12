@@ -38,4 +38,6 @@ type ProcessorStatus struct {
 	Running  bool
 	Pending  int
 	InFlight int
+	Done     int
+	Failed   int
 }

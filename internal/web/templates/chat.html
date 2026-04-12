@@ -1,0 +1,35 @@
+<!-- Chat Tab -->
+<div id="chat" class="tab-content active">
+  <div class="chat-container">
+    <!-- Session Sidebar -->
+    <div class="chat-sidebar">
+      <h3 style="margin-bottom: 1rem;">Conversations</h3>
+      <div id="sessions-list" style="flex: 1; overflow-y: auto;">
+        <p class="text-muted">Loading...</p>
+      </div>
+      <button onclick="createNewSession()" style="width: 100%; margin-top: 1rem;">+ New Chat</button>
+    </div>
+
+    <!-- Chat Area -->
+    <div style="flex: 1; display: flex; flex-direction: column;">
+      <div id="messages-container" class="messages-container">
+        <p class="text-muted" style="text-align: center; margin-top: 2rem;">Select a conversation or start a new one</p>
+      </div>
+
+      <div id="error-container" style="display: none; margin-bottom: 1rem; padding: 1rem; background: var(--status-bg-failed); color: var(--status-text-failed); border-radius: var(--radius);">
+        <span id="error-message"></span>
+      </div>
+
+      <form id="chat-form" class="toolbar" style="display: none; margin-bottom: 0;">
+        <input type="hidden" id="current-session-id" value="">
+        <input type="text" id="question-input" placeholder="Ask a question..." style="flex: 1;">
+        <button type="submit">Send</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+    loadChatSessions();
+    updateProcessorStatus();
+</script>

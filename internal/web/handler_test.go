@@ -65,11 +65,13 @@ func LegacyNewHandler(
 	if booxNotesPath != "" {
 		booxCachePath = filepath.Join(booxNotesPath, ".cache")
 	}
-	notes := service.NewNoteService(noteStore, proc, booxStore, booxImporter, searchIndex, scanner, noteDB, booxCachePath, booxNotesPath, logger)
+	
+	// Create actual service with mocks
+	noteSvc := service.NewNoteService(noteStore, proc, booxStore, booxImporter, searchIndex, scanner, noteDB, booxCachePath, booxNotesPath, logger)
 	searchSvc := service.NewSearchService(searchIndex, retriever, embedder, embedStore, embedModel, chatStore, ragDisplay.ChatAPIURL, ragDisplay.ChatModel, logger)
 	config := service.NewConfigService(noteDB, syncProvider, runningConfig)
 
-	return NewHandler(tasks, notes, searchSvc, config, noteDB, notesPathPrefix, booxNotesPath, logger, broadcaster)
+	return NewHandler(tasks, noteSvc, searchSvc, config, noteDB, notesPathPrefix, booxNotesPath, logger, broadcaster)
 }
 
 // mockTaskStore implements TaskStore for testing
@@ -823,7 +825,8 @@ func TestBulkActionUnknown(t *testing.T) {
 func TestHandleFiles_NoteStoreNil(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := LegacyNewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+	notes := &mockNoteService{pipelineConfigured: false}
+	handler := NewHandler(nil, notes, nil, nil, nil, "", "", logger, broadcaster)
 
 	req := httptest.NewRequest("GET", "/files", nil)
 	w := httptest.NewRecorder()
@@ -856,14 +859,12 @@ func TestHandleFiles_PathTraversal(t *testing.T) {
 
 // TestHandleFiles_TopLevel verifies AC1.1, AC1.3, AC1.4
 func TestHandleFiles_TopLevel(t *testing.T) {
-	ns := newMockNoteStore()
-	ns.files[""] = []notestore.NoteFile{
-		{Name: "test.note", FileType: notestore.FileTypeNote, RelPath: "test.note"},
-		{Name: "readme.pdf", FileType: notestore.FileTypePDF, RelPath: "readme.pdf"},
+	handler := newTestHandler()
+	notes := handler.notes.(*mockNoteService)
+	notes.files = []service.NoteFile{
+		{Name: "test.note", FileType: "note", RelPath: "test.note"},
+		{Name: "readme.pdf", FileType: "pdf", RelPath: "readme.pdf"},
 	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	broadcaster := logging.NewLogBroadcaster()
-	handler := LegacyNewHandler(newMockTaskStore(), nil, ns, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("GET", "/files", nil)
 	w := httptest.NewRecorder()
@@ -876,23 +877,21 @@ func TestHandleFiles_TopLevel(t *testing.T) {
 	if !strings.Contains(body, "test.note") {
 		t.Error("expected test.note in response")
 	}
-	if !strings.Contains(body, "unprocessed") {
-		t.Error("expected unprocessed badge for .note file with empty JobStatus")
+	if !strings.Contains(body, "badge badge-unprocessed") {
+		t.Error("expected unprocessed badge for .note file")
 	}
-	if !strings.Contains(body, "unsupported") {
+	if !strings.Contains(body, "badge badge-unsupported") {
 		t.Error("expected unsupported badge for pdf")
 	}
 }
 
 // TestHandleFiles_WithPath verifies AC1.2: subdirectory path shows contents and breadcrumb
 func TestHandleFiles_WithPath(t *testing.T) {
-	ns := newMockNoteStore()
-	ns.files["Note/Folder"] = []notestore.NoteFile{
-		{Name: "deep.note", FileType: notestore.FileTypeNote, RelPath: "Note/Folder/deep.note"},
+	handler := newTestHandler()
+	notes := handler.notes.(*mockNoteService)
+	notes.files = []service.NoteFile{
+		{Name: "deep.note", FileType: "note", RelPath: "Note/Folder/deep.note"},
 	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	broadcaster := logging.NewLogBroadcaster()
-	handler := LegacyNewHandler(newMockTaskStore(), nil, ns, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	req := httptest.NewRequest("GET", "/files?path=Note/Folder", nil)
 	w := httptest.NewRecorder()
@@ -1242,19 +1241,15 @@ func TestHandleBackfillEmbeddings(t *testing.T) {
 	}
 }
 
-// TestHandleBackfillEmbeddings_NotRegisteredWhenDisabled verifies route is not registered when embedder is nil.
 func TestHandleBackfillEmbeddings_NotRegisteredWhenDisabled(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	broadcaster := logging.NewLogBroadcaster()
-
-	// Create handler with nil embedder and embedStore (embedding disabled)
-	handler := LegacyNewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+	handler := newTestHandler()
+	handler.search.(*mockSearchService).embeddingPipelineConfigured = false
 
 	req := httptest.NewRequest("POST", "/settings/backfill-embeddings", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// Should return 404 since route is not registered
+	// Should return 404 since route is guarded
 	if w.Code != http.StatusNotFound {
 		t.Errorf("POST /settings/backfill-embeddings status = %d, want 404", w.Code)
 	}
@@ -1276,7 +1271,9 @@ func TestHandleMCPTokenCreate_Success(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := LegacyNewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+	config := service.NewConfigService(testDB, nil, &appconfig.Config{})
+	notes := &mockNoteService{}
+	handler := NewHandler(nil, notes, nil, config, testDB, "", "", logger, broadcaster)
 
 	// POST to create token
 	form := url.Values{}
@@ -1362,7 +1359,9 @@ func TestHandleSettings_TokenList(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := LegacyNewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+	config := service.NewConfigService(testDB, nil, &appconfig.Config{})
+	notes := &mockNoteService{}
+	handler := NewHandler(nil, notes, nil, config, testDB, "", "", logger, broadcaster)
 
 	// GET /settings
 	req := httptest.NewRequest("GET", "/settings", nil)
@@ -1426,7 +1425,9 @@ func TestHandleMCPTokenRevoke_Success(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := LegacyNewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+	config := service.NewConfigService(testDB, nil, &appconfig.Config{})
+	notes := &mockNoteService{}
+	handler := NewHandler(nil, notes, nil, config, testDB, "", "", logger, broadcaster)
 
 	// POST to revoke token
 	form := url.Values{}
@@ -1469,7 +1470,9 @@ func TestHandleMCPTokenCreate_EmptyLabel(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := LegacyNewHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, "", "", testDB, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+	config := service.NewConfigService(testDB, nil, &appconfig.Config{})
+	notes := &mockNoteService{}
+	handler := NewHandler(nil, notes, nil, config, testDB, "", "", logger, broadcaster)
 
 	// POST with empty label
 	form := url.Values{}
