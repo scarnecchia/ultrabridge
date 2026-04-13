@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/sysop/ultrabridge/internal/booxpipeline"
@@ -18,6 +20,11 @@ func (m *mockNoteStore) List(ctx context.Context, path string) ([]notestore.Note
 }
 func (m *mockNoteStore) Scan(ctx context.Context) ([]string, error)      { return nil, nil }
 func (m *mockNoteStore) Get(ctx context.Context, path string) (*notestore.NoteFile, error) {
+	for i := range m.files {
+		if m.files[i].Path == path {
+			return &m.files[i], nil
+		}
+	}
 	return nil, nil
 }
 func (m *mockNoteStore) UpsertFile(ctx context.Context, path string) error { return nil }
@@ -113,6 +120,55 @@ func TestNoteService_ListFiles(t *testing.T) {
 	if !names["SN Note 1"] || !names["SN Note 2"] || !names["Boox Note 1"] {
 		t.Errorf("missing files in merged list: %v", names)
 	}
+}
+
+func TestNoteService_GetFile(t *testing.T) {
+	ns := &mockNoteStore{
+		files: []notestore.NoteFile{
+			{Name: "sn1.note", Path: "/notes/sn1.note", FileType: notestore.FileTypeNote, JobStatus: "done"},
+		},
+	}
+	bs := &mockBooxStore{
+		notes: []booxpipeline.BooxNoteEntry{
+			{Title: "bn1", Path: "/boox/bn1.note", DeviceModel: "Go103"},
+		},
+	}
+	// booxNotesPath="/boox" routes paths under /boox to the Boox branch.
+	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, "", "/boox", nil)
+
+	t.Run("supernote", func(t *testing.T) {
+		f, err := svc.GetFile(context.Background(), "/notes/sn1.note")
+		if err != nil {
+			t.Fatalf("GetFile(sn1) failed: %v", err)
+		}
+		if f.Name != "sn1.note" || f.Source != "supernote" || f.JobStatus != "done" {
+			t.Errorf("unexpected Supernote file: %+v", f)
+		}
+	})
+
+	t.Run("boox", func(t *testing.T) {
+		f, err := svc.GetFile(context.Background(), "/boox/bn1.note")
+		if err != nil {
+			t.Fatalf("GetFile(bn1) failed: %v", err)
+		}
+		if f.Name != "bn1" || f.Source != "boox" {
+			t.Errorf("unexpected Boox file: %+v", f)
+		}
+	})
+
+	t.Run("not_found_supernote", func(t *testing.T) {
+		_, err := svc.GetFile(context.Background(), "/notes/missing.note")
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("GetFile(missing) err=%v, want sql.ErrNoRows", err)
+		}
+	})
+
+	t.Run("not_found_boox", func(t *testing.T) {
+		_, err := svc.GetFile(context.Background(), "/boox/missing.note")
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("GetFile(missing boox) err=%v, want sql.ErrNoRows", err)
+		}
+	})
 }
 
 func TestNoteService_Enqueue(t *testing.T) {

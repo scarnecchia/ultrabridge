@@ -181,6 +181,38 @@ func (s *noteService) ListFiles(ctx context.Context, path string, sortField, ord
 	return files[start:end], totalFiles, nil
 }
 
+// GetFile returns a single NoteFile by path, dispatching to the Boox or
+// Supernote branch based on isBooxPath. Returns sql.ErrNoRows when the path
+// is not found in the relevant store.
+func (s *noteService) GetFile(ctx context.Context, path string) (NoteFile, error) {
+	if s.isBooxPath(path) {
+		if s.booxStore == nil {
+			return NoteFile{}, fmt.Errorf("boox store not available")
+		}
+		notes, err := s.booxStore.ListNotes(ctx)
+		if err != nil {
+			return NoteFile{}, err
+		}
+		for _, bn := range notes {
+			if bn.Path == path {
+				return mapBooxFile(bn), nil
+			}
+		}
+		return NoteFile{}, sql.ErrNoRows
+	}
+	if s.noteStore == nil {
+		return NoteFile{}, fmt.Errorf("note store not available")
+	}
+	f, err := s.noteStore.Get(ctx, path)
+	if err != nil {
+		return NoteFile{}, err
+	}
+	if f == nil {
+		return NoteFile{}, sql.ErrNoRows
+	}
+	return mapSupernoteFile(*f), nil
+}
+
 func (s *noteService) GetNoteDetails(ctx context.Context, path string) (interface{}, error) {
 	if s.isBooxPath(path) {
 		if s.booxStore == nil {

@@ -92,6 +92,14 @@ type mockNoteService struct {
 func (m *mockNoteService) ListFiles(ctx context.Context, path, sort, order string, page, perPage int) ([]service.NoteFile, int, error) {
 	return m.files, len(m.files), nil
 }
+func (m *mockNoteService) GetFile(ctx context.Context, path string) (service.NoteFile, error) {
+	for _, f := range m.files {
+		if f.Path == path {
+			return f, nil
+		}
+	}
+	return service.NoteFile{}, sql.ErrNoRows
+}
 func (m *mockNoteService) GetNoteDetails(ctx context.Context, path string) (interface{}, error) {
 	return nil, nil
 }
