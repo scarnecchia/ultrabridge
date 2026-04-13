@@ -2,9 +2,11 @@ package web
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
 	"embed"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -123,6 +125,10 @@ func NewHandler(
 			return time.UnixMilli(ms).UTC().Format("2006-01-02 15:04")
 		},
 		"fileTypeStr": func(ft string) string { return ft },
+		"fileRowID": func(path string) string {
+			sum := sha1.Sum([]byte(path))
+			return "file-" + hex.EncodeToString(sum[:])[:12]
+		},
 		"noteSource": func(path string) string {
 			if h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) { return "Boox" }
 			if h.booxImportPath != "" && strings.HasPrefix(path, h.booxImportPath) { return "Boox" }
