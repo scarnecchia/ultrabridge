@@ -563,15 +563,33 @@ func (h *Handler) handleFilesRetryFailed(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) handleFilesDeleteNote(w http.ResponseWriter, r *http.Request) {
-	h.notes.DeleteNote(r.Context(), r.FormValue("path"))
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	if err := h.notes.DeleteNote(r.Context(), r.FormValue("path")); err != nil {
+		http.Error(w, "failed to delete note", http.StatusInternalServerError)
+		return
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesDeleteBulk(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
 	paths := r.Form["paths"]
-	if len(paths) > 0 { h.notes.BulkDelete(r.Context(), paths) }
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+	if len(paths) > 0 {
+		if err := h.notes.BulkDelete(r.Context(), paths); err != nil {
+			http.Error(w, "failed to delete", http.StatusInternalServerError)
+			return
+		}
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 

@@ -83,6 +83,7 @@ type mockNoteService struct {
 	processorStarted bool
 	importTriggered bool
 	migrateTriggered bool
+	deletedPaths     []string
 	
 	// Settings for section visibility
 	pipelineConfigured bool
@@ -135,8 +136,14 @@ func (m *mockNoteService) Unskip(ctx context.Context, path string) error {
 	return nil
 }
 func (m *mockNoteService) RetryFailed(ctx context.Context) error { return nil }
-func (m *mockNoteService) DeleteNote(ctx context.Context, path string) error { return nil }
-func (m *mockNoteService) BulkDelete(ctx context.Context, paths []string) error { return nil }
+func (m *mockNoteService) DeleteNote(ctx context.Context, path string) error {
+	m.deletedPaths = append(m.deletedPaths, path)
+	return nil
+}
+func (m *mockNoteService) BulkDelete(ctx context.Context, paths []string) error {
+	m.deletedPaths = append(m.deletedPaths, paths...)
+	return nil
+}
 func (m *mockNoteService) StartProcessor(ctx context.Context) error {
 	m.processorStarted = true
 	return nil

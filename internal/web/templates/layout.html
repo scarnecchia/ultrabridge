@@ -457,7 +457,7 @@
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
         <h3 style="margin:0;">Note Details</h3>
         <div style="display:flex; gap:0.5rem;">
-          <form id="delete-note-form" hx-post="/files/delete-note" hx-target="#main-content" style="display:inline;" onsubmit="document.getElementById('history-modal').style.display='none'">
+          <form id="delete-note-form" hx-post="/files/delete-note" hx-swap="none" hx-on:htmx:after-request="if (!event.detail.successful) return; const path = this.querySelector('input[name=path]').value; const row = Array.from(document.querySelectorAll('input.file-checkbox')).find(cb => cb.value === path)?.closest('tr'); if (row) row.remove(); document.getElementById('history-modal').style.display = 'none';" style="display:inline;">
             <input type="hidden" id="delete-note-path" name="path" value="">
             <button type="submit" class="btn-small" style="color:var(--status-text-failed);"
               onclick="return confirm('Delete this note, all job records, and cached renders?')">✗ Delete</button>

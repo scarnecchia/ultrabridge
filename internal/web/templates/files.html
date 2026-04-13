@@ -46,7 +46,7 @@
             <a href="/files?path={{.RelPath}}" hx-get="/files?path={{.RelPath}}" hx-target="#main-content" hx-push-url="true">{{.Label}}</a><span class="sep">/</span>
           {{end}}
         </div>
-    <form id="bulk-delete-form" hx-post="/files/delete-bulk" hx-target="#main-content">
+    <form id="bulk-delete-form" hx-post="/files/delete-bulk" hx-swap="none" hx-on:htmx:after-request="if (!event.detail.successful) return; document.querySelectorAll('.file-checkbox:checked').forEach(cb => cb.closest('tr').remove()); updateBulkDeleteBar();">
     <div class="table-container">
     <table class="task-table">
       <thead>

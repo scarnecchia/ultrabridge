@@ -2047,6 +2047,61 @@ func TestHandleFilesSingleRowMutations(t *testing.T) {
 	}
 }
 
+// TestHandleFilesDeleteNoteHXEmptyBody verifies AC2.2: HX-Request POST
+// /files/delete-note calls the service DeleteNote and returns 200 OK with
+// empty body; client-side JS removes the row from the DOM.
+func TestHandleFilesDeleteNoteHXEmptyBody(t *testing.T) {
+	h := newTestHandler()
+	notes := h.notes.(*mockNoteService)
+	notes.files = []service.NoteFile{{Path: "/notes/foo.note", Name: "foo.note"}}
+
+	form := url.Values{}
+	form.Set("path", "/notes/foo.note")
+	req := httptest.NewRequest("POST", "/files/delete-note", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX delete-note returned %d, want 200; body=%q", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); body != "" {
+		t.Errorf("expected empty body, got %q", body)
+	}
+	if len(notes.deletedPaths) != 1 || notes.deletedPaths[0] != "/notes/foo.note" {
+		t.Errorf("expected DeleteNote called with /notes/foo.note, got %v", notes.deletedPaths)
+	}
+}
+
+// TestHandleFilesDeleteBulkHXEmptyBody verifies AC2.3: HX-Request POST
+// /files/delete-bulk with multiple paths returns 200 + empty body and the
+// service BulkDelete was invoked with the posted paths.
+func TestHandleFilesDeleteBulkHXEmptyBody(t *testing.T) {
+	h := newTestHandler()
+	notes := h.notes.(*mockNoteService)
+
+	form := url.Values{}
+	form.Add("paths", "/notes/a.note")
+	form.Add("paths", "/notes/b.note")
+	req := httptest.NewRequest("POST", "/files/delete-bulk", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX delete-bulk returned %d, want 200; body=%q", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); body != "" {
+		t.Errorf("expected empty body, got %q", body)
+	}
+	wantDeleted := []string{"/notes/a.note", "/notes/b.note"}
+	if len(notes.deletedPaths) != 2 || notes.deletedPaths[0] != wantDeleted[0] || notes.deletedPaths[1] != wantDeleted[1] {
+		t.Errorf("expected BulkDelete called with %v, got %v", wantDeleted, notes.deletedPaths)
+	}
+}
+
 // TestHandlerRenderPathsDoNotPoisonEachOther is a regression guard for cross-path
 // state coupling on h.tmpl. html/template permanently locks a tree against Clone
 // once ExecuteTemplate has run, so any method that executes h.tmpl directly would
