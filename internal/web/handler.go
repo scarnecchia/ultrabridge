@@ -132,16 +132,6 @@ func NewHandler(
 		"add":        func(a, b int) int { return a + b },
 		"sub":        func(a, b int) int { return a - b },
 		"trimPrefix": strings.TrimPrefix,
-		"js": func(s string) string {
-			// Escape string for use in JavaScript string literal
-			s = strings.ReplaceAll(s, "\\", "\\\\")
-			s = strings.ReplaceAll(s, "'", "\\'")
-			s = strings.ReplaceAll(s, "\"", "\\\"")
-			s = strings.ReplaceAll(s, "\n", "\\n")
-			s = strings.ReplaceAll(s, "\r", "\\r")
-			s = strings.ReplaceAll(s, "\t", "\\t")
-			return s
-		},
 		"taskLink": func(val interface{}) map[string]interface{} {
 			if val == nil { return nil }
 			var link struct {
@@ -314,16 +304,10 @@ func (h *Handler) renderTemplate(w http.ResponseWriter, r *http.Request, name st
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
-		err := t.ExecuteTemplate(w, "content", data)
-		if err != nil {
-			h.logger.Error("failed to execute content template", "name", name, "error", err)
-		}
+		t.ExecuteTemplate(w, "content", data)
 		return
 	}
-	err = t.ExecuteTemplate(w, "layout.html", data)
-	if err != nil {
-		h.logger.Error("failed to execute layout template", "error", err)
-	}
+	t.ExecuteTemplate(w, "layout.html", data)
 }
 
 func (h *Handler) renderFragment(w http.ResponseWriter, r *http.Request, name string, data any) {

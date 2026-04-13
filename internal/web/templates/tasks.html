@@ -57,7 +57,36 @@
                 </thead>
                 <tbody>
                     {{range .tasks}}
-                    {{template "task_row" .}}
+                    <tr data-status="{{.Status}}" {{if eq .Status "completed"}}style="display: none;"{{end}}>
+                        <td><input type="checkbox" name="task_ids" value="{{.ID}}" class="task-checkbox" onchange="updateBulkActions()"></td>
+                        <td class="task-title">
+                            {{.Title}}
+                            {{if .Detail}}
+                            <br><span class="device-info">{{$detail := .Detail}}{{if hasPrefix $detail "From Boox red ink: "}}<a href="#" onclick="showHistory('{{trimPrefix $detail "From Boox red ink: " | js}}'); return false;" style="color:#6b7280;">{{$detail}}</a>{{else}}{{$detail}}{{end}}</span>
+                            {{end}}
+                            {{if .Links}}{{with taskLink .Links}}
+                            <br><span class="device-info"><a href="#" onclick="showHistory('{{.Path | js}}'); return false;" style="color:#6b7280;">⬔ From note, page {{.Page}}</a></span>
+                            {{end}}{{end}}
+                        </td>
+                        <td>
+                            <span class="task-status {{if eq .Status "completed"}}status-completed{{else}}status-needsaction{{end}}">
+                                {{if eq .Status "completed"}}Completed{{else}}Needs Action{{end}}
+                            </span>
+                        </td>
+                        <td class="task-due-date">{{.CompletedAt | formatCreated}}</td>
+                        <td class="task-due-date">
+                            {{if .DueAt}}
+                                {{.DueAt | formatDueTime}}
+                            {{else}}
+                                -
+                            {{end}}
+                        </td>
+                        <td class="task-actions">
+                            {{if ne .Status "completed"}}
+                            <button type="button" hx-post="/tasks/{{.ID}}/complete" hx-target="#main-content" class="btn-small">Complete</button>
+                            {{end}}
+                        </td>
+                    </tr>
                     {{end}}
                 </tbody>
             </table>
