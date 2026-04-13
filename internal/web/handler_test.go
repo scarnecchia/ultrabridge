@@ -2,7 +2,9 @@ package web
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -1850,6 +1852,111 @@ func TestTaskRowFragmentIdentity(t *testing.T) {
 		if !strings.Contains(body2, m) {
 			t.Errorf("tasks.html render missing marker %q\nbody:\n%s", m, body2)
 		}
+	}
+}
+
+// TestFileRowFragmentIdentity verifies AC3.4: a file rendered via
+// h.renderFragment(w, r, "_file_row", ctx) carries the same load-bearing HTML
+// tokens as the same file rendered inside files.html via
+// {{range .files}}{{template "_file_row" (makeFileRowCtx . $.relPath)}}{{end}}.
+// Covers both source-badge branches (Supernote, Boox) to prove the conditional
+// markup renders identically across paths.
+func TestFileRowFragmentIdentity(t *testing.T) {
+	type subtest struct {
+		name          string
+		booxNotesPath string
+		file          service.NoteFile
+		sourceBadge   string
+	}
+	cases := []subtest{
+		{
+			name: "supernote",
+			file: service.NoteFile{
+				Path:      "/notes/foo.note",
+				RelPath:   "foo.note",
+				Name:      "foo.note",
+				FileType:  "note",
+				JobStatus: "done",
+				Source:    "supernote",
+			},
+			sourceBadge: `badge-sn`,
+		},
+		{
+			name:          "boox",
+			booxNotesPath: "/boox",
+			file: service.NoteFile{
+				Path:      "/boox/bar.note",
+				RelPath:   "bar.note",
+				Name:      "bar.note",
+				FileType:  "note",
+				JobStatus: "done",
+				Source:    "boox",
+			},
+			sourceBadge: `badge-boox`,
+		},
+	}
+
+	// fileRowID formula from handler.go — kept in-test to avoid exporting.
+	fileRowID := func(path string) string {
+		sum := sha1.Sum([]byte(path))
+		return "file-" + hex.EncodeToString(sum[:])[:12]
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			broadcaster := logging.NewLogBroadcaster()
+			notes := &mockNoteService{
+				files:              []service.NoteFile{tc.file},
+				docs:               make(map[string][]service.SearchResult),
+				contents:           make(map[string]interface{}),
+				pipelineConfigured: true,
+				booxEnabled:        true,
+			}
+			h := NewHandler(
+				&mockTaskService{},
+				notes,
+				&mockSearchService{embeddingPipelineConfigured: true, chatEnabled: true},
+				&mockConfigService{syncConfigured: true},
+				nil,
+				"",
+				tc.booxNotesPath,
+				logger,
+				broadcaster,
+			)
+
+			// Path 1: render through files.html via HX GET /files.
+			w1 := httptest.NewRecorder()
+			r1 := httptest.NewRequest(http.MethodGet, "/files", nil)
+			r1.Header.Set("HX-Request", "true")
+			h.ServeHTTP(w1, r1)
+			if w1.Code != http.StatusOK {
+				t.Fatalf("GET /files returned %d; body=%s", w1.Code, w1.Body.String())
+			}
+			body1 := w1.Body.String()
+
+			// Path 2: renderFragment directly with the same ctx shape.
+			w2 := httptest.NewRecorder()
+			r2 := httptest.NewRequest(http.MethodGet, "/", nil)
+			h.renderFragment(w2, r2, "_file_row", fileRowCtx{File: tc.file, RelPath: ""})
+			body2 := w2.Body.String()
+
+			expectedID := fileRowID(tc.file.Path)
+			markers := []string{
+				`id="` + expectedID + `"`,
+				tc.file.Name,
+				tc.sourceBadge,
+				`hx-target="closest tr"`,
+			}
+			for _, m := range markers {
+				if !strings.Contains(body1, m) {
+					t.Errorf("files.html render missing marker %q; body:\n%s", m, body1)
+				}
+				if !strings.Contains(body2, m) {
+					t.Errorf("renderFragment output missing marker %q; body:\n%s", m, body2)
+				}
+			}
+		})
 	}
 }
 
