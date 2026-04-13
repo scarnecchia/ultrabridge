@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"sync"
 
 	gocaldav "github.com/emersion/go-webdav/caldav"
 	ical "github.com/emersion/go-ical"
@@ -30,11 +31,16 @@ type SyncNotifier interface {
 }
 
 type Backend struct {
-	store          TaskStore
-	notifier       SyncNotifier
-	prefix         string
+	store       TaskStore
+	notifier    SyncNotifier
+	prefix      string
+	dueTimeMode string
+
+	// collectionName is mutable at runtime via SetCollectionName so a client
+	// PROPPATCH that sets DAV:displayname takes effect immediately on
+	// subsequent PROPFIND responses, without requiring a container restart.
+	nameMu         sync.RWMutex
 	collectionName string
-	dueTimeMode    string
 }
 
 func NewBackend(store TaskStore, prefix, collectionName, dueTimeMode string, notifier SyncNotifier) *Backend {
@@ -45,6 +51,22 @@ func NewBackend(store TaskStore, prefix, collectionName, dueTimeMode string, not
 		collectionName: collectionName,
 		dueTimeMode:    dueTimeMode,
 	}
+}
+
+// CollectionName returns the current display name of the task collection.
+func (b *Backend) CollectionName() string {
+	b.nameMu.RLock()
+	defer b.nameMu.RUnlock()
+	return b.collectionName
+}
+
+// SetCollectionName updates the display name at runtime. Callers should
+// also persist the new name (e.g. to the settings DB) so it survives
+// restarts; this setter only affects the running backend.
+func (b *Backend) SetCollectionName(name string) {
+	b.nameMu.Lock()
+	defer b.nameMu.Unlock()
+	b.collectionName = name
 }
 
 func (b *Backend) CurrentUserPrincipal(ctx context.Context) (string, error) {
@@ -225,8 +247,8 @@ func (b *Backend) DeleteCalendarObject(ctx context.Context, urlPath string) erro
 func (b *Backend) collection() gocaldav.Calendar {
 	return gocaldav.Calendar{
 		Path:                  b.prefix + "/user/calendars/tasks/",
-		Name:                  b.collectionName,
-		Description:           "Supernote tasks via UltraBridge",
+		Name:                  b.CollectionName(),
+		Description:           "Tasks via UltraBridge",
 		SupportedComponentSet: []string{"VTODO"},
 	}
 }

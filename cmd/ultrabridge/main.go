@@ -480,7 +480,28 @@ func main() {
 			ConfigDirty: configDirty,
 		})
 	})
-	mux.Handle("/caldav/", authMW.Wrap(caldavHandler))
+	// Wrap the CalDAV handler with a PROPPATCH stub so clients can rename
+	// the collection (DAV:displayname) without hitting the 501 from the
+	// go-webdav library. The callback persists the new name to the settings
+	// DB and updates the running backend so subsequent PROPFIND responses
+	// reflect the change without a container restart.
+	caldavWithProppatch := ubcaldav.ProppatchStub(caldavHandler, ubcaldav.ProppatchOptions{
+		OnDisplayName: func(name string) error {
+			trimmed := strings.TrimSpace(name)
+			if trimmed == "" {
+				return nil
+			}
+			backend.SetCollectionName(trimmed)
+			if noteDB != nil {
+				return notedb.SetSetting(context.Background(), noteDB, appconfig.KeyCalDAVCollectionName, trimmed)
+			}
+			return nil
+		},
+		Logger: func(format string, args ...any) {
+			logger.Warn(fmt.Sprintf(format, args...))
+		},
+	})
+	mux.Handle("/caldav/", authMW.Wrap(caldavWithProppatch))
 	mux.HandleFunc("/.well-known/caldav", func(w http.ResponseWriter, r *http.Request) {
 		authMW.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/caldav/", http.StatusMovedPermanently)
