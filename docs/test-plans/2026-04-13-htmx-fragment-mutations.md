@@ -6,6 +6,23 @@ DOM-level JS listeners, HTMX swaps, poller refreshes, and layout vs
 fragment distinction. All other ACs are covered by automated tests; see
 the traceability table at the bottom.
 
+## Verification progress
+
+Steps verified in the 2026-04-13 live session (either via Playwright
+during implementation or by the human operator post-merge):
+
+- **A2, A4** — per-row task complete, task create (Playwright + operator)
+- **B1, B2, B3** — bulk task select, bulk complete, bulk delete (Playwright)
+- **C2** — file Queue on a `done` file (Playwright)
+- **D2** — file checkbox → bulk-delete bar shows/hides (Playwright)
+- **E1–E3** — curl layout vs fragment assertions (curl)
+- **F1, F2, F4** — Tasks + Files checkbox bars, clean console (Playwright)
+- **A5** — reload after create persists the task (operator)
+- **F3** — processor badge continues updating every ~5s (operator)
+
+Outstanding: A6, C3–C6, D1, D3–D6, destructive items (B4/B5/D1/D3),
+and both end-to-end scenarios.
+
 ## Prerequisites
 
 - UltraBridge running locally at `http://localhost:8443/` (Basic Auth
