@@ -481,7 +481,10 @@ func (h *Handler) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handlePurgeCompleted(w http.ResponseWriter, r *http.Request) {
 	h.tasks.PurgeCompleted(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleIndex(w, r); return }
+	if r.Header.Get("HX-Request") == "true" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

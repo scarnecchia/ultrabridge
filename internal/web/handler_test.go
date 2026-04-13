@@ -860,6 +860,50 @@ func TestBulkDeleteHXReturnsEmptyBody(t *testing.T) {
 	}
 }
 
+// TestPurgeCompletedHXReturnsEmptyBody verifies AC1.7: HX POST /tasks/purge-completed
+// returns 200 with an empty body; client-side JS sweeps completed rows from the DOM.
+func TestPurgeCompletedHXReturnsEmptyBody(t *testing.T) {
+	store := newMockTaskStore()
+	store.tasks["done"] = &taskstore.Task{TaskID: "done", Title: taskstore.SqlStr("Done"), Status: taskstore.SqlStr("completed"), IsDeleted: "N"}
+	store.tasks["open"] = &taskstore.Task{TaskID: "open", Title: taskstore.SqlStr("Open"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
+	handler := LegacyNewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+
+	req := httptest.NewRequest("POST", "/tasks/purge-completed", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX purge returned %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if body := w.Body.String(); body != "" {
+		t.Errorf("expected empty body, got %q", body)
+	}
+	if store.tasks["done"].IsDeleted != "Y" {
+		t.Error("completed task should be purged (IsDeleted='Y')")
+	}
+	if store.tasks["open"].IsDeleted != "N" {
+		t.Error("non-completed task should remain")
+	}
+}
+
+// TestPurgeCompletedNonHXRedirects verifies the non-HX path still redirects to /.
+func TestPurgeCompletedNonHXRedirects(t *testing.T) {
+	store := newMockTaskStore()
+	handler := LegacyNewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+
+	req := httptest.NewRequest("POST", "/tasks/purge-completed", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("non-HX purge returned %d, want %d", w.Code, http.StatusSeeOther)
+	}
+	if loc := w.Header().Get("Location"); loc != "/" {
+		t.Errorf("redirect location is %q, want /", loc)
+	}
+}
+
 func TestBulkCompleteMultipleTasks(t *testing.T) {
 	store := newMockTaskStore()
 	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", Title: taskstore.SqlStr("Task 1"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}

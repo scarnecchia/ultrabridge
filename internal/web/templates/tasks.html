@@ -62,7 +62,7 @@
                 </tbody>
             </table>
         </div>
-        <form hx-post="/tasks/purge-completed" hx-target="#main-content" style="margin-top:0.5rem; text-align:right;">
+        <form hx-post="/tasks/purge-completed" hx-swap="none" hx-on::after-request="if(!event.detail.successful) return; document.querySelectorAll('#task-table tbody tr[data-status=&quot;completed&quot;]').forEach(r => r.remove());" style="margin-top:0.5rem; text-align:right;">
           <button type="submit" class="btn-small" style="background: var(--status-text-failed);" onclick="return confirm('Purge all completed tasks? This cannot be undone.')">✗ Purge Completed</button>
         </form>
         {{else}}
