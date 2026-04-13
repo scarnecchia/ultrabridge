@@ -40,8 +40,8 @@
         {{if .tasks}}
         <div id="bulk-actions" style="display: none; margin-bottom: 1rem; padding: 1rem; background: var(--bg-color); border-radius: var(--radius); border: 1px solid var(--brand-color);">
             <span id="selected-count" class="text-small text-bold" style="margin-right: 1rem;">0 selected</span>
-            <button type="button" hx-post="/tasks/bulk" hx-include=".task-checkbox:checked" hx-vals='{"action": "complete"}' hx-target="#main-content" class="btn-small">Complete Selected</button>
-            <button type="button" hx-post="/tasks/bulk" hx-include=".task-checkbox:checked" hx-vals='{"action": "delete"}' hx-target="#main-content" class="btn-small" style="background: var(--status-text-failed);" onclick="return confirm('Delete selected tasks? This cannot be undone.')">Delete Selected</button>
+            <button type="button" hx-post="/tasks/bulk" hx-include=".task-checkbox:checked" hx-vals='{"action": "complete"}' hx-swap="none" hx-on::after-request="if(!event.detail.successful) return; const doc = new DOMParser().parseFromString(event.detail.xhr.responseText, 'text/html'); doc.querySelectorAll('tr[id^=&quot;task-&quot;]').forEach(newRow => { const existing = document.getElementById(newRow.id); if (existing) existing.replaceWith(newRow); }); updateBulkActions();" class="btn-small">Complete Selected</button>
+            <button type="button" hx-post="/tasks/bulk" hx-include=".task-checkbox:checked" hx-vals='{"action": "delete"}' hx-swap="none" hx-on::after-request="if(!event.detail.successful) return; document.querySelectorAll('.task-checkbox:checked').forEach(cb => cb.closest('tr').remove()); updateBulkActions();" class="btn-small" style="background: var(--status-text-failed);" onclick="return confirm('Delete selected tasks? This cannot be undone.')">Delete Selected</button>
         </div>
         <div class="table-container">
             <table id="task-table">

@@ -456,9 +456,26 @@ func (h *Handler) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(ids) > 0 {
-		if action == "complete" { h.tasks.BulkComplete(r.Context(), ids) } else if action == "delete" { h.tasks.BulkDelete(r.Context(), ids) }
+		if action == "complete" {
+			h.tasks.BulkComplete(r.Context(), ids)
+		} else if action == "delete" {
+			h.tasks.BulkDelete(r.Context(), ids)
+		}
 	}
-	if r.Header.Get("HX-Request") == "true" { h.handleIndex(w, r); return }
+	if r.Header.Get("HX-Request") == "true" {
+		if action == "complete" {
+			for _, id := range ids {
+				t, err := h.tasks.Get(r.Context(), id)
+				if err != nil {
+					h.logger.Error("bulk complete: failed to fetch task for fragment render", "id", id, "error", err)
+					continue
+				}
+				h.renderFragment(w, r, "_task_row", t)
+			}
+		}
+		// action=delete: empty response body; client removes checked rows.
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

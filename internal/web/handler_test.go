@@ -800,6 +800,66 @@ func TestPostCreateTaskWithWhitespace(t *testing.T) {
 	}
 }
 
+// TestBulkCompleteHXReturnsRowFragments verifies AC1.4: HX POST /tasks/bulk with
+// action=complete and two task IDs returns 200 with one <tr> per task, concatenated.
+func TestBulkCompleteHXReturnsRowFragments(t *testing.T) {
+	store := newMockTaskStore()
+	store.tasks["a"] = &taskstore.Task{TaskID: "a", Title: taskstore.SqlStr("A"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
+	store.tasks["b"] = &taskstore.Task{TaskID: "b", Title: taskstore.SqlStr("B"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
+	handler := LegacyNewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+
+	form := url.Values{}
+	form.Set("action", "complete")
+	form.Add("task_ids", "a")
+	form.Add("task_ids", "b")
+	req := httptest.NewRequest("POST", "/tasks/bulk", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX bulk complete returned %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `id="task-a"`) {
+		t.Errorf("response missing id=\"task-a\"; body:\n%s", body)
+	}
+	if !strings.Contains(body, `id="task-b"`) {
+		t.Errorf("response missing id=\"task-b\"; body:\n%s", body)
+	}
+	if got := strings.Count(body, `data-status="completed"`); got != 2 {
+		t.Errorf("response contains %d completed rows, want 2; body:\n%s", got, body)
+	}
+}
+
+// TestBulkDeleteHXReturnsEmptyBody verifies AC1.5: HX POST /tasks/bulk with
+// action=delete returns 200 with an empty body (client removes rows via JS).
+func TestBulkDeleteHXReturnsEmptyBody(t *testing.T) {
+	store := newMockTaskStore()
+	store.tasks["a"] = &taskstore.Task{TaskID: "a", Title: taskstore.SqlStr("A"), IsDeleted: "N"}
+	handler := LegacyNewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+
+	form := url.Values{}
+	form.Set("action", "delete")
+	form.Add("task_ids", "a")
+	req := httptest.NewRequest("POST", "/tasks/bulk", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX bulk delete returned %d, want %d", w.Code, http.StatusOK)
+	}
+	if body := w.Body.String(); body != "" {
+		t.Errorf("expected empty body, got %q", body)
+	}
+	if store.tasks["a"].IsDeleted != "Y" {
+		t.Errorf("task a should be soft-deleted")
+	}
+}
+
 func TestBulkCompleteMultipleTasks(t *testing.T) {
 	store := newMockTaskStore()
 	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", Title: taskstore.SqlStr("Task 1"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
