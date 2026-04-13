@@ -71,6 +71,10 @@
 </div>
 
 <script>
-    // Re-initialize visibility on swap
-    toggleCompleted();
+    // Re-initialize visibility on swap. Deferred to DOMContentLoaded because
+    // layout.html defines toggleCompleted AFTER tab content; inline invocation
+    // at first paint otherwise throws ReferenceError.
+    document.addEventListener('DOMContentLoaded', function() {
+        if (typeof toggleCompleted === 'function') toggleCompleted();
+    });
 </script>
