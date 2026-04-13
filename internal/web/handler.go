@@ -475,10 +475,15 @@ func (h *Handler) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(ids) > 0 {
+		var err error
 		if action == "complete" {
-			h.tasks.BulkComplete(r.Context(), ids)
-		} else if action == "delete" {
-			h.tasks.BulkDelete(r.Context(), ids)
+			err = h.tasks.BulkComplete(r.Context(), ids)
+		} else {
+			err = h.tasks.BulkDelete(r.Context(), ids)
+		}
+		if err != nil {
+			http.Error(w, "bulk action failed", http.StatusInternalServerError)
+			return
 		}
 	}
 	if r.Header.Get("HX-Request") == "true" {
@@ -499,7 +504,10 @@ func (h *Handler) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handlePurgeCompleted(w http.ResponseWriter, r *http.Request) {
-	h.tasks.PurgeCompleted(r.Context())
+	if err := h.tasks.PurgeCompleted(r.Context()); err != nil {
+		http.Error(w, "purge failed", http.StatusInternalServerError)
+		return
+	}
 	if r.Header.Get("HX-Request") == "true" {
 		w.WriteHeader(http.StatusOK)
 		return

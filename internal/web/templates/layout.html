@@ -590,7 +590,9 @@
         });
 
         function toggleCompleted() {
-            const show = document.getElementById('show-completed').checked;
+            const cb = document.getElementById('show-completed');
+            if (!cb) return; // #show-completed only exists on the Tasks tab
+            const show = cb.checked;
             const rows = document.querySelectorAll('#task-table tbody tr[data-status="completed"]');
             rows.forEach(function(row) {
                 row.style.display = show ? '' : 'none';

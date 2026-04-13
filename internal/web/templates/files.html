@@ -94,9 +94,15 @@
 </div>
 
 <script>
-    updateBulkDeleteBar();
-    updateProcessorStatus();
-    {{if .detailPath}}
-    showHistory("{{.detailPath}}");
-    {{end}}
+    // layout.html defines updateBulkDeleteBar/updateProcessorStatus AFTER this
+    // embedded content runs (content is at layout.html:447, function definitions
+    // are later), so defer our first-paint calls until the whole document is
+    // parsed. Without this, the browser logs ReferenceError on /files load.
+    document.addEventListener('DOMContentLoaded', function() {
+        if (typeof updateBulkDeleteBar === 'function') updateBulkDeleteBar();
+        if (typeof updateProcessorStatus === 'function') updateProcessorStatus();
+        {{if .detailPath}}
+        showHistory("{{.detailPath}}");
+        {{end}}
+    });
 </script>
