@@ -502,11 +502,15 @@ func main() {
 		},
 	})
 	mux.Handle("/caldav/", authMW.Wrap(caldavWithProppatch))
-	mux.HandleFunc("/.well-known/caldav", func(w http.ResponseWriter, r *http.Request) {
-		authMW.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/caldav/", http.StatusMovedPermanently)
-		})).ServeHTTP(w, r)
-	})
+	// Register both trailing-slash variants because Go's net/http ServeMux
+	// treats "/.well-known/caldav" (exact) and "/.well-known/caldav/" (prefix)
+	// as distinct patterns. RFC 6764 uses the no-slash form but some clients
+	// probe with a trailing slash; both should redirect to /caldav/.
+	wellKnownCalDAV := authMW.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/caldav/", http.StatusMovedPermanently)
+	}))
+	mux.Handle("/.well-known/caldav", wellKnownCalDAV)
+	mux.Handle("/.well-known/caldav/", wellKnownCalDAV)
 
 	// MCP discovery for Claude/OAuth clients
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, r *http.Request) {
