@@ -26,7 +26,7 @@ import (
 	"github.com/sysop/ultrabridge/internal/service"
 )
 
-//go:embed templates
+//go:embed all:templates
 var templateFS embed.FS
 
 //go:embed static
