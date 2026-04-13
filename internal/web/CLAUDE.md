@@ -1,6 +1,6 @@
 # internal/web
 
-Last verified: 2026-04-10
+Last verified: 2026-04-13 (fragment-rendering sections only; other sections may predate the decoupled-architecture refactor)
 
 HTTP handler and HTML templates for the UltraBridge web UI.
 
@@ -121,6 +121,98 @@ Custom `template.FuncMap` functions registered in `NewHandler`:
 - `formatTimestamp(ms int64) string` — formats millisecond UTC unix timestamp to "2006-01-02 15:04"; returns "Never" if 0
 - `fileTypeStr(ft notestore.FileType) string` — converts FileType to its string value for template conditionals
 - `noteSource(path string) string` — returns "Boox" if path starts with booxNotesPath, else "Supernote"
+- `fileRowID(path string) string` — returns `"file-" + hex(sha1(path))[:12]`. Deterministic path→DOM-id mapping used by `_file_row.html` (file paths contain characters invalid in HTML `id` attributes). Stable across restarts.
+- `makeFileRowCtx(f service.NoteFile, relPath string) fileRowCtx` — constructs the context shape passed into `_file_row`, pairing a file with the containing directory's relPath so per-row buttons can emit `back=` query strings.
+- `hasPrefix`, `trimPrefix` — aliases of `strings.HasPrefix` / `strings.TrimPrefix`.
+- `add`, `sub` — integer arithmetic helpers for pagination templates.
+- `taskLink` — normalizes a task's Links payload (map or struct) into template-friendly map with Path+Page. Used by `_task_row.html` for the "from note" link.
+
+## Fragment rendering
+
+Mutation handlers emit row-scoped HTML fragments on `HX-Request` via
+`h.renderFragment(w, r, name, data)`, parallel to `h.renderTemplate` for
+tab-level templates. Two invariants enable this:
+
+1. **Embed directive:** `//go:embed all:templates` (handler.go). The `all:`
+   prefix is load-bearing — a plain `//go:embed templates` directory embed
+   excludes files whose names start with `.` or `_`, which would drop every
+   `_*.html` fragment silently. Any new fragment file using the
+   `_<name>.html` naming must remain covered by this directive.
+2. **Clone-then-Execute:** `renderFragment` calls `h.tmpl.Clone()` and
+   executes the clone. `html/template` permanently locks a template tree
+   against future Clones once `ExecuteTemplate` has run on it. Since
+   `renderTemplate` already clones per request to install a dynamic
+   `"content"` template, any method that bypasses Clone and executes
+   `h.tmpl` directly would brick every subsequent tab render. New Handler
+   methods that touch `h.tmpl` must preserve this invariant.
+
+### Fragment file convention
+
+Fragment templates live in `internal/web/templates/` and follow this shape:
+
+```
+// _task_row.html
+{{define "_task_row"}}
+<tr id="task-{{.ID}}" data-status="{{.Status}}" …>
+  …
+</tr>
+{{end}}
+```
+
+- **Filename**: `_<name>.html` (underscore prefix).
+- **Define block**: `{{define "_<name>"}}…{{end}}` where the name matches
+  the filename (minus `.html`). Underscore-named blocks avoid collision
+  with `renderTemplate`'s dynamic `"content"` slot.
+- Invoked from tab templates via `{{template "_name" <data>}}` inside the
+  outer loop, and from mutation handlers via `h.renderFragment(w, r,
+  "_name", data)`.
+
+### Current fragments
+
+- `_task_row.html` — a single task row. Data: `service.Task`.
+- `_file_row.html` — a single file row (directory or file). Data:
+  `fileRowCtx{File service.NoteFile; RelPath string}` (unexported type
+  in handler.go; templates access its exported fields via reflection).
+
+### Mutation handler contract
+
+On `HX-Request: true`, task/file mutation handlers emit either:
+
+- A single `_task_row` or `_file_row` fragment (queue, skip, unskip, force,
+  complete, create — the row swaps in place via `hx-target="closest tr"
+  hx-swap="outerHTML"` on the originating button, or `hx-target="#task-table
+  tbody" hx-swap="afterbegin"` on the create form).
+- A concatenation of row fragments (bulk complete — client-side JS parses
+  the response as `<table><tbody>` + body + `</tbody></table>` and
+  replaces matching rows by id).
+- An empty 200 body (bulk delete, purge, single-row delete, and the "broad"
+  mutations: scan, import, retry-failed, migrate-imports, processor
+  start/stop). The originating form's `hx-on:htmx:after-request` handler
+  sweeps the DOM or nudges a poller.
+
+Non-HX paths continue to redirect (303) to the relevant tab with query
+strings preserved where applicable.
+
+### HTMX 1.9 pitfalls
+
+- Use **`hx-on:htmx:after-request`** (single colon, `htmx:` prefix). The
+  HTMX 2.x `hx-on::after-request` shorthand is not recognized by the
+  bundled 1.9.10; using it causes the form-hijack to silently fail.
+- When parsing concatenated `<tr>` fragments client-side, **wrap the
+  response in `<table><tbody>…</tbody></table>`** before `DOMParser`.
+  HTML5's "in body" insertion mode strips orphan `<tr>` tokens, so
+  `new DOMParser().parseFromString(body, 'text/html').querySelectorAll('tr')`
+  returns empty on raw row strings.
+
+### Design: minimal scope, no OOB
+
+Bulk counts (selected count, processing queue depth) and the processor
+status badge are updated by existing client-side listeners and the 5-second
+`updateProcessorStatus` poller. HTMX out-of-band (`hx-swap-oob`) responses
+are NOT used — the design explicitly stays within a single target per swap
+to keep responses auditable and avoid hidden-mutation surprises. Future
+work that needs to touch multiple non-row DOM regions in one response
+should revisit this decision explicitly.
 
 ## Template data
 
