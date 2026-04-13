@@ -105,16 +105,15 @@ func registerMCPTools(server *mcp.Server, client *mcpAPIClient) {
 			return nil, nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
 		}
 
+		// API shape is service.SearchResult with snake_case: path/page/
+		// snippet/score. Decoder previously expected richer fields
+		// (note_path/body_text/etc.) the v1 API doesn't emit; every field
+		// silently got its zero value and MCP produced empty-body results.
 		var results []struct {
-			NotePath  string  `json:"note_path"`
-			Page      int     `json:"page"`
-			BodyText  string  `json:"body_text"`
-			TitleText string  `json:"title_text"`
-			Score     float64 `json:"score"`
-			Folder    string  `json:"folder"`
-			Device    string  `json:"device"`
-			NoteDate  string  `json:"note_date"`
-			URL       string  `json:"url"`
+			Path    string  `json:"path"`
+			Page    int     `json:"page"`
+			Snippet string  `json:"snippet"`
+			Score   float64 `json:"score"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
 			return nil, nil, fmt.Errorf("decode response: %w", err)
@@ -123,21 +122,10 @@ func registerMCPTools(server *mcp.Server, client *mcpAPIClient) {
 		var sb strings.Builder
 		for i, r := range results {
 			sb.WriteString(fmt.Sprintf("--- Result %d ---\n", i+1))
-			if r.TitleText != "" {
-				sb.WriteString(fmt.Sprintf("Title: %s\n", r.TitleText))
-			}
-			sb.WriteString(fmt.Sprintf("Note: %s (page %d)\n", r.NotePath, r.Page))
-			if r.Device != "" {
-				sb.WriteString(fmt.Sprintf("Device: %s\n", r.Device))
-			}
-			if r.Folder != "" {
-				sb.WriteString(fmt.Sprintf("Folder: %s\n", r.Folder))
-			}
-			if r.NoteDate != "" {
-				sb.WriteString(fmt.Sprintf("Date: %s\n", r.NoteDate))
-			}
-			sb.WriteString(fmt.Sprintf("URL: %s%s\n", client.baseURL, r.URL))
-			sb.WriteString(fmt.Sprintf("Text:\n%s\n\n", r.BodyText))
+			sb.WriteString(fmt.Sprintf("Note: %s (page %d)\n", r.Path, r.Page))
+			detailURL := fmt.Sprintf("%s/files?detail=%s", client.baseURL, url.QueryEscape(r.Path))
+			sb.WriteString(fmt.Sprintf("URL: %s\n", detailURL))
+			sb.WriteString(fmt.Sprintf("Text:\n%s\n\n", r.Snippet))
 		}
 		if len(results) == 0 {
 			sb.WriteString("No results found.\n")

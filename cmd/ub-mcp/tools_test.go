@@ -12,23 +12,22 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// TestSearchNotesBasic verifies search_notes tool returns formatted text with metadata.
+// TestSearchNotesBasic verifies search_notes tool returns formatted text with
+// the fields the /api/search endpoint actually emits (service.SearchResult
+// shape: path / page / snippet / score). Previously this test mocked a
+// richer response (note_path/body_text/title_text/folder/device/note_date/
+// url) that the real API never emitted — which is why the decoder silently
+// produced empty-body results in production until a user hit it.
 func TestSearchNotesBasic(t *testing.T) {
-	// Mock API server
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/search" && r.Method == "GET" {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode([]map[string]interface{}{
 				{
-					"note_path":  "/notes/test.note",
-					"page":       0,
-					"body_text":  "This is test content",
-					"title_text": "Test Note",
-					"score":      0.95,
-					"folder":     "Work",
-					"device":     "Supernote",
-					"note_date":  "2026-04-08",
-					"url":        "/files/history?path=/notes/test.note",
+					"path":    "/notes/test.note",
+					"page":    0,
+					"snippet": "This is test content",
+					"score":   0.95,
 				},
 			})
 			return
@@ -45,54 +44,40 @@ func TestSearchNotesBasic(t *testing.T) {
 
 	registerTools(server, client)
 
-	// Test the search_notes handler
 	input := SearchNotesInput{Query: "test"}
 	result, _, err := testCallSearchNotesTool(server, client, input)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
 	if result == nil {
 		t.Fatal("expected result, got nil")
 	}
-
 	if len(result.Content) == 0 {
 		t.Fatal("expected content in result")
 	}
-
 	textContent, ok := result.Content[0].(*mcp.TextContent)
 	if !ok {
 		t.Fatalf("expected TextContent, got %T", result.Content[0])
 	}
-
-	// Verify response contains expected metadata
 	text := textContent.Text
 	if text == "" {
 		t.Fatal("expected non-empty text")
 	}
-
-	// Verify key fields are present
-	if !strings.Contains(text, "Test Note") {
-		t.Error("missing title in response")
+	if !strings.Contains(text, "/notes/test.note") {
+		t.Errorf("missing note path in response: %s", text)
 	}
-	if !strings.Contains(text,"/notes/test.note") {
-		t.Error("missing note path in response")
+	if !strings.Contains(text, "page 0") {
+		t.Errorf("missing page number in response: %s", text)
 	}
-	if !strings.Contains(text,"page 0") {
-		t.Error("missing page number in response")
+	if !strings.Contains(text, "This is test content") {
+		t.Errorf("missing snippet body in response: %s", text)
 	}
-	if !strings.Contains(text,"Supernote") {
-		t.Error("missing device in response")
+	// URL format: {baseURL}/files?detail={urlencoded path}
+	if !strings.Contains(text, mockServer.URL+"/files?detail=") {
+		t.Errorf("missing web-UI detail URL in response: %s", text)
 	}
-	if !strings.Contains(text,"Work") {
-		t.Error("missing folder in response")
-	}
-	if !strings.Contains(text,"2026-04-08") {
-		t.Error("missing note date in response")
-	}
-	if !strings.Contains(text,mockServer.URL+"/files/history?path=/notes/test.note") {
-		t.Errorf("missing full URL in response: %s", text)
+	if !strings.Contains(text, "%2Fnotes%2Ftest.note") {
+		t.Errorf("URL does not include the encoded path: %s", text)
 	}
 }
 
