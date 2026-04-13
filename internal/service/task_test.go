@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -91,6 +92,32 @@ func TestTaskService_Create(t *testing.T) {
 	}
 	if notifier.notified != 1 {
 		t.Errorf("expected 1 notification, got %d", notifier.notified)
+	}
+}
+
+func TestTaskService_Get(t *testing.T) {
+	store := &mockTaskStore{tasks: make(map[string]taskstore.Task)}
+	svc := NewTaskService(store, nil)
+
+	created, err := svc.Create(context.Background(), "find me", nil)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	got, err := svc.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("Get(%q) failed: %v", created.ID, err)
+	}
+	if got.ID != created.ID || got.Title != "find me" || got.Status != StatusNeedsAction {
+		t.Errorf("Get returned %+v, want ID=%s Title=%q Status=%s", got, created.ID, "find me", StatusNeedsAction)
+	}
+
+	_, err = svc.Get(context.Background(), "does-not-exist")
+	if err == nil {
+		t.Fatal("Get(unknown) returned nil error, want sql.ErrNoRows")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("Get(unknown) err=%v, want sql.ErrNoRows", err)
 	}
 }
 

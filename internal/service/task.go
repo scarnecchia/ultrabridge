@@ -54,6 +54,17 @@ func (s *taskService) List(ctx context.Context) ([]Task, error) {
 	return tasks, nil
 }
 
+func (s *taskService) Get(ctx context.Context, id string) (Task, error) {
+	if s.store == nil {
+		return Task{}, fmt.Errorf("task store not available")
+	}
+	t, err := s.store.Get(ctx, id)
+	if err != nil {
+		return Task{}, err
+	}
+	return mapInternalTask(*t), nil
+}
+
 func (s *taskService) Create(ctx context.Context, title string, dueAt *time.Time) (Task, error) {
 	if s.store == nil {
 		return Task{}, fmt.Errorf("task store not available")

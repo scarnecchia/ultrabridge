@@ -85,6 +85,7 @@ type SyncStatusProvider interface {
 // TaskService manages task-related operations.
 type TaskService interface {
 	List(ctx context.Context) ([]Task, error)
+	Get(ctx context.Context, id string) (Task, error)
 	Create(ctx context.Context, title string, dueAt *time.Time) (Task, error)
 	Complete(ctx context.Context, id string) error
 	Delete(ctx context.Context, id string) error

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"log/slog"
 	"time"
@@ -40,6 +41,14 @@ type mockTaskService struct {
 
 func (m *mockTaskService) List(ctx context.Context) ([]service.Task, error) {
 	return m.tasks, nil
+}
+func (m *mockTaskService) Get(ctx context.Context, id string) (service.Task, error) {
+	for _, t := range m.tasks {
+		if t.ID == id {
+			return t, nil
+		}
+	}
+	return service.Task{}, sql.ErrNoRows
 }
 func (m *mockTaskService) Create(ctx context.Context, title string, dueAt *time.Time) (service.Task, error) {
 	t := service.Task{ID: "test-id", Title: title, Status: service.StatusNeedsAction}
