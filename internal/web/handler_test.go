@@ -1960,6 +1960,93 @@ func TestFileRowFragmentIdentity(t *testing.T) {
 	}
 }
 
+// fileRowIDFor is a test-only helper mirroring handler.go's fileRowID FuncMap
+// entry. Duplicated deliberately; if the production formula changes, these
+// tests will fail and force the update.
+func fileRowIDFor(path string) string {
+	sum := sha1.Sum([]byte(path))
+	return "file-" + hex.EncodeToString(sum[:])[:12]
+}
+
+// TestHandleFilesSingleRowMutations covers AC2.1 (HX fragment) and AC2.5
+// (non-HX redirect preserving back) for the four single-row file handlers.
+// The mockNoteService's Enqueue/Skip/Unskip mutate JobStatus on the matching
+// file, so the subsequent GetFile returns the post-mutation state and the
+// fragment reflects the correct badge class.
+func TestHandleFilesSingleRowMutations(t *testing.T) {
+	type mutationCase struct {
+		name       string
+		endpoint   string
+		initialJob string
+		wantBadge  string
+	}
+	cases := []mutationCase{
+		{name: "queue", endpoint: "/files/queue", initialJob: "done", wantBadge: `badge-pending`},
+		{name: "skip", endpoint: "/files/skip", initialJob: "", wantBadge: `badge-skipped`},
+		{name: "unskip", endpoint: "/files/unskip", initialJob: "skipped", wantBadge: `badge-unprocessed`},
+		{name: "force", endpoint: "/files/force", initialJob: "done", wantBadge: `badge-pending`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name+"/HX_returns_fragment", func(t *testing.T) {
+			h := newTestHandler()
+			filePath := "/notes/foo.note"
+			h.notes.(*mockNoteService).files = []service.NoteFile{
+				{Path: filePath, Name: "foo.note", FileType: "note", JobStatus: tc.initialJob, Source: "supernote"},
+			}
+
+			form := url.Values{}
+			form.Set("path", filePath)
+			form.Set("back", "subdir")
+			req := httptest.NewRequest("POST", tc.endpoint, strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("HX-Request", "true")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("HX %s returned %d, want 200; body=%s", tc.endpoint, w.Code, w.Body.String())
+			}
+			body := w.Body.String()
+			wantID := `id="` + fileRowIDFor(filePath) + `"`
+			if !strings.Contains(body, wantID) {
+				t.Errorf("response missing %s; body:\n%s", wantID, body)
+			}
+			if !strings.Contains(body, tc.wantBadge) {
+				t.Errorf("response missing badge %s; body:\n%s", tc.wantBadge, body)
+			}
+			if strings.Contains(body, `<nav class="sidebar">`) {
+				t.Errorf("response leaked layout shell; body:\n%s", body)
+			}
+		})
+
+		t.Run(tc.name+"/non-HX_redirects_preserving_back", func(t *testing.T) {
+			h := newTestHandler()
+			h.notes.(*mockNoteService).files = []service.NoteFile{
+				{Path: "/notes/foo.note", Name: "foo.note", FileType: "note", JobStatus: tc.initialJob, Source: "supernote"},
+			}
+
+			form := url.Values{}
+			form.Set("path", "/notes/foo.note")
+			form.Set("back", "sub/dir with space")
+			req := httptest.NewRequest("POST", tc.endpoint, strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			// no HX-Request header
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("non-HX %s returned %d, want 303; body=%s", tc.endpoint, w.Code, w.Body.String())
+			}
+			loc := w.Header().Get("Location")
+			want := "/files?path=" + url.QueryEscape("sub/dir with space")
+			if loc != want {
+				t.Errorf("Location=%q, want %q", loc, want)
+			}
+		})
+	}
+}
+
 // TestHandlerRenderPathsDoNotPoisonEachOther is a regression guard for cross-path
 // state coupling on h.tmpl. html/template permanently locks a tree against Clone
 // once ExecuteTemplate has run, so any method that executes h.tmpl directly would

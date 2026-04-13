@@ -594,28 +594,58 @@ func (h *Handler) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
-func (h *Handler) handleFilesQueue(w http.ResponseWriter, r *http.Request) {
-	h.notes.Enqueue(r.Context(), r.FormValue("path"), false)
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
+// respondFileRowOrRedirect fetches the updated file via GetFile and emits a
+// _file_row fragment on HX-Request; otherwise redirects back to /files with
+// the caller-supplied `back` query string preserved. The caller is expected
+// to have already performed the mutation.
+func (h *Handler) respondFileRowOrRedirect(w http.ResponseWriter, r *http.Request, path string) {
+	if r.Header.Get("HX-Request") == "true" {
+		f, err := h.notes.GetFile(r.Context(), path)
+		if err != nil {
+			h.logger.Error("failed to fetch file for fragment render", "path", path, "error", err)
+			http.Error(w, "failed to render row", http.StatusInternalServerError)
+			return
+		}
+		h.renderFragment(w, r, "_file_row", fileRowCtx{File: f, RelPath: r.FormValue("back")})
+		return
+	}
 	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesQueue(w http.ResponseWriter, r *http.Request) {
+	path := r.FormValue("path")
+	if err := h.notes.Enqueue(r.Context(), path, false); err != nil {
+		http.Error(w, "failed to enqueue", http.StatusInternalServerError)
+		return
+	}
+	h.respondFileRowOrRedirect(w, r, path)
 }
 
 func (h *Handler) handleFilesSkip(w http.ResponseWriter, r *http.Request) {
-	h.notes.Skip(r.Context(), r.FormValue("path"), "manual")
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
+	path := r.FormValue("path")
+	if err := h.notes.Skip(r.Context(), path, "manual"); err != nil {
+		http.Error(w, "failed to skip", http.StatusInternalServerError)
+		return
+	}
+	h.respondFileRowOrRedirect(w, r, path)
 }
 
 func (h *Handler) handleFilesUnskip(w http.ResponseWriter, r *http.Request) {
-	h.notes.Unskip(r.Context(), r.FormValue("path"))
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
+	path := r.FormValue("path")
+	if err := h.notes.Unskip(r.Context(), path); err != nil {
+		http.Error(w, "failed to unskip", http.StatusInternalServerError)
+		return
+	}
+	h.respondFileRowOrRedirect(w, r, path)
 }
 
 func (h *Handler) handleFilesForce(w http.ResponseWriter, r *http.Request) {
-	h.notes.Enqueue(r.Context(), r.FormValue("path"), true)
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
+	path := r.FormValue("path")
+	if err := h.notes.Enqueue(r.Context(), path, true); err != nil {
+		http.Error(w, "failed to force-enqueue", http.StatusInternalServerError)
+		return
+	}
+	h.respondFileRowOrRedirect(w, r, path)
 }
 
 func (h *Handler) handleBooxRender(w http.ResponseWriter, r *http.Request) {

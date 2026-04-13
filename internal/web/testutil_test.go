@@ -110,9 +110,30 @@ func (m *mockNoteService) RenderPage(ctx context.Context, path string, page int)
 	return m.renders[path], "image/jpeg", nil
 }
 func (m *mockNoteService) ScanFiles(ctx context.Context) error { return nil }
-func (m *mockNoteService) Enqueue(ctx context.Context, path string, force bool) error { return nil }
-func (m *mockNoteService) Skip(ctx context.Context, path, reason string) error { return nil }
-func (m *mockNoteService) Unskip(ctx context.Context, path string) error { return nil }
+func (m *mockNoteService) Enqueue(ctx context.Context, path string, force bool) error {
+	for i := range m.files {
+		if m.files[i].Path == path {
+			m.files[i].JobStatus = "pending"
+		}
+	}
+	return nil
+}
+func (m *mockNoteService) Skip(ctx context.Context, path, reason string) error {
+	for i := range m.files {
+		if m.files[i].Path == path {
+			m.files[i].JobStatus = "skipped"
+		}
+	}
+	return nil
+}
+func (m *mockNoteService) Unskip(ctx context.Context, path string) error {
+	for i := range m.files {
+		if m.files[i].Path == path {
+			m.files[i].JobStatus = ""
+		}
+	}
+	return nil
+}
 func (m *mockNoteService) RetryFailed(ctx context.Context) error { return nil }
 func (m *mockNoteService) DeleteNote(ctx context.Context, path string) error { return nil }
 func (m *mockNoteService) BulkDelete(ctx context.Context, paths []string) error { return nil }
