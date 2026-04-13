@@ -1,6 +1,6 @@
 # internal/web
 
-Last verified: 2026-04-13
+Last verified: 2026-04-10
 
 HTTP handler and HTML templates for the UltraBridge web UI.
 
@@ -145,10 +145,6 @@ Settings page includes an MCP Tokens card (rendered when noteDB is present):
 All `ExecuteTemplate` calls check and log the error (`h.logger.Error`). Since headers are already written at that point, `http.Error` is not called — logging is the only recovery path.
 
 All POST handlers to processor methods (`Enqueue`, `Skip`, `Unskip`, `Start`, `Stop`) check and log errors via `h.logger.Error`.
-
-## Fragment rendering (Phase 1)
-
-`renderFragment(w, r, name, data)` helper renders named template fragments (e.g., `_task_row`, `_file_row`) without the layout shell. Unlike `renderTemplate`, it does not clone the template tree or branch on `HX-Request` — it directly executes a pre-parsed block from `h.tmpl`. Used by mutation handlers in later phases to emit row-level HTMX responses. On template execution error, logs via `h.logger.Error` (headers already flushed).
 
 ## Tests
 

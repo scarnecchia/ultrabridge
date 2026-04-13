@@ -1512,6 +1512,8 @@ const testFixtureRowTmpl = `{{define "_test_fixture_row"}}<tr id="fixture-{{.ID}
 
 // TestRenderFragmentAC41 verifies htmx-fragment-mutations.AC4.1: renderFragment renders
 // a named fragment (e.g., _test_fixture_row) without the layout shell.
+// Note: AC4.3 (fragments loaded via embed.FS) is demonstrated by this same test — the fixture
+// parses into h.tmpl (built via ParseFS in NewHandler), so no new filesystem plumbing exists.
 func TestRenderFragmentAC41(t *testing.T) {
 	h := newTestHandler()
 
@@ -1546,48 +1548,6 @@ func TestRenderFragmentAC41(t *testing.T) {
 	contentType := w.Header().Get("Content-Type")
 	if !strings.HasPrefix(contentType, "text/html") {
 		t.Errorf("Content-Type should start with 'text/html', got: %s", contentType)
-	}
-}
-
-// TestRenderFragmentAC43 verifies htmx-fragment-mutations.AC4.3: Fragments are loaded
-// from the same embed.FS as tab templates (no new filesystem reads required).
-// The test above (TestRenderFragmentAC41) passing proves this: the test fixture is
-// parsed into h.tmpl at test time (the same template.Template built in NewHandler via
-// ParseFS), demonstrating that fragments work through the existing embed infrastructure.
-// No custom filesystem plumbing was added — renderFragment only uses h.tmpl.ExecuteTemplate,
-// which relies on templates already registered during NewHandler initialization.
-func TestRenderFragmentAC43(t *testing.T) {
-	h := newTestHandler()
-
-	// Parse the test fixture into the handler's template
-	_, err := h.tmpl.Parse(testFixtureRowTmpl)
-	if err != nil {
-		t.Fatalf("Failed to parse test fixture: %v", err)
-	}
-
-	// The fact that the test fixture parses and renders through h.tmpl
-	// (which was created via ParseFS(templateFS, "templates/*.html") in NewHandler)
-	// proves that fragments are picked up via the same embed.FS infrastructure.
-	// No additional filesystem calls are made by renderFragment.
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-
-	data := struct {
-		ID    string
-		Label string
-	}{
-		ID:    "ac43-test",
-		Label: "embed proof",
-	}
-
-	h.renderFragment(w, r, "_test_fixture_row", data)
-
-	// If renderFragment made any filesystem calls, this would fail.
-	// Since it succeeds, it proves the fragment is looked up from h.tmpl only.
-	body := w.Body.String()
-	if !strings.Contains(body, `fixture-ac43-test`) {
-		t.Errorf("Fragment should render via h.tmpl without new filesystem reads, got:\n%s", body)
 	}
 }
 
