@@ -310,6 +310,14 @@ func (h *Handler) renderTemplate(w http.ResponseWriter, r *http.Request, name st
 	t.ExecuteTemplate(w, "layout.html", data)
 }
 
+func (h *Handler) renderFragment(w http.ResponseWriter, r *http.Request, name string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	err := h.tmpl.ExecuteTemplate(w, name, data)
+	if err != nil {
+		h.logger.Error("failed to execute fragment", "name", name, "error", err)
+	}
+}
+
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	h.renderTemplate(w, r, "tasks", nil)
 }
