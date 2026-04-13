@@ -3,7 +3,7 @@
     <!-- Create Task Form -->
     <div class="card">
         <h2>Create New Task</h2>
-        <form hx-post="/tasks" hx-target="#task-table tbody" hx-swap="afterbegin" hx-push-url="false" hx-on::after-request="if (event.detail.successful) this.reset()">
+        <form hx-post="/tasks" hx-target="#task-table tbody" hx-swap="afterbegin" hx-push-url="false" hx-on:htmx:after-request="if (event.detail.successful) this.reset()">
             <div class="form-group">
                 <label for="title">Task Title *</label>
                 <input type="text" id="title" name="title" required placeholder="Enter task title">
@@ -40,8 +40,8 @@
         {{if .tasks}}
         <div id="bulk-actions" style="display: none; margin-bottom: 1rem; padding: 1rem; background: var(--bg-color); border-radius: var(--radius); border: 1px solid var(--brand-color);">
             <span id="selected-count" class="text-small text-bold" style="margin-right: 1rem;">0 selected</span>
-            <button type="button" hx-post="/tasks/bulk" hx-include=".task-checkbox:checked" hx-vals='{"action": "complete"}' hx-swap="none" hx-on::after-request="if(!event.detail.successful) return; const doc = new DOMParser().parseFromString(event.detail.xhr.responseText, 'text/html'); doc.querySelectorAll('tr[id^=&quot;task-&quot;]').forEach(newRow => { const existing = document.getElementById(newRow.id); if (existing) existing.replaceWith(newRow); }); updateBulkActions();" class="btn-small">Complete Selected</button>
-            <button type="button" hx-post="/tasks/bulk" hx-include=".task-checkbox:checked" hx-vals='{"action": "delete"}' hx-swap="none" hx-on::after-request="if(!event.detail.successful) return; document.querySelectorAll('.task-checkbox:checked').forEach(cb => cb.closest('tr').remove()); updateBulkActions();" class="btn-small" style="background: var(--status-text-failed);" onclick="return confirm('Delete selected tasks? This cannot be undone.')">Delete Selected</button>
+            <button type="button" hx-post="/tasks/bulk" hx-include=".task-checkbox:checked" hx-vals='{"action": "complete"}' hx-swap="none" hx-on:htmx:after-request="if(!event.detail.successful) return; const doc = new DOMParser().parseFromString('&lt;table&gt;&lt;tbody&gt;' + event.detail.xhr.responseText + '&lt;/tbody&gt;&lt;/table&gt;', 'text/html'); doc.querySelectorAll('tr[id^=&quot;task-&quot;]').forEach(newRow => { const existing = document.getElementById(newRow.id); if (existing) existing.replaceWith(newRow); }); updateBulkActions();" class="btn-small">Complete Selected</button>
+            <button type="button" hx-post="/tasks/bulk" hx-include=".task-checkbox:checked" hx-vals='{"action": "delete"}' hx-swap="none" hx-on:htmx:after-request="if(!event.detail.successful) return; document.querySelectorAll('.task-checkbox:checked').forEach(cb => cb.closest('tr').remove()); updateBulkActions();" class="btn-small" style="background: var(--status-text-failed);" onclick="return confirm('Delete selected tasks? This cannot be undone.')">Delete Selected</button>
         </div>
         <div class="table-container">
             <table id="task-table">
@@ -62,7 +62,7 @@
                 </tbody>
             </table>
         </div>
-        <form hx-post="/tasks/purge-completed" hx-swap="none" hx-on::after-request="if(!event.detail.successful) return; document.querySelectorAll('#task-table tbody tr[data-status=&quot;completed&quot;]').forEach(r => r.remove());" style="margin-top:0.5rem; text-align:right;">
+        <form hx-post="/tasks/purge-completed" hx-swap="none" hx-on:htmx:after-request="if(!event.detail.successful) return; document.querySelectorAll('#task-table tbody tr[data-status=&quot;completed&quot;]').forEach(r => r.remove());" style="margin-top:0.5rem; text-align:right;">
           <button type="submit" class="btn-small" style="background: var(--status-text-failed);" onclick="return confirm('Purge all completed tasks? This cannot be undone.')">✗ Purge Completed</button>
         </form>
         {{else}}
