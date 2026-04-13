@@ -94,6 +94,25 @@ doc can be triaged as a punch list.
   - Use 2Do only after confirming server-side state via one of the above.
 - **Fix shape:** None required — this is a documentation / test-methodology note. Could be mirrored into `internal/caldav/CLAUDE.md` as a "Testing" subsection callout if we find we're reaching for it often.
 
+## Web UI regressions
+
+### 15. Folder navigation on `/files` — URL updates but content doesn't swap
+- **Source:** 2026-04-13 debugging session after the service-worker fix landed (`0c91a8c`).
+- **Severity:** UX annoyance, not functionality-breaking. A hard refresh (Cmd-R / Ctrl-R) loads the correct content at the new URL, so the data is always reachable — the HTMX-driven in-place navigation is just broken for the subset of links that do `hx-get` + `hx-push-url="true"` to a same-path different-query URL (e.g. `/files` → `/files?path=Moffitt`).
+- **Repro:** Navigate to `/files`. Click a folder row (Moffitt, Personal, etc.). Observe: address bar updates to `/files?path=<name>`; `#main-content` innerHTML stays on the root listing. Hard refresh → correct content loads.
+- **What's been ruled out:**
+  - Server-side: `GET /files?path=Moffitt` with `HX-Request: true` returns a clean 200 with a 10KB `<div id="files" …>…` body; verified both via curl and via `fetch()` from inside the browser.
+  - Service worker: still reproduces after the SW v3 rewrite that no longer intercepts dynamic GETs.
+  - HTMX's event pipeline: `htmx:beforeRequest` → `htmx:beforeSwap` → `htmx:afterSwap` → `htmx:afterRequest` all fire cleanly with the right status/target/body — but `target.innerHTML.length` is **identical** (36161 chars) before and after the swap. HTMX believes it swapped; the DOM disagrees.
+- **Smoking-gun differential:** `htmx.ajax('GET', '/files?path=Moffitt', { target: '#main-content', swap: 'innerHTML' })` invoked programmatically **does** swap correctly (36149 → 10039 chars, `[global-status, files, SCRIPT]` → `[files, SCRIPT]`). The only material delta between the programmatic path and the anchor-click path is `hx-push-url="true"` on the anchor. So HTMX's `hx-push-url` codepath in 1.9.10 is either short-circuiting the innerHTML replacement or replacing something that immediately gets reverted by the history-snapshot machinery.
+- **Bundled HTMX version:** 1.9.10 (per `internal/web/static/htmx.min.js`).
+- **Fix avenues, from least to most invasive:**
+  1. Remove `hx-push-url="true"` from folder links and breadcrumbs in `_file_row.html` and `files.html`. Add a tiny `hx-on:htmx:after-swap="history.pushState({}, '', event.detail.pathInfo.requestPath)"` to manually push the URL after a successful swap. Decouples the two operations HTMX is fusing.
+  2. Wrap the files-tab content in `hx-boost="true"` and drop the per-link `hx-get`/`hx-push-url` attributes. HTMX's boost pathway for normal anchors may handle this case differently.
+  3. Upgrade HTMX to 2.x. The 2.x codebase has substantial changes to the history pipeline and a known batch of push-url-related fixes — our code already assumes 2.x-friendly syntax in places (`hx-on:htmx:*`), so upgrading is directionally correct anyway. Bigger surface area to validate.
+- **Not in scope for a quick fix:** task-tab navigation, settings tab, etc., all use `hx-push-url="true"` on the top-level nav links and work correctly. The bug seems specific to "same path, different query string" URL changes. Fix avenue #1 is the narrowest intervention and can land without touching those other paths.
+- **Workaround until fixed:** users hit refresh after clicking a folder. Annoying; not data-loss.
+
 ---
 
 ## Suggested triage order
