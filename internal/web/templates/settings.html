@@ -295,7 +295,7 @@
       {{if .BooxImportPath}}
       <hr>
       <div class="toolbar">
-          <form hx-post="/files/migrate-imports" hx-target="#main-content" style="display:inline;">
+          <form hx-post="/files/migrate-imports" hx-swap="none" style="display:inline;">
             <button type="submit" class="btn-small" style="background: var(--brand-hover);"
               onclick="return confirm('Copy all imported files to the Boox notes directory? This may take a while.')">⬇ Migrate Imports to File Store</button>
           </form>

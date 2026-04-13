@@ -2047,6 +2047,49 @@ func TestHandleFilesSingleRowMutations(t *testing.T) {
 	}
 }
 
+// TestHandleBroadFileMutations verifies AC2.4: the six broad file-mutation
+// handlers (scan, import, retry-failed, migrate-imports, processor start/stop)
+// return 200 OK + empty body on HX-Request and 303 redirect to /files on
+// non-HX. The client-side poller (updateProcessorStatus) is responsible for
+// reflecting the new state; handlers emit no row fragment.
+func TestHandleBroadFileMutations(t *testing.T) {
+	endpoints := []string{
+		"/files/scan",
+		"/files/import",
+		"/files/retry-failed",
+		"/files/migrate-imports",
+		"/processor/start",
+		"/processor/stop",
+	}
+	for _, ep := range endpoints {
+		t.Run(ep+"/HX_empty_body", func(t *testing.T) {
+			h := newTestHandler()
+			req := httptest.NewRequest("POST", ep, nil)
+			req.Header.Set("HX-Request", "true")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("HX %s returned %d, want 200; body=%q", ep, w.Code, w.Body.String())
+			}
+			if body := w.Body.String(); body != "" {
+				t.Errorf("%s expected empty body, got %q", ep, body)
+			}
+		})
+		t.Run(ep+"/non-HX_redirects", func(t *testing.T) {
+			h := newTestHandler()
+			req := httptest.NewRequest("POST", ep, nil)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("non-HX %s returned %d, want 303", ep, w.Code)
+			}
+			if loc := w.Header().Get("Location"); loc != "/files" {
+				t.Errorf("%s Location=%q, want /files", ep, loc)
+			}
+		})
+	}
+}
+
 // TestHandleFilesDeleteNoteHXEmptyBody verifies AC2.2: HX-Request POST
 // /files/delete-note calls the service DeleteNote and returns 200 OK with
 // empty body; client-side JS removes the row from the DOM.

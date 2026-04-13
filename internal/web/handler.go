@@ -532,34 +532,42 @@ func (h *Handler) handleBackfillEmbeddings(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
+// respondEmptyOrRedirect is the shared HX/non-HX tail for broad file mutations
+// (scan, import, retry-failed, migrate-imports, processor start/stop). On HX
+// it emits an empty 200 body; the client-side poller picks up the effect on
+// its next tick (updateProcessorStatus is also hooked via hx-on to refresh
+// immediately). On non-HX it redirects to /files.
+func (h *Handler) respondEmptyOrRedirect(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("HX-Request") == "true" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
 func (h *Handler) handleProcessorStart(w http.ResponseWriter, r *http.Request) {
 	h.notes.StartProcessor(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	h.respondEmptyOrRedirect(w, r)
 }
 
 func (h *Handler) handleProcessorStop(w http.ResponseWriter, r *http.Request) {
 	h.notes.StopProcessor(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	h.respondEmptyOrRedirect(w, r)
 }
 
 func (h *Handler) handleFilesScan(w http.ResponseWriter, r *http.Request) {
 	h.notes.ScanFiles(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	h.respondEmptyOrRedirect(w, r)
 }
 
 func (h *Handler) handleFilesImport(w http.ResponseWriter, r *http.Request) {
 	h.notes.ImportFiles(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	h.respondEmptyOrRedirect(w, r)
 }
 
 func (h *Handler) handleFilesRetryFailed(w http.ResponseWriter, r *http.Request) {
 	h.notes.RetryFailed(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	h.respondEmptyOrRedirect(w, r)
 }
 
 func (h *Handler) handleFilesDeleteNote(w http.ResponseWriter, r *http.Request) {
@@ -595,8 +603,7 @@ func (h *Handler) handleFilesDeleteBulk(w http.ResponseWriter, r *http.Request) 
 
 func (h *Handler) handleFilesMigrateImports(w http.ResponseWriter, r *http.Request) {
 	h.notes.MigrateImports(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	h.respondEmptyOrRedirect(w, r)
 }
 
 func (h *Handler) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
