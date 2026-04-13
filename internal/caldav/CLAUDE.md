@@ -1,15 +1,15 @@
 # CalDAV Backend
 
-Last verified: 2026-04-04
+Last verified: 2026-04-13
 
 ## Purpose
-Exposes Supernote tasks as a standard CalDAV VTODO collection so any CalDAV client
-(Apple Reminders, Thunderbird, DAVx5) can read and write tasks.
+Exposes tasks as a standard CalDAV VTODO collection so any CalDAV client
+(Apple Reminders, Thunderbird, DAVx5, 2Do, Tasks.org) can read and write tasks.
 
 ## Contracts
-- **Exposes**: `Backend` (implements `gocaldav.Backend`), `TaskStore` interface, `SyncNotifier` interface
-- **Guarantees**: Single fixed collection at `{prefix}/tasks/`. Only VTODO supported (VEVENT rejected). Writes trigger sync notification (graceful degradation if notifier down). ETags computed from mutable fields.
-- **Expects**: A `TaskStore` implementation and a `SyncNotifier`. Caller sets HTTP prefix.
+- **Exposes**: `Backend` (implements `gocaldav.Backend`), `TaskStore` interface, `SyncNotifier` interface, `ProppatchStub` http middleware
+- **Guarantees**: Single fixed collection at `{prefix}/tasks/`. Only VTODO supported (VEVENT rejected). Writes trigger sync notification (graceful degradation if notifier down). ETags computed from mutable fields. Collection display name is mutable at runtime via client PROPPATCH of `DAV:displayname`.
+- **Expects**: A `TaskStore` implementation and a `SyncNotifier`. Caller sets HTTP prefix. Caller wraps the CalDAV `http.Handler` with `ProppatchStub` if PROPPATCH acceptance is desired (it is — see Gotchas).
 
 ## Dependencies
 - **Uses**: `taskstore` (via `TaskStore` interface), `sync` (via `SyncNotifier` interface)
@@ -17,11 +17,13 @@ Exposes Supernote tasks as a standard CalDAV VTODO collection so any CalDAV clie
 - **Boundary**: Does not import `config`, `db`, `auth`, or `logging`
 
 ## Key Decisions
-- Single collection: Supernote has one flat task list, no sub-calendars
+- Single collection: one flat task list, no sub-calendars
 - TaskStore as interface: decouples from SQL, enables test doubles
 - DueTimeMode config: "preserve" keeps time component, "date_only" strips it
 - iCal blob overlay: TaskToVTODO checks ICalBlob first; if present, deserializes and overlays DB-authoritative fields (UID, SUMMARY, STATUS, DUE, DTSTAMP, LAST-MODIFIED, PERCENT-COMPLETE). Falls back to field-only build on corrupt blob.
 - VTODOToTask serializes the full iCal calendar to ICalBlob for round-trip fidelity of non-modeled properties (DESCRIPTION, PRIORITY, RRULE, X-props, etc.)
+- `ProppatchStub` HTTP middleware intercepts PROPPATCH *before* the go-webdav/caldav handler because that library hard-codes `PropPatch → 501` in its internal backend wrapper (`caldav/server.go:~664`), and that path is not overridable via the public `Backend` interface. Stub emits 207 Multi-Status with HTTP/1.1 200 OK per requested property, and fires an `OnDisplayName` callback for `DAV:displayname` so clients can rename the collection. Callback persists to the settings DB and updates the backend's in-memory `collectionName` via `SetCollectionName` (RWMutex-guarded), so subsequent PROPFINDs reflect the new name without a container restart.
+- Collection name is editable from three surfaces that stay in sync: Settings UI (`caldav_collection_name` field), `PUT /api/config`, and CalDAV PROPPATCH of `DAV:displayname`.
 
 ## Invariants
 - UID in VTODO maps 1:1 to task_id in DB
@@ -34,3 +36,22 @@ Exposes Supernote tasks as a standard CalDAV VTODO collection so any CalDAV clie
 - QueryCalendarObjects does basic VTODO filter only; no date-range filtering
 - Notify errors are swallowed (logged, not returned) to avoid failing DB writes
 - Corrupt iCal blobs silently fall back to field-only rendering (logged at warn level)
+- Without `ProppatchStub`, the go-webdav library returns 501 for every PROPPATCH — clients like 2Do, Tasks.org, and Apple Reminders surface this as "unimplemented" and abort sync entirely, even though VTODO PUT/REPORT works fine. The stub is load-bearing for usable client compatibility, not just a nicety.
+- `ProppatchStub` responds 200 OK for properties it does not persist (e.g. Apple's `calendar-color`). This is the common server behavior (Radicale, SabreDAV) — honest 403s tend to cause client retry loops.
+
+## Testing & Debugging Notes
+
+### Recommended CalDAV clients for debugging, in order
+
+1. **`curl` against the server directly** — the `.ics` body at `/caldav/user/calendars/tasks/{task_id}.ics` is the authoritative server truth. If a client claims a task is in the wrong state, `curl` first.
+2. **DAVx5 on Android** — visible sync state, manual "sync now" button, verbose logs.
+3. **Thunderbird Lightning** — tight manual-sync feedback loop; DevTools-equivalent request logging.
+4. **Apple Reminders on iOS/macOS** — good for confirming real-world Apple client behavior, but sync cadence is opaque.
+
+### Clients that are ACTIVELY misleading for debugging
+
+- **2Do on macOS**: has a multi-minute background polling interval and no visible indicator of when it last pulled. "I changed X on the web and it didn't appear in 2Do" is almost always just 2Do not having polled yet — hitting its manual Sync button will pull. Do not use 2Do Mac as the downstream observer when verifying that a server-side mutation propagated; you will misread polling latency as a server bug.
+
+### CalDAV sync is intrinsically pull-based
+
+There is no RFC-standard way for UltraBridge to push "something changed" to a CalDAV client. The server's `STARTSYNC` socket.io event is a UB-internal mechanism for the device-pipeline side, not something any CalDAV client speaks. Any real-time-feeling behavior in a CalDAV client is just that client polling aggressively (DAVx5 push sync, Apple Reminders' short polling interval, etc.).
