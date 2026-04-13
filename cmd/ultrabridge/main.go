@@ -485,7 +485,7 @@ func main() {
 	// go-webdav library. The callback persists the new name to the settings
 	// DB and updates the running backend so subsequent PROPFIND responses
 	// reflect the change without a container restart.
-	caldavWithProppatch := ubcaldav.ProppatchStub(caldavHandler, ubcaldav.ProppatchOptions{
+	caldavWithProppatch := ubcaldav.ProppatchStub(ubcaldav.GetOnCollectionStub(caldavHandler), ubcaldav.ProppatchOptions{
 		OnDisplayName: func(name string) error {
 			trimmed := strings.TrimSpace(name)
 			if trimmed == "" {

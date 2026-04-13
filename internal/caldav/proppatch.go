@@ -23,6 +23,32 @@ type ProppatchOptions struct {
 	Logger func(format string, args ...any)
 }
 
+// GetOnCollectionStub intercepts plain GET requests on non-.ics paths
+// (collection URLs, principal URLs, the CalDAV root) and returns a proper
+// 405 Method Not Allowed with an Allow header advertising the CalDAV
+// methods. Without this, the go-webdav library calls through to
+// GetCalendarObject which returns "invalid path" that surfaces as a 500 —
+// confusing to browser-based CalDAV clients (e.g. Vivaldi) that do a GET
+// probe as part of auto-discovery before escalating to PROPFIND. 405 +
+// Allow is the RFC-correct "this URL exists, use a different method"
+// signal and triggers CalDAV clients to do PROPFIND/REPORT instead.
+//
+// The response body also includes a brief human-readable message so a
+// curious browser user sees something useful rather than "invalid path".
+func GetOnCollectionStub(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && !strings.HasSuffix(r.URL.Path, ".ics") {
+			w.Header().Set("Allow", "OPTIONS, PROPFIND, REPORT")
+			w.Header().Set("DAV", "1, 3, calendar-access")
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_, _ = io.WriteString(w, "This is a CalDAV endpoint. Use a CalDAV client (Apple Reminders, Thunderbird, 2Do, DAVx5, Tasks.org) to connect — browser GET is not supported on calendar collection URLs.\n")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // ProppatchStub wraps a CalDAV handler and intercepts PROPPATCH requests so
 // clients that try to set calendar-level properties (most commonly
 // DAV:displayname via rename, or Apple's {http://apple.com/ns/ical/}

@@ -263,8 +263,16 @@ func (b *Backend) taskToCalendarObject(t *taskstore.Task) *gocaldav.CalendarObje
 	}
 }
 
-// taskIDFromPath extracts the task ID from a path like /caldav/tasks/{id}.ics
+// taskIDFromPath extracts the task ID from a path like
+// /caldav/user/calendars/tasks/{id}.ics. Returns empty string for any path
+// that isn't a .ics file — this prevents collection URLs (/caldav/,
+// /caldav/user/calendars/tasks/) or unrelated probes from being treated as
+// task IDs and then surfacing a misleading "task not found" 404 to
+// browser-style GET probes (observed with Vivaldi's calendar add flow).
 func (b *Backend) taskIDFromPath(urlPath string) string {
+	if !strings.HasSuffix(urlPath, ".ics") {
+		return ""
+	}
 	base := path.Base(urlPath)
 	return strings.TrimSuffix(base, ".ics")
 }
