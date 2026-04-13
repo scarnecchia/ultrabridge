@@ -471,6 +471,37 @@ func TestPostCreateTaskMinimal(t *testing.T) {
 	}
 }
 
+// TestEmptyStateRendersTaskTable verifies that GET / with zero tasks still
+// renders the #task-table skeleton (including tbody) so that the create form's
+// hx-target="#task-table tbody" swap works on the first-ever task creation.
+// Prior to this structural fix, an empty task list rendered a bare
+// .empty-state div with no table, so HTMX silently failed to swap the first
+// created row into the DOM and the UI appeared to do nothing.
+func TestEmptyStateRendersTaskTable(t *testing.T) {
+	handler := newTestHandler()
+	// newTestHandler's mockTaskService starts empty.
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET / returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `id="task-table"`) {
+		t.Errorf("empty-state page missing #task-table; body:\n%s", body)
+	}
+	if !strings.Contains(body, `<tbody>`) {
+		t.Errorf("empty-state page missing <tbody>; body:\n%s", body)
+	}
+	if !strings.Contains(body, `id="empty-state-row"`) {
+		t.Errorf("empty-state page missing empty-state-row placeholder; body:\n%s", body)
+	}
+	if !strings.Contains(body, `No tasks yet`) {
+		t.Errorf("empty-state page missing user-facing message; body:\n%s", body)
+	}
+}
+
 // TestPostCreateTaskHXReturnsRow verifies AC1.6: an HX-Request POST to
 // /tasks returns 200 with a single <tr id="task-{newID}"> fragment carrying
 // the submitted title; non-HX behavior (redirect) covered by sibling tests.
