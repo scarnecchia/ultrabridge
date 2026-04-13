@@ -473,5 +473,10 @@
 </div>
 
 <script>
-    updateProcessorStatus();
+    // Deferred to DOMContentLoaded because layout.html defines
+    // updateProcessorStatus AFTER tab content; inline invocation at first
+    // paint otherwise throws ReferenceError.
+    document.addEventListener('DOMContentLoaded', function() {
+        if (typeof updateProcessorStatus === 'function') updateProcessorStatus();
+    });
 </script>
