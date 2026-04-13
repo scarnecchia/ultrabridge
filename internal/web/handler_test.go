@@ -471,6 +471,41 @@ func TestPostCreateTaskMinimal(t *testing.T) {
 	}
 }
 
+// TestPostCreateTaskHXReturnsRow verifies AC1.6: an HX-Request POST to
+// /tasks returns 200 with a single <tr id="task-{newID}"> fragment carrying
+// the submitted title; non-HX behavior (redirect) covered by sibling tests.
+func TestPostCreateTaskHXReturnsRow(t *testing.T) {
+	store := newMockTaskStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+
+	tasks := service.NewTaskService(store, nil)
+	handler := NewHandler(tasks, nil, nil, nil, nil, "", "", logger, broadcaster)
+
+	form := url.Values{}
+	form.Set("title", "HX Task")
+	req := httptest.NewRequest("POST", "/tasks", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX-Request POST returned %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `HX Task`) {
+		t.Errorf("response missing submitted title; body:\n%s", body)
+	}
+	// Deterministic id comes from the TaskID generator; we only know the prefix.
+	if !strings.Contains(body, `id="task-`) {
+		t.Errorf("response missing id=\"task-…\" prefix; body:\n%s", body)
+	}
+	if strings.Contains(body, `<nav class="sidebar">`) {
+		t.Errorf("response leaked layout shell; body:\n%s", body)
+	}
+}
+
 // TestPostCreateTaskWithDueDate verifies POST /tasks with optional due date
 func TestPostCreateTaskWithDueDate(t *testing.T) {
 	store := newMockTaskStore()

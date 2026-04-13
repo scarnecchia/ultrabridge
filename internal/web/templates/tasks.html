@@ -3,7 +3,7 @@
     <!-- Create Task Form -->
     <div class="card">
         <h2>Create New Task</h2>
-        <form hx-post="/tasks" hx-target="#main-content" hx-push-url="false">
+        <form hx-post="/tasks" hx-target="#task-table tbody" hx-swap="afterbegin" hx-push-url="false" hx-on::after-request="if (event.detail.successful) this.reset()">
             <div class="form-group">
                 <label for="title">Task Title *</label>
                 <input type="text" id="title" name="title" required placeholder="Enter task title">

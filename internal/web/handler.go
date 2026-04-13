@@ -410,11 +410,15 @@ func (h *Handler) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, err := h.tasks.Create(r.Context(), title, dueAt); err != nil {
+	created, err := h.tasks.Create(r.Context(), title, dueAt)
+	if err != nil {
 		http.Error(w, "failed to create task", http.StatusInternalServerError)
 		return
 	}
-	if r.Header.Get("HX-Request") == "true" { h.handleIndex(w, r); return }
+	if r.Header.Get("HX-Request") == "true" {
+		h.renderFragment(w, r, "_task_row", created)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
