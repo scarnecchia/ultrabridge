@@ -1,0 +1,91 @@
+# Follow-ups — 2026-04-13
+
+Items surfaced during the HTMX fragment mutations implementation (PR
+[#11](https://github.com/jdkruzr/ultrabridge/pull/11)) plus pre-existing
+issues that were flagged but deliberately left out of that branch's
+scope. Grouped by category and tagged with severity + source so this
+doc can be triaged as a punch list.
+
+## Pre-existing, unrelated to HTMX branch
+
+### 1. `TestSyncEngine_RemoteHardDelete` failing in `internal/tasksync/`
+- **Source:** Phase 2 reviewer; reconfirmed by Phase 3, 5, 6, and final reviewers at branch base `ab9099b`.
+- **Severity:** Unknown — failure at `engine_test.go:606` on `is_deleted="N"`. May indicate a real sync-engine bug or a stale test.
+- **Fix shape:** Investigate whether the test expectation or the engine code is wrong. Either fix the regression in the sync engine or repair the test.
+
+## Documentation drift from the prior decoupled-architecture refactor
+
+### 2. `internal/service/` has no domain CLAUDE.md
+- **Source:** Librarian pass during HTMX branch.
+- **Severity:** Medium — entire service layer (`TaskService`, `NoteService`, `SearchService`, `ConfigService`) has no domain docs. The HTMX branch's `Get`/`GetFile` additions made the gap slightly more visible.
+- **Fix shape:** Create `internal/service/CLAUDE.md` documenting the four interfaces, their concrete implementations, the Store interfaces (`TaskStore`, `BooxStore`, etc.), and testing conventions.
+
+### 3. Root `CLAUDE.md` Project Structure omits `internal/service/`
+- **Source:** Librarian pass.
+- **Severity:** Low — paired with item 2.
+- **Fix shape:** Add a one-line entry under "Core Components" or a new "Service Layer" section. Land in the same PR as item 2.
+
+### 4. `internal/web/CLAUDE.md` handler-signature section is stale
+- **Source:** Phase 6 scoped note; flagged by librarian.
+- **Severity:** Low — misleading to new readers. Line 9 lists the pre-decoupling direct-dependency wiring (`NewHandler(store, notifier, noteStore, …)`) not the current service-interface form (`NewHandler(tasks, notes, search, config, noteDB, …)`).
+- **Fix shape:** Rewrite the Handler contract section to match `internal/web/handler.go` reality.
+
+## Follow-ups surfaced by HTMX branch reviewers (deliberately deferred)
+
+### 5. `renderFragment` partial-write risk
+- **Source:** Phase 1 reviewer, Minor 3 — deferred as "acceptable to defer; flagging only."
+- **Severity:** Low — `html/template.ExecuteTemplate` can write partial output before returning an error. Currently the response is 200 OK with truncated HTML + a log line; HTMX clients swap the truncated fragment into the DOM.
+- **Fix shape:** Buffer the render via `bytes.Buffer` first, then `io.Copy(w, buf)` only on success. Affects both `renderFragment` and `renderTemplate`.
+
+### 6. Modal delete-note form's fragile `hx-on` selector
+- **Source:** Phase 5 reviewer, Minor 1 — "acceptable as-is."
+- **Severity:** Low — `document.querySelectorAll('input.file-checkbox').find(cb => cb.value === path)` becomes a no-op if the row was removed by other activity (pagination, concurrent refresh). No crash; just silent fail.
+- **Fix shape:** When `showHistory(path)` opens the modal, stash the originating row's `id` on the form (e.g. `data-row-id` attribute), and have the `hx-on:htmx:after-request` read that id directly.
+
+### 7. Empty-state placeholder doesn't reappear after last-task delete/purge
+- **Source:** Phase 3 reviewer (informational), reconfirmed.
+- **Severity:** Low UX — if a user deletes all their tasks via bulk delete or purge, the "No tasks yet" placeholder doesn't regrow client-side; they see an empty tbody until they navigate away and back. Same shape applies to files if the last file in a view is deleted.
+- **Fix shape:** Extend the bulk-delete/purge `hx-on:htmx:after-request` handlers to check if the tbody is now empty and inject the placeholder row. Or: server-side emit the placeholder in the response body and swap it in when the row count is about to hit zero.
+
+### 8. AC2.6 path-traversal audit
+- **Source:** Phase 5 plan; non-coverage permitted; Phase 5 and final reviewers flagged.
+- **Severity:** Potentially important — file mutation handlers (queue/skip/unskip/force/delete-note) don't call `safeRelPath` at the handler layer. Current behavior relies on service-layer validation that predates the HTMX branch. Nobody has verified whether `path=../escape` silently succeeds or not.
+- **Fix shape:** Write a targeted test exercising each mutation endpoint with `path=../escape`. If they succeed, add `safeRelPath` gates at the handler layer (or push into service). If they fail appropriately, document the behavior.
+
+## Test quality touch-ups (HTMX branch reviewers — explicitly "optional / non-defects")
+
+### 9. Duplicate `fileRowID` formula across two test files
+- **Source:** Phase 5 reviewer, Minor 2.
+- **Severity:** Cosmetic — same sha1→hex formula lives in `handler_test.go` as `fileRowIDFor` and inside `TestFileRowFragmentIdentity`'s closure. Comments acknowledge the duplication.
+- **Fix shape:** Extract to a single package-level test helper, OR expose an exported `FileRowID` from production and have both test sites reference it.
+
+### 10. Confusing test fixture id `"task-hx"`
+- **Source:** Phase 3 reviewer, Minor 2.
+- **Severity:** Cosmetic — `TestPostCompleteTaskHXReturnsRow` uses `TaskID: "task-hx"`, which renders as `id="task-task-hx"` — double prefix confuses failure-mode debugging.
+- **Fix shape:** Change the fixture id to `"abc123"` or similar non-prefixed value.
+
+### 11. `mockNoteService.Enqueue` doesn't distinguish `force=true`
+- **Source:** Phase 5 reviewer, Minor 3.
+- **Severity:** Cosmetic — mock sets `JobStatus = "pending"` regardless of `force`. Works for current tests but may mislead future authors extending the mock for state-transition coverage.
+- **Fix shape:** Either document the simplification in the mock or make Enqueue clear any skipped flag when `force=true`.
+
+### 12. `TestRenderTemplate` uses layout-coupled string markers
+- **Source:** Phase 1 reviewer, Minor 4 — "Ship as-is; flag for future hardening. Fix: None required."
+- **Severity:** Cosmetic — asserts on `<nav class="sidebar">` and `Create New Task` literal strings, which would break silently if the layout or tasks-tab heading is restyled.
+- **Fix shape:** Add comment markers in the templates (e.g. `<!-- MARKER_LAYOUT -->`) that the tests can assert on without coupling to human-readable strings.
+
+## Unrelated noise observed during testing
+
+### 13. `/favicon.ico` 404 on every page load
+- **Source:** Playwright runs during HTMX branch verification.
+- **Severity:** Cosmetic console noise. Browsers auto-request `/favicon.ico`; server returns 404.
+- **Fix shape:** Add a favicon file to the embedded static assets, OR register a route returning 204 No Content.
+
+---
+
+## Suggested triage order
+
+1. **Investigate item 1** — `TestSyncEngine_RemoteHardDelete` has been failing for weeks. Biggest unknown.
+2. **Ship items 2–4 together** — documentation catch-up from the decoupled-architecture refactor. Low-risk, high-reader-value.
+3. **Audit item 8** — potentially security-relevant; should be confirmed before the current non-coverage becomes load-bearing.
+4. **Everything else** as polish, opportunistically.
