@@ -81,6 +81,19 @@ doc can be triaged as a punch list.
 - **Severity:** Cosmetic console noise. Browsers auto-request `/favicon.ico`; server returns 404.
 - **Fix shape:** Add a favicon file to the embedded static assets, OR register a route returning 204 No Content.
 
+## CalDAV client troubleshooting notes
+
+### 14. 2Do on Mac is a poor choice for troubleshooting CalDAV sync behavior
+- **Source:** 2026-04-13 debugging session after the PROPPATCH `displayname` fix landed (`23a49d3`).
+- **Severity:** Informational / testing guidance, not a bug in our server.
+- **Context:** After web-UI mutations (e.g. completing a task in the UltraBridge UI), 2Do Mac can take up to its background polling interval (minutes) to reflect the change. This manifested as "I completed two tasks on the web, only one synced." Investigation showed both server-side `.ics` files had `STATUS:COMPLETED` and fresh `LAST-MODIFIED` timestamps immediately; 2Do simply hadn't polled for the second one yet. Hitting 2Do's manual sync button pulled the missing update.
+- **Why it matters:** CalDAV is intrinsically pull-based. There is no standards-compliant way for UltraBridge to push "hey, something changed" to a CalDAV client — the closest existing mechanism on our side is the socket.io `STARTSYNC` we use for the device-side pipeline, which 2Do does not speak. Any debugging of "my change didn't propagate" that uses 2Do as the downstream observer will see this latency and misread it as a bug.
+- **Recommendation for debugging:**
+  - Prefer DAVx5 on Android (exposes "sync now" and detailed logs) or Thunderbird Lightning (tight manual-sync feedback loop + request logs via DevTools-equivalents).
+  - Or `curl` directly against `/caldav/user/calendars/tasks/<id>.ics` to confirm server state — the authoritative truth is the `.ics` body we serve.
+  - Use 2Do only after confirming server-side state via one of the above.
+- **Fix shape:** None required — this is a documentation / test-methodology note. Could be mirrored into `internal/caldav/CLAUDE.md` as a "Testing" subsection callout if we find we're reaching for it often.
+
 ---
 
 ## Suggested triage order
