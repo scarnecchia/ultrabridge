@@ -1,4 +1,4 @@
-{{define "_task_row"}}
+{{define "task_row"}}
 <tr id="task-{{.ID}}" data-status="{{.Status}}" {{if eq .Status "completed"}}style="display: none;"{{end}}>
     <td><input type="checkbox" name="task_ids" value="{{.ID}}" class="task-checkbox" onchange="updateBulkActions()"></td>
     <td class="task-title">
