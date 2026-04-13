@@ -1717,48 +1717,38 @@ func TestHandleMCPTokenCreate_EmptyLabel(t *testing.T) {
 	}
 }
 
-// testFixtureRowTmpl is an in-test template fixture for Task 1 (Phase 1)
-// This is a simple test-only fragment used to verify renderFragment behavior.
-const testFixtureRowTmpl = `{{define "_test_fixture_row"}}<tr id="fixture-{{.ID}}">{{.Label}}</tr>{{end}}`
-
-// TestRenderFragmentAC41 verifies htmx-fragment-mutations.AC4.1: renderFragment renders
-// a named fragment (e.g., _test_fixture_row) without the layout shell.
-// Note: AC4.3 (fragments loaded via embed.FS) is demonstrated by this same test — the fixture
-// parses into h.tmpl (built via ParseFS in NewHandler), so no new filesystem plumbing exists.
+// TestRenderFragmentAC41 verifies htmx-fragment-mutations.AC4.1: renderFragment
+// renders a named template block without the layout shell. Uses the real
+// _task_row fragment (introduced in Phase 2) as the probe; the earlier in-test
+// _test_fixture_row bootstrap was removed in Phase 6.
+// AC4.3 (fragments loaded via the existing embed.FS) is demonstrated by the
+// same test — _task_row is picked up via ParseFS in NewHandler, no new
+// filesystem plumbing.
 func TestRenderFragmentAC41(t *testing.T) {
 	h := newTestHandler()
-
-	// Parse the test fixture into the handler's template
-	_, err := h.tmpl.Parse(testFixtureRowTmpl)
-	if err != nil {
-		t.Fatalf("Failed to parse test fixture: %v", err)
+	task := service.Task{
+		ID:        "phase6-probe",
+		Title:     "Phase-6 regression fixture",
+		Status:    service.StatusNeedsAction,
+		CreatedAt: time.Now().UTC(),
 	}
 
-	// Set up a request and response
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
+	h.renderFragment(w, r, "_task_row", task)
 
-	// Call renderFragment with a struct containing ID and Label
-	data := struct {
-		ID    string
-		Label string
-	}{
-		ID:    "123",
-		Label: "hello",
-	}
-
-	h.renderFragment(w, r, "_test_fixture_row", data)
-
-	// Verify response contains the expected HTML fragment
 	body := w.Body.String()
-	if !strings.Contains(body, `<tr id="fixture-123">hello</tr>`) {
-		t.Errorf("Response should contain '<tr id=\"fixture-123\">hello</tr>', got:\n%s", body)
+	if !strings.Contains(body, `id="task-phase6-probe"`) {
+		t.Errorf("response missing id=\"task-phase6-probe\"; body:\n%s", body)
 	}
-
-	// Verify Content-Type is set correctly (AC4.1 requirement)
-	contentType := w.Header().Get("Content-Type")
-	if !strings.HasPrefix(contentType, "text/html") {
-		t.Errorf("Content-Type should start with 'text/html', got: %s", contentType)
+	if !strings.Contains(body, `Phase-6 regression fixture`) {
+		t.Errorf("response missing title text; body:\n%s", body)
+	}
+	if strings.Contains(body, `<nav class="sidebar">`) {
+		t.Errorf("response leaked layout shell; body:\n%s", body)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html…", ct)
 	}
 }
 
