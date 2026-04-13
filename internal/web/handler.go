@@ -310,10 +310,20 @@ func (h *Handler) renderTemplate(w http.ResponseWriter, r *http.Request, name st
 	t.ExecuteTemplate(w, "layout.html", data)
 }
 
+// renderFragment executes a named, pre-parsed template block (e.g. "_task_row")
+// without the layout shell. It Clones h.tmpl before executing so that h.tmpl
+// remains Clone-able: html/template permanently locks a template tree against
+// future Clones once ExecuteTemplate has run on it, and renderTemplate relies
+// on Clone per request.
 func (h *Handler) renderFragment(w http.ResponseWriter, r *http.Request, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	err := h.tmpl.ExecuteTemplate(w, name, data)
+	t, err := h.tmpl.Clone()
 	if err != nil {
+		h.logger.Error("failed to clone template for fragment", "name", name, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := t.ExecuteTemplate(w, name, data); err != nil {
 		h.logger.Error("failed to execute fragment", "name", name, "error", err)
 	}
 }
