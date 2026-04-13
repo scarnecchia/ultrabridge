@@ -435,6 +435,18 @@
       <hr>
 
       <div style="margin-bottom:1.25rem;">
+        <h3 style="margin-bottom:0.5rem;">CalDAV</h3>
+        <p class="device-info" style="margin-bottom:0.5rem;">Display name of the task collection as it appears in CalDAV clients (Apple Reminders, 2Do, Thunderbird, DAVx5). Restart required to take effect.</p>
+        <div style="margin-bottom:0.75rem;">
+          <label for="caldav-collection-name" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Collection Name</label>
+          <input type="text" id="caldav-collection-name" name="caldav_collection_name" value="{{.Config.CalDAVCollectionName}}" placeholder="Tasks"
+            style="width:100%; padding:0.75rem; border:1px solid var(--border-color); border-radius:4px;">
+        </div>
+      </div>
+
+      <hr>
+
+      <div style="margin-bottom:1.25rem;">
         <h3 style="margin-bottom:0.5rem;">Debugging</h3>
         <div style="margin-bottom:0.75rem;">
           <label for="log-verbose-api" style="font-weight:bold; display:block; margin-bottom:0.3rem;">Verbose API Logging</label>

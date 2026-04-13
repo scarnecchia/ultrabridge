@@ -526,6 +526,9 @@ func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		cfg.ChatEnabled = r.FormValue("chat_enabled") == "true"
 		cfg.ChatAPIURL, cfg.ChatModel = r.FormValue("chat_api_url"), r.FormValue("chat_model")
 		cfg.LogVerboseAPI = r.FormValue("log_verbose_api") == "true"
+		if v := strings.TrimSpace(r.FormValue("caldav_collection_name")); v != "" {
+			cfg.CalDAVCollectionName = v
+		}
 	}
 	h.config.UpdateConfig(r.Context(), cfg)
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)
