@@ -62,55 +62,7 @@
       </thead>
       <tbody>
         {{range .files}}
-        <tr>
-          <td>{{if not .IsDir}}<input type="checkbox" name="paths" value="{{.Path}}" class="file-checkbox">{{end}}</td>
-          <td>
-            {{if .IsDir}}📁{{else if eq .FileType "note"}}📝{{else if eq .FileType "pdf"}}📄{{else if eq .FileType "epub"}}📚{{else}}📎{{end}}
-            {{if .IsDir}}<a href="/files?path={{.RelPath}}" hx-get="/files?path={{.RelPath}}" hx-target="#main-content" hx-push-url="true">{{.Name}}</a>{{else}}{{.Name}}{{end}}
-            {{$src := noteSource .Path}}
-            {{if eq $src "Boox"}}
-              <span class="badge badge-boox" title="Boox">B</span>
-            {{else}}
-              <span class="badge badge-sn" title="Supernote">SN</span>
-            {{end}}
-            {{if .DeviceInfo}}<br><span class="device-info">{{.DeviceInfo}}</span>{{end}}
-          </td>
-          <td>{{.FileType}}</td>
-          <td>{{.SizeBytes}}</td>
-          <td>{{if .CreatedAt.IsZero}}-{{else}}{{.CreatedAt.Format "2006-01-02"}}{{end}}</td>
-          <td>{{.ModifiedAt.Format "2006-01-02"}}</td>
-          <td>
-            {{if .IsDir}}
-              {{/* directories have no processing status */}}
-            {{else if eq .FileType "note"}}
-              {{if eq .JobStatus ""}}<span class="badge badge-unprocessed">unprocessed</span>
-              {{else if eq .JobStatus "pending"}}<span class="badge badge-pending">queued</span>
-              {{else if eq .JobStatus "in_progress"}}<span class="badge badge-progress">processing</span>
-              {{else if eq .JobStatus "done"}}<span class="badge badge-done">done</span>
-              {{else if eq .JobStatus "failed"}}<span class="badge badge-failed">failed</span>
-              {{else if eq .JobStatus "skipped"}}<span class="badge badge-skipped">skipped</span>
-              {{end}}
-            {{else}}
-              <span class="badge badge-unsupported">unsupported</span>
-            {{end}}
-          </td>
-          <td>
-            {{if eq .FileType "note"}}
-            <div style="display:inline-flex; gap: 0.25rem;">
-              {{if or (eq .JobStatus "") (eq .JobStatus "done") (eq .JobStatus "failed")}}
-                <button type="button" hx-post="/files/queue?path={{.Path | urlquery}}&back={{$.relPath | urlquery}}" hx-target="#main-content" class="btn-small">Queue</button>
-              {{end}}
-              {{if eq .JobStatus "skipped"}}
-                <button type="button" hx-post="/files/unskip?path={{.Path | urlquery}}&back={{$.relPath | urlquery}}" hx-target="#main-content" class="btn-small">Unskip</button>
-                <button type="button" hx-post="/files/force?path={{.Path | urlquery}}&back={{$.relPath | urlquery}}" hx-target="#main-content" class="btn-small">Force</button>
-              {{else if ne .JobStatus "in_progress"}}
-                <button type="button" hx-post="/files/skip?path={{.Path | urlquery}}&back={{$.relPath | urlquery}}" hx-target="#main-content" class="btn-small">Skip</button>
-              {{end}}
-              <button type="button" class="btn-small" onclick="showHistory('{{.Path}}')">Details</button>
-            </div>
-            {{end}}
-          </td>
-        </tr>
+        {{template "_file_row" (makeFileRowCtx . $.relPath)}}
         {{end}}
       </tbody>
     </table>
