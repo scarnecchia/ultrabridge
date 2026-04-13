@@ -1590,3 +1590,56 @@ func TestRenderFragmentAC43(t *testing.T) {
 		t.Errorf("Fragment should render via h.tmpl without new filesystem reads, got:\n%s", body)
 	}
 }
+
+// TestRenderTemplate verifies AC4.2: renderTemplate continues to branch on HX-Request
+// without regression. Tests the tasks tab both with and without HX-Request.
+func TestRenderTemplate(t *testing.T) {
+	t.Run("without HX-Request includes layout", func(t *testing.T) {
+		h := newTestHandler()
+		data := map[string]interface{}{
+			"tasks": []service.Task{},
+		}
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/", nil)
+		// No HX-Request header
+
+		h.renderTemplate(w, r, "tasks", data)
+
+		// Layout marker: should be present when NOT an HTMX request
+		body := w.Body.String()
+		if !strings.Contains(body, `<nav class="sidebar">`) {
+			t.Errorf("Without HX-Request, response should contain layout marker '<nav class=\"sidebar\">', got:\n%s", body)
+		}
+
+		// Task tab marker: should still be present
+		if !strings.Contains(body, `Create New Task`) {
+			t.Errorf("Without HX-Request, response should contain task tab marker 'Create New Task', got:\n%s", body)
+		}
+	})
+
+	t.Run("with HX-Request omits layout", func(t *testing.T) {
+		h := newTestHandler()
+		data := map[string]interface{}{
+			"tasks": []service.Task{},
+		}
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("HX-Request", "true")
+
+		h.renderTemplate(w, r, "tasks", data)
+
+		body := w.Body.String()
+
+		// Layout marker: should NOT be present when HX-Request is true
+		if strings.Contains(body, `<nav class="sidebar">`) {
+			t.Errorf("With HX-Request: true, response should NOT contain layout marker '<nav class=\"sidebar\">', got:\n%s", body)
+		}
+
+		// Task tab marker: should still be present
+		if !strings.Contains(body, `Create New Task`) {
+			t.Errorf("With HX-Request: true, response should contain task tab marker 'Create New Task', got:\n%s", body)
+		}
+	})
+}
