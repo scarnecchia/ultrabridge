@@ -603,6 +603,45 @@ func TestPostCompleteTaskUpdatesStatus(t *testing.T) {
 	}
 }
 
+// TestPostCompleteTaskHXReturnsRow verifies AC1.1 and AC1.3: an HX-Request
+// to POST /tasks/{id}/complete returns 200 with a single <tr id="task-{id}">
+// carrying data-status="completed" so the client-side toggleCompleted filter
+// keeps working.
+func TestPostCompleteTaskHXReturnsRow(t *testing.T) {
+	store := newMockTaskStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+
+	tasks := service.NewTaskService(store, nil)
+	handler := NewHandler(tasks, nil, nil, nil, nil, "", "", logger, broadcaster)
+
+	store.tasks["task-hx"] = &taskstore.Task{
+		TaskID:    "task-hx",
+		Title:     taskstore.SqlStr("Complete me"),
+		Status:    taskstore.SqlStr("needsAction"),
+		IsDeleted: "N",
+	}
+
+	req := httptest.NewRequest("POST", "/tasks/task-hx/complete", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX-Request POST returned %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `id="task-task-hx"`) {
+		t.Errorf("response missing id=\"task-task-hx\"; body:\n%s", body)
+	}
+	if !strings.Contains(body, `data-status="completed"`) {
+		t.Errorf("response missing data-status=\"completed\"; body:\n%s", body)
+	}
+	if strings.Contains(body, `<nav class="sidebar">`) {
+		t.Errorf("response leaked layout shell (should be a bare row fragment); body:\n%s", body)
+	}
+}
+
 // TestPostCompleteTaskAlreadyCompleted verifies completing an already-completed task
 func TestPostCompleteTaskAlreadyCompleted(t *testing.T) {
 	store := newMockTaskStore()

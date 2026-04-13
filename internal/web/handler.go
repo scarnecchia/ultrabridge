@@ -432,7 +432,16 @@ func (h *Handler) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to complete task", http.StatusInternalServerError)
 		return
 	}
-	if r.Header.Get("HX-Request") == "true" { h.handleIndex(w, r); return }
+	if r.Header.Get("HX-Request") == "true" {
+		t, err := h.tasks.Get(r.Context(), taskID)
+		if err != nil {
+			h.logger.Error("failed to fetch completed task for fragment render", "id", taskID, "error", err)
+			http.Error(w, "failed to render row", http.StatusInternalServerError)
+			return
+		}
+		h.renderFragment(w, r, "_task_row", t)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
