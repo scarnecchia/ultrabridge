@@ -1603,3 +1603,91 @@ func TestRenderTemplate(t *testing.T) {
 		}
 	})
 }
+
+// TestTaskRowFragmentIdentity verifies htmx-fragment-mutations.AC3.3: a task rendered
+// via renderFragment("_task_row", task) produces the same load-bearing HTML tokens as
+// the same task rendered inside tasks.html via {{range .tasks}}{{template "_task_row" .}}{{end}}.
+// Substring equivalence on the load-bearing tokens is sufficient — whitespace normalization
+// by html/template may differ between the two paths.
+func TestTaskRowFragmentIdentity(t *testing.T) {
+	h := newTestHandler()
+	task := service.Task{ID: "abc", Title: "Fixture Row", Status: service.StatusNeedsAction}
+	h.tasks.(*mockTaskService).tasks = []service.Task{task}
+
+	// Path 1: renderFragment directly.
+	w1 := httptest.NewRecorder()
+	r1 := httptest.NewRequest(http.MethodGet, "/", nil)
+	h.renderFragment(w1, r1, "_task_row", task)
+	body1 := w1.Body.String()
+
+	// Path 2: HTMX GET / — handleIndex renders tasks.html which invokes
+	// {{template "_task_row" .}} inside {{range .tasks}}.
+	w2 := httptest.NewRecorder()
+	r2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	r2.Header.Set("HX-Request", "true")
+	h.ServeHTTP(w2, r2)
+	body2 := w2.Body.String()
+
+	markers := []string{
+		`id="task-abc"`,
+		`data-status="needsAction"`,
+		`Fixture Row`,
+		`hx-post="/tasks/abc/complete"`,
+	}
+	for _, m := range markers {
+		if !strings.Contains(body1, m) {
+			t.Errorf("renderFragment output missing marker %q\nbody:\n%s", m, body1)
+		}
+		if !strings.Contains(body2, m) {
+			t.Errorf("tasks.html render missing marker %q\nbody:\n%s", m, body2)
+		}
+	}
+}
+
+// TestHandlerRenderPathsDoNotPoisonEachOther is a regression guard for cross-path
+// state coupling on h.tmpl. html/template permanently locks a tree against Clone
+// once ExecuteTemplate has run, so any method that executes h.tmpl directly would
+// brick every subsequent Clone-based render. This test exercises both paths in
+// sequence on one Handler; a regression surfaces as a 5xx body or a non-HTML
+// response on any call past the first.
+func TestHandlerRenderPathsDoNotPoisonEachOther(t *testing.T) {
+	h := newTestHandler()
+	h.tasks.(*mockTaskService).tasks = []service.Task{
+		{ID: "x", Title: "x task", Status: service.StatusNeedsAction},
+	}
+	task := service.Task{ID: "x", Title: "x task", Status: service.StatusNeedsAction}
+
+	renderTab := func() string {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Header.Set("HX-Request", "true")
+		h.ServeHTTP(w, r)
+		return w.Body.String()
+	}
+	renderRow := func() string {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		h.renderFragment(w, r, "_task_row", task)
+		return w.Body.String()
+	}
+
+	steps := []struct {
+		name string
+		call func() string
+	}{
+		{"tab-1", renderTab},
+		{"row-1", renderRow},
+		{"tab-2-after-row", renderTab},
+		{"row-2", renderRow},
+		{"tab-3-after-row", renderTab},
+	}
+	for _, s := range steps {
+		body := s.call()
+		if strings.Contains(body, "internal error") || strings.Contains(body, "template error") || strings.Contains(body, "template not found") {
+			t.Fatalf("step %s produced error body:\n%s", s.name, body)
+		}
+		if !strings.Contains(body, "x task") {
+			t.Errorf("step %s missing task content; body:\n%s", s.name, body)
+		}
+	}
+}
