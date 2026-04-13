@@ -31,6 +31,16 @@ import (
 //go:embed all:templates
 var templateFS embed.FS
 
+// fileRowCtx is the data shape passed to the _file_row template block.
+// It pairs a single NoteFile with the containing directory's RelPath so
+// per-row buttons can emit back= query strings on their hx-post URLs.
+// Unexported: internal to the web package; templates access .File and
+// .RelPath via reflection (field export is what matters there).
+type fileRowCtx struct {
+	File    service.NoteFile
+	RelPath string
+}
+
 //go:embed static
 var staticFS embed.FS
 
@@ -128,6 +138,9 @@ func NewHandler(
 		"fileRowID": func(path string) string {
 			sum := sha1.Sum([]byte(path))
 			return "file-" + hex.EncodeToString(sum[:])[:12]
+		},
+		"makeFileRowCtx": func(f service.NoteFile, relPath string) fileRowCtx {
+			return fileRowCtx{File: f, RelPath: relPath}
 		},
 		"noteSource": func(path string) string {
 			if h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) { return "Boox" }

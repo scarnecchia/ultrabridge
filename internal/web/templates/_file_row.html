@@ -1,0 +1,51 @@
+{{define "_file_row"}}
+<tr id="{{ fileRowID .File.Path }}">
+  <td>{{if not .File.IsDir}}<input type="checkbox" name="paths" value="{{.File.Path}}" class="file-checkbox">{{end}}</td>
+  <td>
+    {{if .File.IsDir}}📁{{else if eq .File.FileType "note"}}📝{{else if eq .File.FileType "pdf"}}📄{{else if eq .File.FileType "epub"}}📚{{else}}📎{{end}}
+    {{if .File.IsDir}}<a href="/files?path={{.File.RelPath}}" hx-get="/files?path={{.File.RelPath}}" hx-target="#main-content" hx-push-url="true">{{.File.Name}}</a>{{else}}{{.File.Name}}{{end}}
+    {{$src := noteSource .File.Path}}
+    {{if eq $src "Boox"}}
+      <span class="badge badge-boox" title="Boox">B</span>
+    {{else}}
+      <span class="badge badge-sn" title="Supernote">SN</span>
+    {{end}}
+    {{if .File.DeviceInfo}}<br><span class="device-info">{{.File.DeviceInfo}}</span>{{end}}
+  </td>
+  <td>{{.File.FileType}}</td>
+  <td>{{.File.SizeBytes}}</td>
+  <td>{{if .File.CreatedAt.IsZero}}-{{else}}{{.File.CreatedAt.Format "2006-01-02"}}{{end}}</td>
+  <td>{{.File.ModifiedAt.Format "2006-01-02"}}</td>
+  <td>
+    {{if .File.IsDir}}
+      {{/* directories have no processing status */}}
+    {{else if eq .File.FileType "note"}}
+      {{if eq .File.JobStatus ""}}<span class="badge badge-unprocessed">unprocessed</span>
+      {{else if eq .File.JobStatus "pending"}}<span class="badge badge-pending">queued</span>
+      {{else if eq .File.JobStatus "in_progress"}}<span class="badge badge-progress">processing</span>
+      {{else if eq .File.JobStatus "done"}}<span class="badge badge-done">done</span>
+      {{else if eq .File.JobStatus "failed"}}<span class="badge badge-failed">failed</span>
+      {{else if eq .File.JobStatus "skipped"}}<span class="badge badge-skipped">skipped</span>
+      {{end}}
+    {{else}}
+      <span class="badge badge-unsupported">unsupported</span>
+    {{end}}
+  </td>
+  <td>
+    {{if eq .File.FileType "note"}}
+    <div style="display:inline-flex; gap: 0.25rem;">
+      {{if or (eq .File.JobStatus "") (eq .File.JobStatus "done") (eq .File.JobStatus "failed")}}
+        <button type="button" hx-post="/files/queue?path={{.File.Path | urlquery}}&back={{.RelPath | urlquery}}" hx-target="closest tr" hx-swap="outerHTML" class="btn-small">Queue</button>
+      {{end}}
+      {{if eq .File.JobStatus "skipped"}}
+        <button type="button" hx-post="/files/unskip?path={{.File.Path | urlquery}}&back={{.RelPath | urlquery}}" hx-target="closest tr" hx-swap="outerHTML" class="btn-small">Unskip</button>
+        <button type="button" hx-post="/files/force?path={{.File.Path | urlquery}}&back={{.RelPath | urlquery}}" hx-target="closest tr" hx-swap="outerHTML" class="btn-small">Force</button>
+      {{else if ne .File.JobStatus "in_progress"}}
+        <button type="button" hx-post="/files/skip?path={{.File.Path | urlquery}}&back={{.RelPath | urlquery}}" hx-target="closest tr" hx-swap="outerHTML" class="btn-small">Skip</button>
+      {{end}}
+      <button type="button" class="btn-small" onclick="showHistory('{{.File.Path}}')">Details</button>
+    </div>
+    {{end}}
+  </td>
+</tr>
+{{end}}
