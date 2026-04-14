@@ -89,6 +89,21 @@ func (m *mockBooxStore) ListFolders(ctx context.Context) ([]booxpipeline.FolderC
 	return out, nil
 }
 
+func (m *mockBooxStore) ListDevices(ctx context.Context) ([]booxpipeline.DeviceCount, error) {
+	counts := map[string]int{}
+	for _, bn := range m.notes {
+		if bn.DeviceModel == ".." {
+			continue
+		}
+		counts[bn.DeviceModel]++
+	}
+	var out []booxpipeline.DeviceCount
+	for d, c := range counts {
+		out = append(out, booxpipeline.DeviceCount{DeviceModel: d, Count: c})
+	}
+	return out, nil
+}
+
 func (m *mockBooxStore) CountNotesWithPrefix(ctx context.Context, prefix string) (int, error) {
 	return 0, nil
 }

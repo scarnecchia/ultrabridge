@@ -36,6 +36,7 @@ type BooxStore interface {
 	UnskipNote(ctx context.Context, path string) error
 	GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error)
 	ListFolders(ctx context.Context) ([]booxpipeline.FolderCount, error)
+	ListDevices(ctx context.Context) ([]booxpipeline.DeviceCount, error)
 }
 
 // BooxImporter is the interface required by the NoteService for Boox imports.
@@ -216,12 +217,11 @@ func (s *noteService) ListSupernoteFiles(ctx context.Context, path, sortField, o
 
 // ListBooxNotes returns Boox-catalog rows with the richer per-note fields
 // (Title, Folder, DeviceModel, NoteType, PageCount) that NoteFile flattens.
-// When folder is non-empty, rows are filtered to exact matches on the
-// Folder field — on-device folder strings are used as opaque labels so
-// nested paths (e.g. "Notebooks/Personal") round-trip unchanged.
+// Both device and folder are exact-match filters — empty means "all".
+// They compose (supply both to narrow to that device+folder slice).
 // Sort supports "title" (default), "folder", "pages", "size", "created",
 // "modified". Returns empty/zero when no Boox store is wired.
-func (s *noteService) ListBooxNotes(ctx context.Context, folder, sortField, order string, page, perPage int) ([]BooxNoteSummary, int, error) {
+func (s *noteService) ListBooxNotes(ctx context.Context, device, folder, sortField, order string, page, perPage int) ([]BooxNoteSummary, int, error) {
 	if s.booxStore == nil {
 		return nil, 0, nil
 	}
@@ -232,6 +232,9 @@ func (s *noteService) ListBooxNotes(ctx context.Context, folder, sortField, orde
 	}
 	out := make([]BooxNoteSummary, 0, len(rows))
 	for _, bn := range rows {
+		if device != "" && bn.DeviceModel != device {
+			continue
+		}
 		if folder != "" && bn.Folder != folder {
 			continue
 		}
@@ -279,6 +282,25 @@ func (s *noteService) ListBooxFolders(ctx context.Context) ([]BooxFolder, error)
 	out := make([]BooxFolder, 0, len(rows))
 	for _, fc := range rows {
 		out = append(out, BooxFolder{Folder: fc.Folder, Count: fc.Count})
+	}
+	return out, nil
+}
+
+// ListBooxDevices returns every unique Boox device_model with its note
+// count, excluding the ".." legacy-import field-swap sentinel (filtered
+// at the store layer). Returns nil when no Boox store is wired.
+func (s *noteService) ListBooxDevices(ctx context.Context) ([]BooxDevice, error) {
+	if s.booxStore == nil {
+		return nil, nil
+	}
+	rows, err := s.booxStore.ListDevices(ctx)
+	if err != nil {
+		s.logger.Error("list boox devices", "error", err)
+		return nil, err
+	}
+	out := make([]BooxDevice, 0, len(rows))
+	for _, dc := range rows {
+		out = append(out, BooxDevice{DeviceModel: dc.DeviceModel, Count: dc.Count})
 	}
 	return out, nil
 }

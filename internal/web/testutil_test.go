@@ -125,15 +125,19 @@ func (m *mockNoteService) ListSupernoteFiles(ctx context.Context, path, sort, or
 	}
 	return out, len(out), nil
 }
-func (m *mockNoteService) ListBooxNotes(ctx context.Context, folder, sort, order string, page, perPage int) ([]service.BooxNoteSummary, int, error) {
-	if folder == "" {
+func (m *mockNoteService) ListBooxNotes(ctx context.Context, device, folder, sort, order string, page, perPage int) ([]service.BooxNoteSummary, int, error) {
+	if device == "" && folder == "" {
 		return m.booxNotes, len(m.booxNotes), nil
 	}
 	var out []service.BooxNoteSummary
 	for _, bn := range m.booxNotes {
-		if bn.Folder == folder {
-			out = append(out, bn)
+		if device != "" && bn.DeviceModel != device {
+			continue
 		}
+		if folder != "" && bn.Folder != folder {
+			continue
+		}
+		out = append(out, bn)
 	}
 	return out, len(out), nil
 }
@@ -145,6 +149,20 @@ func (m *mockNoteService) ListBooxFolders(ctx context.Context) ([]service.BooxFo
 	out := make([]service.BooxFolder, 0, len(seen))
 	for f, c := range seen {
 		out = append(out, service.BooxFolder{Folder: f, Count: c})
+	}
+	return out, nil
+}
+func (m *mockNoteService) ListBooxDevices(ctx context.Context) ([]service.BooxDevice, error) {
+	seen := map[string]int{}
+	for _, bn := range m.booxNotes {
+		if bn.DeviceModel == ".." {
+			continue
+		}
+		seen[bn.DeviceModel]++
+	}
+	out := make([]service.BooxDevice, 0, len(seen))
+	for d, c := range seen {
+		out = append(out, service.BooxDevice{DeviceModel: d, Count: c})
 	}
 	return out, nil
 }

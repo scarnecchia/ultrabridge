@@ -88,6 +88,20 @@ func (m *mockBooxStore) ListFolders(ctx context.Context) ([]booxpipeline.FolderC
 	}
 	return out, nil
 }
+func (m *mockBooxStore) ListDevices(ctx context.Context) ([]booxpipeline.DeviceCount, error) {
+	counts := map[string]int{}
+	for _, bn := range m.notes {
+		if bn.DeviceModel == ".." {
+			continue
+		}
+		counts[bn.DeviceModel]++
+	}
+	var out []booxpipeline.DeviceCount
+	for d, c := range counts {
+		out = append(out, booxpipeline.DeviceCount{DeviceModel: d, Count: c})
+	}
+	return out, nil
+}
 
 type mockFileScanner struct {
 	scanned int
@@ -198,7 +212,7 @@ func TestNoteService_ListBooxNotes(t *testing.T) {
 	}
 	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, nil, "", "", nil)
 
-	rows, total, err := svc.ListBooxNotes(context.Background(), "", "title", "asc", 1, 10)
+	rows, total, err := svc.ListBooxNotes(context.Background(), "", "", "title", "asc", 1, 10)
 	if err != nil {
 		t.Fatalf("ListBooxNotes failed: %v", err)
 	}
@@ -220,7 +234,7 @@ func TestNoteService_ListBooxNotes(t *testing.T) {
 	}
 
 	t.Run("sort_by_folder_desc", func(t *testing.T) {
-		rows, _, err := svc.ListBooxNotes(context.Background(), "", "folder", "desc", 1, 10)
+		rows, _, err := svc.ListBooxNotes(context.Background(), "", "", "folder", "desc", 1, 10)
 		if err != nil {
 			t.Fatalf("ListBooxNotes failed: %v", err)
 		}
@@ -232,7 +246,7 @@ func TestNoteService_ListBooxNotes(t *testing.T) {
 
 	t.Run("no_store_returns_empty", func(t *testing.T) {
 		noneSvc := NewNoteService(ns, nil, nil, nil, nil, nil, nil, nil, "", "", nil)
-		got, n, err := noneSvc.ListBooxNotes(context.Background(), "", "", "", 1, 10)
+		got, n, err := noneSvc.ListBooxNotes(context.Background(), "", "", "", "", 1, 10)
 		if err != nil || n != 0 || len(got) != 0 {
 			t.Errorf("expected empty result when booxStore is nil, got (%v, %d, %v)", got, n, err)
 		}

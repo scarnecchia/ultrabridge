@@ -2360,18 +2360,20 @@ func TestHandleFilesBooxRendersBooxColumns(t *testing.T) {
 	}
 }
 
-// TestHandleFilesBoox_FolderFilter verifies that ?folder=X narrows the
-// list to rows whose Folder field exactly matches, and that the folder-
-// filter pill row surfaces every unique folder with its count.
-func TestHandleFilesBoox_FolderFilter(t *testing.T) {
+// TestHandleFilesBoox_Filters verifies folder + device pills render and
+// that ?folder= and ?device= narrow the list independently and together.
+// Rows with device_model=".." are filtered out of the device pill row so
+// the legacy-import field-swap artifact doesn't clutter the UI.
+func TestHandleFilesBoox_Filters(t *testing.T) {
 	h := newTestHandler()
 	h.notes.(*mockNoteService).booxNotes = []service.BooxNoteSummary{
-		{Path: "/boox/p1.note", Title: "P One", Folder: "Personal"},
-		{Path: "/boox/p2.note", Title: "P Two", Folder: "Personal"},
-		{Path: "/boox/m1.note", Title: "M One", Folder: "Moffitt"},
+		{Path: "/boox/a.note", Title: "NoteMax Personal", DeviceModel: "NoteMax", Folder: "Personal"},
+		{Path: "/boox/b.note", Title: "NoteMax Moffitt", DeviceModel: "NoteMax", Folder: "Moffitt"},
+		{Path: "/boox/c.note", Title: "Go7 Personal", DeviceModel: "Go7", Folder: "Personal"},
+		{Path: "/boox/d.note", Title: "Broken Legacy", DeviceModel: "..", Folder: "Go103"},
 	}
 
-	t.Run("no_filter_shows_all", func(t *testing.T) {
+	t.Run("no_filter_shows_all_and_hides_broken_device_pill", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/files/boox", nil)
 		req.Header.Set("HX-Request", "true")
 		w := httptest.NewRecorder()
@@ -2380,14 +2382,38 @@ func TestHandleFilesBoox_FolderFilter(t *testing.T) {
 			t.Fatalf("status=%d", w.Code)
 		}
 		body := w.Body.String()
-		for _, want := range []string{"P One", "P Two", "M One"} {
+		for _, want := range []string{"NoteMax Personal", "NoteMax Moffitt", "Go7 Personal"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("unfiltered view missing %q", want)
 			}
 		}
-		// Folder pill row surfaces both folders.
-		if !strings.Contains(body, "Personal") || !strings.Contains(body, "Moffitt") {
-			t.Errorf("folder pills missing; body:\n%s", body)
+		// Device pill row has NoteMax and Go7 but not ".."
+		if !strings.Contains(body, "NoteMax") || !strings.Contains(body, "Go7") {
+			t.Errorf("device pills missing; body:\n%s", body)
+		}
+		// The ".." device must not appear as its own pill (the artifact rows
+		// still appear as rows because we don't filter ListBooxNotes itself).
+		// Look for a pill-button href with `?device=..` which would only come
+		// from the device-pill rendering; that shouldn't exist.
+		if strings.Contains(body, "?device=..") || strings.Contains(body, "?device=%2E%2E") {
+			t.Errorf("device pill for '..' leaked into UI; body:\n%s", body)
+		}
+	})
+
+	t.Run("filter_by_device", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/files/boox?device=NoteMax", nil)
+		req.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d", w.Code)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "NoteMax Personal") || !strings.Contains(body, "NoteMax Moffitt") {
+			t.Errorf("NoteMax rows missing; body:\n%s", body)
+		}
+		if strings.Contains(body, "Go7 Personal") {
+			t.Errorf("Go7 row leaked into NoteMax filter; body:\n%s", body)
 		}
 	})
 
@@ -2400,11 +2426,28 @@ func TestHandleFilesBoox_FolderFilter(t *testing.T) {
 			t.Fatalf("status=%d", w.Code)
 		}
 		body := w.Body.String()
-		if !strings.Contains(body, "P One") || !strings.Contains(body, "P Two") {
-			t.Errorf("filtered view missing Personal rows; body:\n%s", body)
+		if !strings.Contains(body, "NoteMax Personal") || !strings.Contains(body, "Go7 Personal") {
+			t.Errorf("Personal rows missing; body:\n%s", body)
 		}
-		if strings.Contains(body, "M One") {
-			t.Errorf("filtered view leaked Moffitt row; body:\n%s", body)
+		if strings.Contains(body, "NoteMax Moffitt") {
+			t.Errorf("Moffitt row leaked into Personal filter; body:\n%s", body)
+		}
+	})
+
+	t.Run("filter_by_device_and_folder", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/files/boox?device=NoteMax&folder=Personal", nil)
+		req.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d", w.Code)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "NoteMax Personal") {
+			t.Errorf("intersection row missing; body:\n%s", body)
+		}
+		if strings.Contains(body, "NoteMax Moffitt") || strings.Contains(body, "Go7 Personal") {
+			t.Errorf("filter leak; body:\n%s", body)
 		}
 	})
 }

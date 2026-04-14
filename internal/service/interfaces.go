@@ -58,6 +58,14 @@ type BooxFolder struct {
 	Count  int    `json:"count"`
 }
 
+// BooxDevice is one row in the Boox device facet — the on-device model
+// string and how many notes are attributed to it. The "..", legacy-import
+// field-swap artifact is excluded at the store layer.
+type BooxDevice struct {
+	DeviceModel string `json:"device_model"`
+	Count       int    `json:"count"`
+}
+
 // BooxNoteSummary is a Boox-tab-specific view of a Boox note, surfacing the
 // on-device title, folder, device model, note type, and page count that the
 // merged NoteFile shape hides.
@@ -138,8 +146,9 @@ type TaskService interface {
 type NoteService interface {
 	ListFiles(ctx context.Context, path string, sort, order string, page, perPage int) ([]NoteFile, int, error)
 	ListSupernoteFiles(ctx context.Context, path string, sort, order string, page, perPage int) ([]NoteFile, int, error)
-	ListBooxNotes(ctx context.Context, folder, sort, order string, page, perPage int) ([]BooxNoteSummary, int, error)
+	ListBooxNotes(ctx context.Context, device, folder, sort, order string, page, perPage int) ([]BooxNoteSummary, int, error)
 	ListBooxFolders(ctx context.Context) ([]BooxFolder, error)
+	ListBooxDevices(ctx context.Context) ([]BooxDevice, error)
 	GetFile(ctx context.Context, path string) (NoteFile, error)
 	GetBooxNote(ctx context.Context, path string) (BooxNoteSummary, error)
 	GetNoteDetails(ctx context.Context, path string) (interface{}, error) // history/job info

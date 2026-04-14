@@ -145,6 +145,30 @@ doc can be triaged as a punch list.
 
 ---
 
+### 18. Legacy-import rows with `device_model=".."` in boox_notes
+- **Source:** 2026-04-14 investigation while wiring the Boox device
+  filter. Surfaced by `SELECT device_model, folder, COUNT(*)
+  FROM boox_notes GROUP BY device_model, folder`.
+- **Severity:** Low — the content is indexed and searchable; only the
+  per-device attribution is garbage.
+- **Scope:** 60 rows (observed on the production DB), all under
+  `/mnt/supernote/boox-notes/<Device>/...` paths. The `device_model`
+  column reads literally `..` and the real device name lives in the
+  `folder` column (e.g. `device_model=..`, `folder=Go103`).
+- **Likely cause:** A legacy import run where the configured import
+  path didn't share a prefix with the files being walked, so
+  `filepath.Rel` returned a `..`-prefixed relative path and
+  `ExtractImportMetadata` / `ExtractPathMetadata` populated the
+  fields from the wrong segments. The device filter (step 18.1) hides
+  these rows from the pill UI via a `WHERE device_model != '..'`
+  clause, but the rows themselves remain.
+- **Fix shape:** one-shot migration that walks `boox_notes.path` for
+  rows with `device_model='..'`, re-runs path metadata extraction
+  against the current notes path, and UPDATEs in place. If the path
+  prefix still doesn't match, fall back to heuristic: split the path
+  on notesPath, take the first segment as device_model, second as
+  note_type, third as folder.
+
 ### 17. "Retry Failed" has no Supernote-side implementation
 - **Source:** 2026-04-14 during Files-tab split (step 4). Surfaced
   when auditing which broad-mutation buttons belonged on which tab.
