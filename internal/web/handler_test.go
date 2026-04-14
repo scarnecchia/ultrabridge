@@ -2029,7 +2029,7 @@ func TestHandleFilesSingleRowMutations(t *testing.T) {
 				t.Fatalf("non-HX %s returned %d, want 303; body=%s", tc.endpoint, w.Code, w.Body.String())
 			}
 			loc := w.Header().Get("Location")
-			want := "/files?path=" + url.QueryEscape("sub/dir with space")
+			want := "/files/supernote?path=" + url.QueryEscape("sub/dir with space")
 			if loc != want {
 				t.Errorf("Location=%q, want %q", loc, want)
 			}
@@ -2180,5 +2180,198 @@ func TestHandlerRenderPathsDoNotPoisonEachOther(t *testing.T) {
 		if !strings.Contains(body, "x task") {
 			t.Errorf("step %s missing task content; body:\n%s", s.name, body)
 		}
+	}
+}
+
+// TestHandleFilesSupernoteFiltersBoox verifies the /files/supernote route
+// renders only Supernote files — Boox-sourced files from the mock are
+// filtered out by ListSupernoteFiles.
+func TestHandleFilesSupernoteFiltersBoox(t *testing.T) {
+	h := newTestHandler()
+	h.notes.(*mockNoteService).files = []service.NoteFile{
+		{Path: "/notes/sn-only.note", Name: "sn-only.note", FileType: "note", Source: "supernote"},
+		{Path: "/boox/hidden.note", Name: "hidden.note", FileType: "note", Source: "boox"},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/files/supernote", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /files/supernote returned %d; body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "sn-only.note") {
+		t.Errorf("supernote row missing; body:\n%s", body)
+	}
+	if strings.Contains(body, "hidden.note") {
+		t.Errorf("boox row leaked into supernote view; body:\n%s", body)
+	}
+}
+
+// TestHandleFilesBooxRendersBooxColumns verifies /files/boox surfaces the
+// BooxNoteSummary fields (Title, Folder, DeviceModel, PageCount) that the
+// merged view hides.
+func TestHandleFilesBooxRendersBooxColumns(t *testing.T) {
+	h := newTestHandler()
+	h.notes.(*mockNoteService).booxNotes = []service.BooxNoteSummary{
+		{
+			Path:        "/boox/project.note",
+			Filename:    "project.note",
+			Title:       "Project Plan",
+			DeviceModel: "NoteAir5C",
+			NoteType:    "Notebooks",
+			Folder:      "Personal",
+			PageCount:   42,
+			JobStatus:   "done",
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/files/boox", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /files/boox returned %d; body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{"Project Plan", "NoteAir5C", "Notebooks", "Personal", "42"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("boox view missing %q; body:\n%s", want, body)
+		}
+	}
+}
+
+// TestHandleFilesSupernoteNoSource verifies the error branch renders an
+// informative empty-state card (not a 500) when no Supernote source is wired.
+func TestHandleFilesSupernoteNoSource(t *testing.T) {
+	h := newTestHandler()
+	h.notes.(*mockNoteService).pipelineConfigured = false
+
+	req := httptest.NewRequest(http.MethodGet, "/files/supernote", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with error banner, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "No Supernote source configured") {
+		t.Errorf("expected empty-state banner; body:\n%s", w.Body.String())
+	}
+}
+
+// TestHandleFilesBooxNoSource verifies the equivalent empty-state for the
+// Boox tab.
+func TestHandleFilesBooxNoSource(t *testing.T) {
+	h := newTestHandler()
+	h.notes.(*mockNoteService).booxEnabled = false
+
+	req := httptest.NewRequest(http.MethodGet, "/files/boox", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with error banner, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "No Boox source configured") {
+		t.Errorf("expected empty-state banner; body:\n%s", w.Body.String())
+	}
+}
+
+// TestRowMutationDispatchesByBooxPrefix verifies that a mutation on a Boox
+// path emits a _boox_file_row fragment (with Boox-specific Title/Folder
+// markup) rather than the legacy _sn_file_row shape.
+func TestRowMutationDispatchesByBooxPrefix(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	notes := &mockNoteService{
+		docs:               make(map[string][]service.SearchResult),
+		contents:           make(map[string]interface{}),
+		pipelineConfigured: true,
+		booxEnabled:        true,
+		booxNotes: []service.BooxNoteSummary{
+			{
+				Path:      "/boox/bar.note",
+				Title:     "Bar Notes",
+				Folder:    "Personal",
+				JobStatus: "done",
+			},
+		},
+	}
+	h := NewHandler(
+		&mockTaskService{},
+		notes,
+		&mockSearchService{},
+		&mockConfigService{},
+		nil,
+		"",
+		"/boox",
+		logger,
+		broadcaster,
+	)
+
+	form := url.Values{}
+	form.Set("path", "/boox/bar.note")
+	req := httptest.NewRequest(http.MethodPost, "/files/queue", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("queue returned %d; body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	// _boox_file_row-specific markup: Title + Folder ("Personal") column.
+	if !strings.Contains(body, "Bar Notes") {
+		t.Errorf("expected boox-fragment with Title; body:\n%s", body)
+	}
+	if !strings.Contains(body, "Personal") {
+		t.Errorf("expected boox-fragment with Folder column; body:\n%s", body)
+	}
+}
+
+// TestRowMutationBooxNonHXRedirectsToBooxTab verifies that the non-HX
+// redirect for a Boox-path mutation lands on /files/boox, not /files/
+// supernote.
+func TestRowMutationBooxNonHXRedirectsToBooxTab(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	notes := &mockNoteService{
+		docs:               make(map[string][]service.SearchResult),
+		contents:           make(map[string]interface{}),
+		pipelineConfigured: true,
+		booxEnabled:        true,
+	}
+	h := NewHandler(
+		&mockTaskService{},
+		notes,
+		&mockSearchService{},
+		&mockConfigService{},
+		nil,
+		"",
+		"/boox",
+		logger,
+		broadcaster,
+	)
+
+	form := url.Values{}
+	form.Set("path", "/boox/bar.note")
+	req := httptest.NewRequest(http.MethodPost, "/files/queue", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// no HX-Request header
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303; got %d body=%s", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	if loc != "/files/boox" {
+		t.Errorf("Location=%q, want /files/boox", loc)
 	}
 }

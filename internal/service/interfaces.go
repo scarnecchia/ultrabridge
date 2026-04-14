@@ -118,6 +118,7 @@ type NoteService interface {
 	ListSupernoteFiles(ctx context.Context, path string, sort, order string, page, perPage int) ([]NoteFile, int, error)
 	ListBooxNotes(ctx context.Context, sort, order string, page, perPage int) ([]BooxNoteSummary, int, error)
 	GetFile(ctx context.Context, path string) (NoteFile, error)
+	GetBooxNote(ctx context.Context, path string) (BooxNoteSummary, error)
 	GetNoteDetails(ctx context.Context, path string) (interface{}, error) // history/job info
 	GetContent(ctx context.Context, path string) (interface{}, error)     // OCR text and page metadata
 	RenderPage(ctx context.Context, path string, page int) (io.ReadCloser, string, error) // image stream, content-type

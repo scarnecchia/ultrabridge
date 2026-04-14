@@ -1,0 +1,91 @@
+<!-- Supernote Files Tab -->
+<div id="files" class="tab-content active">
+  {{if .filesError}}
+    <div class="card" style="border-color: var(--status-text-failed);">
+        <p class="text-danger">{{.filesError}}</p>
+    </div>
+  {{else if .files}}
+    <div class="status-panel">
+        <span class="text-bold">Pipeline Status:</span>
+        <span id="proc-status" class="text-small">Loading...</span>
+        <div class="flex-spacer"></div>
+        <form hx-post="/processor/start" hx-swap="none" hx-on:htmx:after-request="updateProcessorStatus();" style="display:inline;">
+            <button type="submit" class="btn-small">▶ Start</button>
+        </form>
+        <form hx-post="/processor/stop" hx-swap="none" hx-on:htmx:after-request="updateProcessorStatus();" style="display:inline;">
+            <button type="submit" class="btn-small" style="background: var(--text-secondary);">⏹ Stop</button>
+        </form>
+    </div>
+
+    <div class="toolbar">
+      <form hx-post="/files/scan" hx-swap="none" hx-on:htmx:after-request="updateProcessorStatus();" style="display:inline;">
+        <button type="submit" class="btn-small">⟳ Scan Now</button>
+      </form>
+      <form hx-post="/files/retry-failed" hx-swap="none" hx-on:htmx:after-request="updateProcessorStatus();" style="display:inline;">
+        <button type="submit" class="btn-small">↻ Retry Failed</button>
+      </form>
+
+      <div class="flex-spacer"></div>
+
+      <select onchange="filesNav({per_page:this.value,page:1})" style="width: auto;">
+        <option value="10" {{if eq .filesPerPage 10}}selected{{end}}>10 / page</option>
+        <option value="25" {{if eq .filesPerPage 25}}selected{{end}}>25 / page</option>
+        <option value="50" {{if eq .filesPerPage 50}}selected{{end}}>50 / page</option>
+      </select>
+      <span class="text-small">{{.filesTotalFiles}} files</span>
+    </div>
+
+    <div class="card">
+        <div class="breadcrumb">
+          {{range .breadcrumbs}}
+            <a href="/files/supernote?path={{.RelPath}}" hx-get="/files/supernote?path={{.RelPath}}" hx-target="#main-content" hx-push-url="true">{{.Label}}</a><span class="sep">/</span>
+          {{end}}
+        </div>
+    <div class="table-container">
+    <table class="task-table">
+      <thead>
+        <tr>
+          <th style="width:2rem;"></th>
+          <th><a href="#" onclick="filesNav({sort:'name', order: '{{if and (eq $.filesSort "name") (eq $.filesOrder "asc")}}desc{{else}}asc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Name {{if eq $.filesSort "name"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th>Type</th>
+          <th><a href="#" onclick="filesNav({sort:'size', order: '{{if and (eq $.filesSort "size") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Size {{if eq $.filesSort "size"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th><a href="#" onclick="filesNav({sort:'created', order: '{{if and (eq $.filesSort "created") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Created {{if eq $.filesSort "created"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th><a href="#" onclick="filesNav({sort:'modified', order: '{{if and (eq $.filesSort "modified") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Modified {{if eq $.filesSort "modified"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th>Status</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .files}}
+        {{template "_sn_file_row" (makeFileRowCtx . $.relPath)}}
+        {{end}}
+      </tbody>
+    </table>
+    </div>
+    </div> {{/* end of card */}}
+
+    {{if gt .filesTotalPages 1}}
+    <div style="margin-top:0.75rem; display:flex; align-items:center; gap:0.5rem; font-size:0.9rem;">
+      {{if gt .filesPage 1}}
+        <button class="btn-small" hx-get="/files/supernote?path={{.relPath | urlquery}}&page={{sub .filesPage 1}}" hx-target="#main-content" hx-push-url="true">◂ Prev</button>
+      {{end}}
+      <span>Page {{.filesPage}} of {{.filesTotalPages}}</span>
+      {{if lt .filesPage .filesTotalPages}}
+        <button class="btn-small" hx-get="/files/supernote?path={{.relPath | urlquery}}&page={{add .filesPage 1}}" hx-target="#main-content" hx-push-url="true">Next ▸</button>
+      {{end}}
+    </div>
+    {{end}}
+  {{else}}
+    <div class="empty-state">
+        <p>No Supernote files found.</p>
+    </div>
+  {{end}}
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        if (typeof updateProcessorStatus === 'function') updateProcessorStatus();
+        {{if .detailPath}}
+        showHistory("{{.detailPath}}");
+        {{end}}
+    });
+</script>

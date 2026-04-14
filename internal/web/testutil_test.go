@@ -108,6 +108,14 @@ func (m *mockNoteService) ListSupernoteFiles(ctx context.Context, path, sort, or
 func (m *mockNoteService) ListBooxNotes(ctx context.Context, sort, order string, page, perPage int) ([]service.BooxNoteSummary, int, error) {
 	return m.booxNotes, len(m.booxNotes), nil
 }
+func (m *mockNoteService) GetBooxNote(ctx context.Context, path string) (service.BooxNoteSummary, error) {
+	for _, bn := range m.booxNotes {
+		if bn.Path == path {
+			return bn, nil
+		}
+	}
+	return service.BooxNoteSummary{}, sql.ErrNoRows
+}
 func (m *mockNoteService) GetFile(ctx context.Context, path string) (service.NoteFile, error) {
 	for _, f := range m.files {
 		if f.Path == path {

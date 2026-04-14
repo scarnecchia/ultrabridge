@@ -203,6 +203,8 @@ func NewHandler(
 	}
 	
 	h.mux.HandleFunc("GET /files", h.handleFiles)
+	h.mux.HandleFunc("GET /files/supernote", h.handleFilesSupernote)
+	h.mux.HandleFunc("GET /files/boox", h.handleFilesBoox)
 	h.mux.HandleFunc("GET /search", h.handleSearch)
 	h.mux.HandleFunc("POST /files/queue", h.handleFilesQueue)
 	h.mux.HandleFunc("POST /files/skip", h.handleFilesSkip)
@@ -379,6 +381,92 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	data["filesTotalPages"] = (total + perPage - 1) / perPage
 	if data["filesTotalPages"] == 0 { data["filesTotalPages"] = 1 }
 	h.renderTemplate(w, r, "files", data)
+}
+
+// handleFilesSupernote renders the Supernote-only Files view. Mirrors the
+// directory/breadcrumb browser model of the legacy /files route but excludes
+// Boox notes entirely.
+func (h *Handler) handleFilesSupernote(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	data := map[string]interface{}{"activeTab": "files-supernote"}
+	if detail := r.URL.Query().Get("detail"); detail != "" {
+		data["detailPath"] = detail
+	}
+	if !h.notes.HasSupernoteSource() {
+		data["filesError"] = "No Supernote source configured. Add a source in Settings."
+		h.renderTemplate(w, r, "files_supernote", data)
+		return
+	}
+	rawPath := r.URL.Query().Get("path")
+	relPath, ok := safeRelPath(rawPath)
+	if !ok {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	sortField, sortOrder := r.URL.Query().Get("sort"), r.URL.Query().Get("order")
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage <= 0 {
+		perPage = 25
+	}
+	if page <= 0 {
+		page = 1
+	}
+
+	files, total, err := h.notes.ListSupernoteFiles(ctx, relPath, sortField, sortOrder, page, perPage)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	data["files"], data["relPath"], data["breadcrumbs"], data["filesTotalFiles"] = files, relPath, buildBreadcrumbs(relPath), total
+	data["filesPage"], data["filesPerPage"] = page, perPage
+	data["filesSort"], data["filesOrder"] = sortField, sortOrder
+	data["filesTotalPages"] = (total + perPage - 1) / perPage
+	if data["filesTotalPages"] == 0 {
+		data["filesTotalPages"] = 1
+	}
+	h.renderTemplate(w, r, "files_supernote", data)
+}
+
+// handleFilesBoox renders the Boox-only Files view. Flat catalog list — no
+// directory navigation — with per-note Title/Folder/Device/NoteType/Pages
+// columns surfaced from BooxNoteSummary.
+func (h *Handler) handleFilesBoox(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	data := map[string]interface{}{"activeTab": "files-boox"}
+	if detail := r.URL.Query().Get("detail"); detail != "" {
+		data["detailPath"] = detail
+	}
+	if !h.notes.HasBooxSource() {
+		data["filesError"] = "No Boox source configured. Add a source in Settings."
+		h.renderTemplate(w, r, "files_boox", data)
+		return
+	}
+	sortField, sortOrder := r.URL.Query().Get("sort"), r.URL.Query().Get("order")
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage <= 0 {
+		perPage = 25
+	}
+	if page <= 0 {
+		page = 1
+	}
+
+	rows, total, err := h.notes.ListBooxNotes(ctx, sortField, sortOrder, page, perPage)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	data["booxNotes"], data["filesTotalFiles"] = rows, total
+	data["filesPage"], data["filesPerPage"] = page, perPage
+	data["filesSort"], data["filesOrder"] = sortField, sortOrder
+	data["filesTotalPages"] = (total + perPage - 1) / perPage
+	if data["filesTotalPages"] == 0 {
+		data["filesTotalPages"] = 1
+	}
+	h.renderTemplate(w, r, "files_boox", data)
 }
 
 func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -630,22 +718,38 @@ func (h *Handler) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
-// respondFileRowOrRedirect fetches the updated file via GetFile and emits a
-// _file_row fragment on HX-Request; otherwise redirects back to /files with
-// the caller-supplied `back` query string preserved. The caller is expected
-// to have already performed the mutation.
+// respondFileRowOrRedirect fetches the updated file and emits a source-
+// specific row fragment on HX-Request; otherwise redirects back to the
+// appropriate tab with the caller-supplied `back` query string preserved.
+// Boox paths dispatch to `_boox_file_row` + `/files/boox`; everything else
+// goes to `_sn_file_row` + `/files/supernote`.
 func (h *Handler) respondFileRowOrRedirect(w http.ResponseWriter, r *http.Request, path string) {
+	isBoox := h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath)
 	if r.Header.Get("HX-Request") == "true" {
+		if isBoox {
+			bn, err := h.notes.GetBooxNote(r.Context(), path)
+			if err != nil {
+				h.logger.Error("failed to fetch boox note for fragment render", "path", path, "error", err)
+				http.Error(w, "failed to render row", http.StatusInternalServerError)
+				return
+			}
+			h.renderFragment(w, r, "_boox_file_row", bn)
+			return
+		}
 		f, err := h.notes.GetFile(r.Context(), path)
 		if err != nil {
 			h.logger.Error("failed to fetch file for fragment render", "path", path, "error", err)
 			http.Error(w, "failed to render row", http.StatusInternalServerError)
 			return
 		}
-		h.renderFragment(w, r, "_file_row", fileRowCtx{File: f, RelPath: r.FormValue("back")})
+		h.renderFragment(w, r, "_sn_file_row", fileRowCtx{File: f, RelPath: r.FormValue("back")})
 		return
 	}
-	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
+	if isBoox {
+		http.Redirect(w, r, "/files/boox", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/files/supernote?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesQueue(w http.ResponseWriter, r *http.Request) {

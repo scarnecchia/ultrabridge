@@ -245,6 +245,24 @@ func (s *noteService) ListBooxNotes(ctx context.Context, sortField, order string
 	return out[start:end], totalFiles, nil
 }
 
+// GetBooxNote returns the Boox-tab summary for a single path. Returns
+// sql.ErrNoRows if the path is not in the Boox catalog.
+func (s *noteService) GetBooxNote(ctx context.Context, path string) (BooxNoteSummary, error) {
+	if s.booxStore == nil {
+		return BooxNoteSummary{}, fmt.Errorf("boox store not available")
+	}
+	rows, err := s.booxStore.ListNotes(ctx)
+	if err != nil {
+		return BooxNoteSummary{}, err
+	}
+	for _, bn := range rows {
+		if bn.Path == path {
+			return mapBooxSummary(bn), nil
+		}
+	}
+	return BooxNoteSummary{}, sql.ErrNoRows
+}
+
 // GetFile returns a single NoteFile by path, dispatching to the Boox or
 // Supernote branch based on isBooxPath. Returns sql.ErrNoRows when the path
 // is not found in the relevant store.
