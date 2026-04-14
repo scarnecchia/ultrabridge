@@ -18,10 +18,28 @@ during implementation or by the human operator post-merge):
 - **E1–E3** — curl layout vs fragment assertions (curl)
 - **F1, F2, F4** — Tasks + Files checkbox bars, clean console (Playwright)
 - **A5** — reload after create persists the task (operator)
+- **A6** — empty title → 400 "title is required", input preserved (fetch probe)
+- **C3** — Skip on `done` file → row swaps to `skipped` badge + Unskip/Force
+  buttons (Playwright)
+- **C4** — Unskip on `skipped` file → row swaps to `queued`, Skip-only
+  actions (Playwright)
+- **C5** — Force on `skipped` file → row swaps to `queued` (Force unskips
+  + enqueues; template only shows Force when status is `skipped`, so C5
+  is exercised via skip-then-Force rather than on a `done` row)
+  (Playwright)
+- **C6** — `/files/queue` via non-HX curl → 303 with `back=` preserved
+  (curl)
+- **D4** — Scan Now → POST `/files/scan` returns 200, URL stays at
+  `/files`, status banner picks up the new processing state via the
+  5-second poller (Playwright)
+- **D5** — Processor Start / Stop / Retry Failed → each POST returns
+  200, URL unchanged, status banner reflects state transitions without
+  a full-page swap (Playwright)
+- **D6** — `/files/scan` via non-HX curl → 303 `/files` (curl)
 - **F3** — processor badge continues updating every ~5s (operator)
 
-Outstanding: A6, C3–C6, D1, D3–D6, destructive items (B4/B5/D1/D3),
-and both end-to-end scenarios.
+Outstanding: D1, D3, Import (D5 subset), Migrate Imports (D5 subset),
+destructive items (B4/B5/D1/D3), and both end-to-end scenarios.
 
 ## Prerequisites
 
