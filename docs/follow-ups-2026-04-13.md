@@ -9,8 +9,10 @@ doc can be triaged as a punch list.
 ## Pre-existing, unrelated to HTMX branch
 
 ### 1. `TestSyncEngine_RemoteHardDelete` failing in `internal/tasksync/`
-- **Source:** Phase 2 reviewer; reconfirmed by Phase 3, 5, 6, and final reviewers at branch base `ab9099b`.
-- **Severity:** Unknown — failure at `engine_test.go:606` on `is_deleted="N"`. May indicate a real sync-engine bug or a stale test.
+- **Source:** Phase 2 reviewer; reconfirmed by Phase 3, 5, 6, and final reviewers at branch base `ab9099b`. Also reconfirmed 2026-04-14 during Files-tab-split work at `87113a1`.
+- **Priority:** Investigate immediately after the current release ships. Real user-visible bug if the engine code is the source: "I deleted a task on my device and it came back" on the next sync cycle.
+- **Severity:** Unknown — failure at `engine_test.go:606` on `is_deleted="N"`. Test expects `store.List` to return 0 active tasks after a remote hard-delete (empty Pull); gets 1.
+- **Hypothesis for investigation (not verified):** commit `f954022` ("skip hard-delete detection for tasks never seen in Pull") may have over-broadened the predicate so that legitimate deletions are also suppressed. Suggested first step: `git revert f954022` locally, re-run the test. If it passes, narrow the condition; if it still fails, look at whether `sync_map.LastPulled` is being advanced on the intermediate sync.
 - **Fix shape:** Investigate whether the test expectation or the engine code is wrong. Either fix the regression in the sync engine or repair the test.
 
 ## Documentation drift from the prior decoupled-architecture refactor
