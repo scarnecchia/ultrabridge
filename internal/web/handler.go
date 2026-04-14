@@ -216,8 +216,10 @@ func NewHandler(
 	h.mux.HandleFunc("GET /files/render", h.handleFilesRender)
 	h.mux.HandleFunc("GET /files/boox/render", h.handleBooxRender)
 	h.mux.HandleFunc("GET /files/boox/versions", h.handleBooxVersions)
-	h.mux.HandleFunc("POST /processor/start", h.handleProcessorStart)
-	h.mux.HandleFunc("POST /processor/stop", h.handleProcessorStop)
+	h.mux.HandleFunc("POST /processor/supernote/start", h.handleProcessorStart)
+	h.mux.HandleFunc("POST /processor/supernote/stop", h.handleProcessorStop)
+	h.mux.HandleFunc("POST /processor/boox/start", h.handleBooxProcessorStart)
+	h.mux.HandleFunc("POST /processor/boox/stop", h.handleBooxProcessorStop)
 	h.mux.HandleFunc("POST /files/scan", h.handleFilesScan)
 	h.mux.HandleFunc("POST /files/import", h.handleFilesImport)
 	h.mux.HandleFunc("POST /files/retry-failed", h.handleFilesRetryFailed)
@@ -630,38 +632,49 @@ func (h *Handler) handleBackfillEmbeddings(w http.ResponseWriter, r *http.Reques
 // (scan, import, retry-failed, migrate-imports, processor start/stop). On HX
 // it emits an empty 200 body; the client-side poller picks up the effect on
 // its next tick (updateProcessorStatus is also hooked via hx-on to refresh
-// immediately). On non-HX it redirects to /files.
-func (h *Handler) respondEmptyOrRedirect(w http.ResponseWriter, r *http.Request) {
+// immediately). On non-HX it redirects to the caller-specified tab so each
+// action lands back on the page it was triggered from.
+func (h *Handler) respondEmptyOrRedirect(w http.ResponseWriter, r *http.Request, redirectTo string) {
 	if r.Header.Get("HX-Request") == "true" {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 }
 
 func (h *Handler) handleProcessorStart(w http.ResponseWriter, r *http.Request) {
 	h.notes.StartProcessor(r.Context())
-	h.respondEmptyOrRedirect(w, r)
+	h.respondEmptyOrRedirect(w, r, "/files/supernote")
 }
 
 func (h *Handler) handleProcessorStop(w http.ResponseWriter, r *http.Request) {
 	h.notes.StopProcessor(r.Context())
-	h.respondEmptyOrRedirect(w, r)
+	h.respondEmptyOrRedirect(w, r, "/files/supernote")
+}
+
+func (h *Handler) handleBooxProcessorStart(w http.ResponseWriter, r *http.Request) {
+	h.notes.StartBooxProcessor(r.Context())
+	h.respondEmptyOrRedirect(w, r, "/files/boox")
+}
+
+func (h *Handler) handleBooxProcessorStop(w http.ResponseWriter, r *http.Request) {
+	h.notes.StopBooxProcessor(r.Context())
+	h.respondEmptyOrRedirect(w, r, "/files/boox")
 }
 
 func (h *Handler) handleFilesScan(w http.ResponseWriter, r *http.Request) {
 	h.notes.ScanFiles(r.Context())
-	h.respondEmptyOrRedirect(w, r)
+	h.respondEmptyOrRedirect(w, r, "/files/supernote")
 }
 
 func (h *Handler) handleFilesImport(w http.ResponseWriter, r *http.Request) {
 	h.notes.ImportFiles(r.Context())
-	h.respondEmptyOrRedirect(w, r)
+	h.respondEmptyOrRedirect(w, r, "/files/boox")
 }
 
 func (h *Handler) handleFilesRetryFailed(w http.ResponseWriter, r *http.Request) {
 	h.notes.RetryFailed(r.Context())
-	h.respondEmptyOrRedirect(w, r)
+	h.respondEmptyOrRedirect(w, r, "/files/boox")
 }
 
 func (h *Handler) handleFilesDeleteNote(w http.ResponseWriter, r *http.Request) {
@@ -673,7 +686,9 @@ func (h *Handler) handleFilesDeleteNote(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	// DeleteNote is Boox-only (service layer no-ops Supernote paths), so
+	// the non-HX landing tab is always /files/boox.
+	http.Redirect(w, r, "/files/boox", http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesDeleteBulk(w http.ResponseWriter, r *http.Request) {
@@ -692,12 +707,12 @@ func (h *Handler) handleFilesDeleteBulk(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	http.Redirect(w, r, "/files/boox", http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesMigrateImports(w http.ResponseWriter, r *http.Request) {
 	h.notes.MigrateImports(r.Context())
-	h.respondEmptyOrRedirect(w, r)
+	h.respondEmptyOrRedirect(w, r, "/files/boox")
 }
 
 func (h *Handler) handleSyncStatus(w http.ResponseWriter, r *http.Request) {

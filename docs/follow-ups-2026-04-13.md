@@ -147,6 +147,28 @@ doc can be triaged as a punch list.
 
 ---
 
+### 17. "Retry Failed" has no Supernote-side implementation
+- **Source:** 2026-04-14 during Files-tab split (step 4). Surfaced
+  when auditing which broad-mutation buttons belonged on which tab.
+- **Severity:** Low — cosmetic gap. The button was silently no-op'ing
+  against SN jobs before the split; after the split we simply removed
+  it from the SN tab, which makes the gap invisible but doesn't fix
+  it.
+- **Current behavior** (`internal/service/note.go:438`): `RetryFailed`
+  iterates only `booxStore.RetryAllFailed`. No equivalent call exists
+  for the Supernote processor / `notes` table, so SN jobs stuck in
+  `failed` status can only be retried one-at-a-time via per-row
+  Queue/Force actions (which work because `Enqueue` routes by path
+  prefix).
+- **Fix shape:** Extend `RetryFailed` to also reset all SN-side
+  failed jobs. Either expose a `RetryAllFailed` on the Supernote
+  `processor.Processor` interface, or touch the notes-table rows
+  directly via `notestore.NoteStore`. Restore the "Retry Failed"
+  button on `files_supernote.html` once there's a real
+  implementation behind it.
+
+---
+
 ## Suggested triage order
 
 1. **Investigate item 1** — `TestSyncEngine_RemoteHardDelete` has been failing for weeks. Biggest unknown.

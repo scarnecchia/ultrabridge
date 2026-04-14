@@ -80,10 +80,11 @@ type mockNoteService struct {
 	contents map[string]interface{}
 	renders  map[string]io.ReadCloser
 	
-	processorStarted bool
-	importTriggered bool
-	migrateTriggered bool
-	deletedPaths     []string
+	processorStarted     bool
+	booxProcessorStarted bool
+	importTriggered      bool
+	migrateTriggered     bool
+	deletedPaths         []string
 	
 	// Settings for section visibility
 	pipelineConfigured bool
@@ -173,6 +174,14 @@ func (m *mockNoteService) StartProcessor(ctx context.Context) error {
 }
 func (m *mockNoteService) StopProcessor(ctx context.Context) error {
 	m.processorStarted = false
+	return nil
+}
+func (m *mockNoteService) StartBooxProcessor(ctx context.Context) error {
+	m.booxProcessorStarted = true
+	return nil
+}
+func (m *mockNoteService) StopBooxProcessor(ctx context.Context) error {
+	m.booxProcessorStarted = false
 	return nil
 }
 func (m *mockNoteService) GetProcessorStatus(ctx context.Context) (service.EmbeddingJobStatus, error) {

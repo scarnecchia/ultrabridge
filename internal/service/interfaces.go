@@ -136,9 +136,12 @@ type NoteService interface {
 	HasBooxSource() bool
 	ListVersions(ctx context.Context, path string) (interface{}, error)
 	
-	// Pipeline Control
+	// Pipeline Control (Supernote)
 	StartProcessor(ctx context.Context) error
 	StopProcessor(ctx context.Context) error
+	// Pipeline Control (Boox)
+	StartBooxProcessor(ctx context.Context) error
+	StopBooxProcessor(ctx context.Context) error
 	GetProcessorStatus(ctx context.Context) (EmbeddingJobStatus, error)
 	
 	// Import (Boox specific)

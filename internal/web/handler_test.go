@@ -69,7 +69,7 @@ func LegacyNewHandler(
 	}
 	
 	// Create actual service with mocks
-	noteSvc := service.NewNoteService(noteStore, proc, booxStore, booxImporter, searchIndex, scanner, noteDB, booxCachePath, booxNotesPath, logger)
+	noteSvc := service.NewNoteService(noteStore, proc, booxStore, booxImporter, nil, searchIndex, scanner, noteDB, booxCachePath, booxNotesPath, logger)
 	searchSvc := service.NewSearchService(searchIndex, retriever, embedder, embedStore, embedModel, chatStore, ragDisplay.ChatAPIURL, ragDisplay.ChatModel, logger)
 	config := service.NewConfigService(noteDB, syncProvider, runningConfig)
 
@@ -2113,46 +2113,86 @@ func TestHandleFilesSingleRowMutations(t *testing.T) {
 	}
 }
 
-// TestHandleBroadFileMutations verifies AC2.4: the six broad file-mutation
-// handlers (scan, import, retry-failed, migrate-imports, processor start/stop)
-// return 200 OK + empty body on HX-Request and 303 redirect to /files on
-// non-HX. The client-side poller (updateProcessorStatus) is responsible for
-// reflecting the new state; handlers emit no row fragment.
+// TestHandleBroadFileMutations verifies the broad file-mutation handlers
+// return 200 OK + empty body on HX-Request and 303 redirect to the
+// source-appropriate tab on non-HX. Each endpoint is source-specific, so
+// its redirect target is now the tab that owns it (scan → supernote,
+// import/migrate/retry → boox, processor start/stop split by source).
 func TestHandleBroadFileMutations(t *testing.T) {
-	endpoints := []string{
-		"/files/scan",
-		"/files/import",
-		"/files/retry-failed",
-		"/files/migrate-imports",
-		"/processor/start",
-		"/processor/stop",
+	endpoints := []struct {
+		path     string
+		wantLoc  string
+	}{
+		{"/files/scan", "/files/supernote"},
+		{"/files/import", "/files/boox"},
+		{"/files/retry-failed", "/files/boox"},
+		{"/files/migrate-imports", "/files/boox"},
+		{"/processor/supernote/start", "/files/supernote"},
+		{"/processor/supernote/stop", "/files/supernote"},
+		{"/processor/boox/start", "/files/boox"},
+		{"/processor/boox/stop", "/files/boox"},
 	}
-	for _, ep := range endpoints {
-		t.Run(ep+"/HX_empty_body", func(t *testing.T) {
+	for _, tc := range endpoints {
+		t.Run(tc.path+"/HX_empty_body", func(t *testing.T) {
 			h := newTestHandler()
-			req := httptest.NewRequest("POST", ep, nil)
+			req := httptest.NewRequest("POST", tc.path, nil)
 			req.Header.Set("HX-Request", "true")
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, req)
 			if w.Code != http.StatusOK {
-				t.Fatalf("HX %s returned %d, want 200; body=%q", ep, w.Code, w.Body.String())
+				t.Fatalf("HX %s returned %d, want 200; body=%q", tc.path, w.Code, w.Body.String())
 			}
 			if body := w.Body.String(); body != "" {
-				t.Errorf("%s expected empty body, got %q", ep, body)
+				t.Errorf("%s expected empty body, got %q", tc.path, body)
 			}
 		})
-		t.Run(ep+"/non-HX_redirects", func(t *testing.T) {
+		t.Run(tc.path+"/non-HX_redirects", func(t *testing.T) {
 			h := newTestHandler()
-			req := httptest.NewRequest("POST", ep, nil)
+			req := httptest.NewRequest("POST", tc.path, nil)
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, req)
 			if w.Code != http.StatusSeeOther {
-				t.Fatalf("non-HX %s returned %d, want 303", ep, w.Code)
+				t.Fatalf("non-HX %s returned %d, want 303", tc.path, w.Code)
 			}
-			if loc := w.Header().Get("Location"); loc != "/files" {
-				t.Errorf("%s Location=%q, want /files", ep, loc)
+			if loc := w.Header().Get("Location"); loc != tc.wantLoc {
+				t.Errorf("%s Location=%q, want %q", tc.path, loc, tc.wantLoc)
 			}
 		})
+	}
+}
+
+// TestBooxProcessorControls verifies the new Boox-specific start/stop
+// endpoints call through to the service and that the mock tracks state
+// independently from the Supernote processor.
+func TestBooxProcessorControls(t *testing.T) {
+	h := newTestHandler()
+	notes := h.notes.(*mockNoteService)
+
+	// Start Boox processor
+	req := httptest.NewRequest("POST", "/processor/boox/start", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("start returned %d", w.Code)
+	}
+	if !notes.booxProcessorStarted {
+		t.Errorf("booxProcessorStarted should be true after /processor/boox/start")
+	}
+	if notes.processorStarted {
+		t.Errorf("supernote processorStarted should remain false")
+	}
+
+	// Stop Boox processor
+	req = httptest.NewRequest("POST", "/processor/boox/stop", nil)
+	req.Header.Set("HX-Request", "true")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("stop returned %d", w.Code)
+	}
+	if notes.booxProcessorStarted {
+		t.Errorf("booxProcessorStarted should be false after /processor/boox/stop")
 	}
 }
 

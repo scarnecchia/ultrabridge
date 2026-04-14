@@ -561,7 +561,8 @@ func main() {
 		var scanner service.FileScanner
 		var booxStore service.BooxStore
 		var booxImporter service.BooxImporter
-		
+		var booxProc service.BooxProcessor
+
 		for _, s := range sources {
 			switch s.Type() {
 			case "supernote":
@@ -574,6 +575,7 @@ func main() {
 				if booxSource, ok := s.(*boox.Source); ok {
 					booxStore = booxSource.Processor().Store()
 					booxImporter = booxSource.Processor()
+					booxProc = booxSource.Processor()
 				}
 			}
 		}
@@ -594,7 +596,7 @@ func main() {
 		if booxNotesPath != "" {
 			booxCachePath = filepath.Join(booxNotesPath, ".cache")
 		}
-		noteSvc := service.NewNoteService(ns, proc, booxStore, booxImporter, si, scanner, noteDB, booxCachePath, booxNotesPath, logger)
+		noteSvc := service.NewNoteService(ns, proc, booxStore, booxImporter, booxProc, si, scanner, noteDB, booxCachePath, booxNotesPath, logger)
 
 		// 3. Search Service
 		var chatStore *chat.Store

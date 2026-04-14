@@ -98,7 +98,7 @@ func TestNoteService_ListFiles(t *testing.T) {
 			{Title: "Boox Note 1", Path: "/boox/bn1"},
 		},
 	}
-	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, "", "", nil)
+	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, nil, "", "", nil)
 
 	files, total, err := svc.ListFiles(context.Background(), "", "name", "asc", 1, 10)
 	if err != nil {
@@ -134,7 +134,7 @@ func TestNoteService_ListSupernoteFiles(t *testing.T) {
 			{Title: "Boox Note", Path: "/boox/bn1"},
 		},
 	}
-	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, "", "", nil)
+	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, nil, "", "", nil)
 
 	files, total, err := svc.ListSupernoteFiles(context.Background(), "", "name", "asc", 1, 10)
 	if err != nil {
@@ -150,7 +150,7 @@ func TestNoteService_ListSupernoteFiles(t *testing.T) {
 	}
 
 	t.Run("no_store_returns_empty", func(t *testing.T) {
-		noneSvc := NewNoteService(nil, nil, bs, nil, nil, nil, nil, "", "", nil)
+		noneSvc := NewNoteService(nil, nil, bs, nil, nil, nil, nil, nil, "", "", nil)
 		got, n, err := noneSvc.ListSupernoteFiles(context.Background(), "", "", "", 1, 10)
 		if err != nil || n != 0 || len(got) != 0 {
 			t.Errorf("expected empty result when noteStore is nil, got (%v, %d, %v)", got, n, err)
@@ -185,7 +185,7 @@ func TestNoteService_ListBooxNotes(t *testing.T) {
 			},
 		},
 	}
-	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, "", "", nil)
+	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, nil, "", "", nil)
 
 	rows, total, err := svc.ListBooxNotes(context.Background(), "title", "asc", 1, 10)
 	if err != nil {
@@ -220,7 +220,7 @@ func TestNoteService_ListBooxNotes(t *testing.T) {
 	})
 
 	t.Run("no_store_returns_empty", func(t *testing.T) {
-		noneSvc := NewNoteService(ns, nil, nil, nil, nil, nil, nil, "", "", nil)
+		noneSvc := NewNoteService(ns, nil, nil, nil, nil, nil, nil, nil, "", "", nil)
 		got, n, err := noneSvc.ListBooxNotes(context.Background(), "", "", 1, 10)
 		if err != nil || n != 0 || len(got) != 0 {
 			t.Errorf("expected empty result when booxStore is nil, got (%v, %d, %v)", got, n, err)
@@ -240,7 +240,7 @@ func TestNoteService_GetFile(t *testing.T) {
 		},
 	}
 	// booxNotesPath="/boox" routes paths under /boox to the Boox branch.
-	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, "", "/boox", nil)
+	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, nil, "", "/boox", nil)
 
 	t.Run("supernote", func(t *testing.T) {
 		f, err := svc.GetFile(context.Background(), "/notes/sn1.note")
@@ -280,7 +280,7 @@ func TestNoteService_GetFile(t *testing.T) {
 func TestNoteService_Enqueue(t *testing.T) {
 	p := &mockProcessor{}
 	bs := &mockBooxStore{}
-	svc := NewNoteService(nil, p, bs, nil, nil, nil, nil, "", "", nil)
+	svc := NewNoteService(nil, p, bs, nil, nil, nil, nil, nil, "", "", nil)
 
 	// Supernote path
 	err := svc.Enqueue(context.Background(), "/notes/sn1", false)

@@ -44,6 +44,15 @@ type BooxImporter interface {
 	Enqueue(ctx context.Context, notePath string) error
 }
 
+// BooxProcessor is the narrow handle the NoteService needs to start and stop
+// the Boox pipeline worker on demand. Implemented by *booxpipeline.Processor.
+// Kept separate from BooxImporter so tests can mock the controls without
+// having to build importer plumbing too.
+type BooxProcessor interface {
+	Start(ctx context.Context) error
+	Stop()
+}
+
 // FileScanner triggers a filesystem scan.
 type FileScanner interface {
 	ScanNow(ctx context.Context)
@@ -54,6 +63,7 @@ type noteService struct {
 	proc          processor.Processor
 	booxStore     BooxStore
 	booxImporter  BooxImporter
+	booxProc      BooxProcessor
 	searchIndex   search.SearchIndex
 	scanner       FileScanner
 	noteDB        *sql.DB // for settings
@@ -67,6 +77,7 @@ func NewNoteService(
 	p processor.Processor,
 	bs BooxStore,
 	bi BooxImporter,
+	bp BooxProcessor,
 	si search.SearchIndex,
 	scanner FileScanner,
 	noteDB *sql.DB,
@@ -79,6 +90,7 @@ func NewNoteService(
 		proc:          p,
 		booxStore:     bs,
 		booxImporter:  bi,
+		booxProc:      bp,
 		searchIndex:   si,
 		scanner:       scanner,
 		noteDB:        noteDB,
@@ -476,6 +488,23 @@ func (s *noteService) StartProcessor(ctx context.Context) error {
 func (s *noteService) StopProcessor(ctx context.Context) error {
 	if s.proc != nil {
 		return s.proc.Stop()
+	}
+	return nil
+}
+
+// StartBooxProcessor starts the Boox pipeline worker. Nil-safe: returns nil
+// when no Boox source is wired.
+func (s *noteService) StartBooxProcessor(ctx context.Context) error {
+	if s.booxProc != nil {
+		return s.booxProc.Start(ctx)
+	}
+	return nil
+}
+
+// StopBooxProcessor signals shutdown on the Boox worker. Nil-safe.
+func (s *noteService) StopBooxProcessor(ctx context.Context) error {
+	if s.booxProc != nil {
+		s.booxProc.Stop()
 	}
 	return nil
 }
