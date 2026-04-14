@@ -58,6 +58,25 @@ func (m *mockTaskService) Create(ctx context.Context, title string, dueAt *time.
 	m.tasks = append(m.tasks, t)
 	return t, nil
 }
+func (m *mockTaskService) Update(ctx context.Context, id string, patch service.TaskPatch) (service.Task, error) {
+	for i := range m.tasks {
+		if m.tasks[i].ID == id {
+			if patch.Title != nil {
+				m.tasks[i].Title = *patch.Title
+			}
+			if patch.ClearDueAt {
+				m.tasks[i].DueAt = nil
+			} else if patch.DueAt != nil {
+				m.tasks[i].DueAt = patch.DueAt
+			}
+			if patch.Detail != nil {
+				m.tasks[i].Detail = patch.Detail
+			}
+			return m.tasks[i], nil
+		}
+	}
+	return service.Task{}, sql.ErrNoRows
+}
 func (m *mockTaskService) Complete(ctx context.Context, id string) error { return nil }
 func (m *mockTaskService) Delete(ctx context.Context, id string) error   { return nil }
 func (m *mockTaskService) PurgeCompleted(ctx context.Context) error     {

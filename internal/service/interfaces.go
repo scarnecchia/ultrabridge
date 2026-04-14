@@ -100,11 +100,25 @@ type SyncStatusProvider interface {
 	TriggerSync()
 }
 
+// TaskPatch is a partial update to a Task. Nil pointer fields mean "leave
+// unchanged"; ClearDueAt exists because a *time.Time can't distinguish
+// "don't touch" from "clear to null" on its own (ClearDueAt wins over DueAt
+// when both are set). Title is non-clearable — CalDAV VTODOs require a
+// SUMMARY, and empty-string titles round-trip poorly to the device. Detail
+// is cleared by sending an empty string ("" is a legitimate empty value).
+type TaskPatch struct {
+	Title      *string    `json:"title,omitempty"`
+	DueAt      *time.Time `json:"due_at,omitempty"`
+	ClearDueAt bool       `json:"clear_due_at,omitempty"`
+	Detail     *string    `json:"detail,omitempty"`
+}
+
 // TaskService manages task-related operations.
 type TaskService interface {
 	List(ctx context.Context) ([]Task, error)
 	Get(ctx context.Context, id string) (Task, error)
 	Create(ctx context.Context, title string, dueAt *time.Time) (Task, error)
+	Update(ctx context.Context, id string, patch TaskPatch) (Task, error)
 	Complete(ctx context.Context, id string) error
 	Delete(ctx context.Context, id string) error
 	PurgeCompleted(ctx context.Context) error

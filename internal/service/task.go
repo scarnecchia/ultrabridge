@@ -88,6 +88,42 @@ func (s *taskService) Create(ctx context.Context, title string, dueAt *time.Time
 	return mapInternalTask(*t), nil
 }
 
+// Update applies a partial patch to an existing task. Empty-string title is
+// rejected to avoid producing invalid VTODOs on sync. Returns the updated
+// task in its post-write shape.
+func (s *taskService) Update(ctx context.Context, id string, patch TaskPatch) (Task, error) {
+	if s.store == nil {
+		return Task{}, fmt.Errorf("task store not available")
+	}
+	t, err := s.store.Get(ctx, id)
+	if err != nil {
+		return Task{}, err
+	}
+
+	if patch.Title != nil {
+		title := *patch.Title
+		if title == "" {
+			return Task{}, fmt.Errorf("title cannot be empty")
+		}
+		t.Title = taskstore.SqlStr(title)
+	}
+	switch {
+	case patch.ClearDueAt:
+		t.DueTime = 0
+	case patch.DueAt != nil:
+		t.DueTime = patch.DueAt.UnixMilli()
+	}
+	if patch.Detail != nil {
+		t.Detail = taskstore.SqlStr(*patch.Detail)
+	}
+
+	if err := s.store.Update(ctx, t); err != nil {
+		return Task{}, err
+	}
+	s.notify(ctx)
+	return mapInternalTask(*t), nil
+}
+
 func (s *taskService) Complete(ctx context.Context, id string) error {
 	if s.store == nil {
 		return fmt.Errorf("task store not available")
