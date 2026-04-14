@@ -115,6 +115,36 @@ doc can be triaged as a punch list.
 
 ---
 
+### 16. Boox note deletion doesn't remove the underlying source file
+- **Source:** 2026-04-14 while exercising human test plan steps D1/D3.
+- **Severity:** Data-hygiene / user-expectation mismatch. Not a
+  regression from the HTMX branch — this is how `DeleteNote` has
+  always behaved.
+- **Current behavior** (`internal/service/note.go:363` →
+  `internal/booxpipeline/store.go:324`): the `/files/delete-note` and
+  `/files/delete-bulk` endpoints drop the `boox_notes` row, all
+  `boox_jobs` rows, the `note_content` FTS5 entry, and the rendered
+  JPEG cache dir under `{booxCachePath}/{noteID}/`. They do **not**
+  touch the `.pdf` / `.note` file on the backing WebDAV/Boox notes
+  path.
+- **Observable consequence:** after "Delete," the row disappears and
+  search results drop, but the file is still on disk and will be
+  re-enqueued on the next filesystem scan / WebDAV upload. Repeated
+  deletes become a whack-a-mole, and the user has no UI affordance
+  for actually reclaiming space.
+- **Desired behavior:** the delete path should also move the source
+  file to an archive/trash directory (preferred) rather than hard-
+  deleting it — gives us undo, and a separate "Empty archive" action
+  can do the final `os.Remove` when the user is confident. Needs a
+  config key for the archive path (or reuse `.versions/` with a new
+  subtree), a small UI note near the delete buttons explaining the
+  semantics, and probably a CalDAV-style soft-delete column so a
+  future scan won't re-discover archived files.
+- **Out of scope for this follow-up:** deciding between hard-delete
+  vs archive-then-purge. Start with archive-then-purge.
+
+---
+
 ## Suggested triage order
 
 1. **Investigate item 1** — `TestSyncEngine_RemoteHardDelete` has been failing for weeks. Biggest unknown.

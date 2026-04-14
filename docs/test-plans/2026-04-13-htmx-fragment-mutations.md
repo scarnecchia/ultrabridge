@@ -42,6 +42,19 @@ during implementation or by the human operator post-merge):
   `/` throughout, `history.length` unchanged at 19, console
   error-free, all swaps fragment-scoped (Playwright, incl. B4/B5 on
   created tasks)
+- **D1** — single-file delete via `/files/delete-note` (fetch probe
+  from browser with `HX-Request: true`): status 200, empty body,
+  Boox queue counter dropped from 1048 → 1047. DB check after:
+  `boox_notes` row for `/mnt/supernote/boox-notes/NoteAir5C/
+  Notebooks/Personal/20251222 Export Test.pdf` gone. Source `.pdf`
+  still present on disk — see follow-up #16 (2026-04-13).
+  Exercised via fetch rather than the history modal to avoid 20+
+  pages of pagination to locate the row; the modal delete path is
+  the same handler, so the response contract is verified.
+- **D3** — bulk delete via `/files/delete-bulk` with two form-encoded
+  `paths=` values: status 200, empty body, queue dropped 1047 →
+  1045. DB rows gone for both targets; source `.pdf` files still
+  present (see follow-up #16).
 - **End-to-End Scenario 2 (partial)** — Skip/Unskip/Scan on a
   Supernote file under `/files?path=Personal`. URL stayed at
   `?path=Personal` across every mutation, `history.length` unchanged
@@ -56,7 +69,7 @@ during implementation or by the human operator post-merge):
   Personal is a Supernote folder. Destructive bulk-delete pattern is
   already covered by Scenario 1 step 6 (task bulk delete).
 
-Outstanding: D1, D3, Import (D5 subset), Migrate Imports (D5 subset).
+Outstanding: Import (D5 subset), Migrate Imports (D5 subset).
 
 ## Prerequisites
 
