@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -34,14 +36,121 @@ func newMCPAPIClient(baseURL string, internalToken string, logger *slog.Logger, 
 }
 
 func (c *mcpAPIClient) get(ctx context.Context, path string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
+	return c.request(ctx, http.MethodGet, path, nil)
+}
+
+// postJSON POSTs a JSON body (or nil for no-body side-effect endpoints).
+func (c *mcpAPIClient) postJSON(ctx context.Context, path string, body interface{}) (*http.Response, error) {
+	return c.request(ctx, http.MethodPost, path, body)
+}
+
+// patchJSON PATCHes a JSON body.
+func (c *mcpAPIClient) patchJSON(ctx context.Context, path string, body interface{}) (*http.Response, error) {
+	return c.request(ctx, http.MethodPatch, path, body)
+}
+
+// deleteRequest issues a DELETE.
+func (c *mcpAPIClient) deleteRequest(ctx context.Context, path string) (*http.Response, error) {
+	return c.request(ctx, http.MethodDelete, path, nil)
+}
+
+func (c *mcpAPIClient) request(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("marshal body: %w", err)
+		}
+		reader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	if c.internalToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.internalToken)
 	}
 	return c.http.Do(req)
+}
+
+// --- Task tool input types ---
+
+type listTasksInput struct {
+	Status    string `json:"status,omitempty"`
+	DueBefore string `json:"due_before,omitempty"`
+	DueAfter  string `json:"due_after,omitempty"`
+}
+
+type getTaskInput struct {
+	ID string `json:"id"`
+}
+
+type createTaskInput struct {
+	Title string `json:"title"`
+	DueAt string `json:"due_at,omitempty"`
+}
+
+type updateTaskInput struct {
+	ID         string  `json:"id"`
+	Title      *string `json:"title,omitempty"`
+	DueAt      *string `json:"due_at,omitempty"`
+	ClearDueAt bool    `json:"clear_due_at,omitempty"`
+	Detail     *string `json:"detail,omitempty"`
+}
+
+type completeTaskInput struct {
+	ID string `json:"id"`
+}
+
+type deleteTaskInput struct {
+	ID string `json:"id"`
+}
+
+type purgeCompletedTasksInput struct{}
+
+// mcpTaskLink mirrors service.TaskLink (back-reference to the note a task
+// was auto-extracted from). Local copy so this file doesn't import the
+// internal service package.
+type mcpTaskLink struct {
+	AppName  string `json:"app_name"`
+	FilePath string `json:"file_path"`
+	Page     int    `json:"page"`
+}
+
+// mcpTask mirrors service.Task's JSON shape for decoding /api/v1/tasks
+// responses.
+type mcpTask struct {
+	ID          string       `json:"id"`
+	Title       string       `json:"title"`
+	Status      string       `json:"status"`
+	CreatedAt   time.Time    `json:"created_at"`
+	DueAt       *time.Time   `json:"due_at,omitempty"`
+	CompletedAt *time.Time   `json:"completed_at,omitempty"`
+	Detail      *string      `json:"detail,omitempty"`
+	Links       *mcpTaskLink `json:"links,omitempty"`
+}
+
+func formatMCPTask(t mcpTask) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Task: %s\n", t.Title))
+	sb.WriteString(fmt.Sprintf("ID: %s\n", t.ID))
+	sb.WriteString(fmt.Sprintf("Status: %s\n", t.Status))
+	if t.DueAt != nil {
+		sb.WriteString(fmt.Sprintf("Due: %s\n", t.DueAt.Format(time.RFC3339)))
+	}
+	if t.CompletedAt != nil && t.Status == "completed" {
+		sb.WriteString(fmt.Sprintf("Completed: %s\n", t.CompletedAt.Format(time.RFC3339)))
+	}
+	if t.Detail != nil && *t.Detail != "" {
+		sb.WriteString(fmt.Sprintf("Detail: %s\n", *t.Detail))
+	}
+	if t.Links != nil && t.Links.FilePath != "" {
+		sb.WriteString(fmt.Sprintf("From note: %s (page %d)\n", t.Links.FilePath, t.Links.Page))
+	}
+	return sb.String()
 }
 
 // MCP tool input types
@@ -238,6 +347,259 @@ func registerMCPTools(server *mcp.Server, client *mcpAPIClient) {
 					MIMEType: "image/jpeg",
 				},
 			},
+		}, nil, nil
+	})
+
+	// --- Task tools ---
+
+	// list_tasks
+	mcp.AddTool[listTasksInput, any](server, &mcp.Tool{
+		Name:        "list_tasks",
+		Description: "List tasks from UltraBridge. Optional filters: status (needs_action / completed / all, default all); due_before and due_after as RFC3339 timestamps. Tasks with no due date are excluded when either due filter is set.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input listTasksInput) (*mcp.CallToolResult, any, error) {
+		if client.verbose && client.logger != nil {
+			client.logger.Info("MCP tool call", "tool", "list_tasks", "input", input)
+		}
+		params := url.Values{}
+		if input.Status != "" {
+			params.Set("status", input.Status)
+		}
+		if input.DueBefore != "" {
+			params.Set("due_before", input.DueBefore)
+		}
+		if input.DueAfter != "" {
+			params.Set("due_after", input.DueAfter)
+		}
+		path := "/api/v1/tasks"
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+		resp, err := client.get(ctx, path)
+		if err != nil {
+			return nil, nil, fmt.Errorf("API request failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
+		}
+		var tasks []mcpTask
+		if err := json.NewDecoder(resp.Body).Decode(&tasks); err != nil {
+			return nil, nil, fmt.Errorf("decode response: %w", err)
+		}
+		if len(tasks) == 0 {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "No tasks match the filter.\n"}},
+			}, nil, nil
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%d task(s):\n\n", len(tasks)))
+		for i, t := range tasks {
+			sb.WriteString(fmt.Sprintf("--- %d ---\n", i+1))
+			sb.WriteString(formatMCPTask(t))
+			sb.WriteString("\n")
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}},
+		}, nil, nil
+	})
+
+	// get_task
+	mcp.AddTool[getTaskInput, any](server, &mcp.Tool{
+		Name:        "get_task",
+		Description: "Fetch a single task by id. Returns the task detail including title, status, due date, detail notes, and any back-reference to the note it was auto-extracted from.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input getTaskInput) (*mcp.CallToolResult, any, error) {
+		if client.verbose && client.logger != nil {
+			client.logger.Info("MCP tool call", "tool", "get_task", "input", input)
+		}
+		if input.ID == "" {
+			return nil, nil, fmt.Errorf("id is required")
+		}
+		resp, err := client.get(ctx, "/api/v1/tasks/"+url.PathEscape(input.ID))
+		if err != nil {
+			return nil, nil, fmt.Errorf("API request failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == 404 {
+			return nil, nil, fmt.Errorf("task not found: %s", input.ID)
+		}
+		if resp.StatusCode != 200 {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
+		}
+		var t mcpTask
+		if err := json.NewDecoder(resp.Body).Decode(&t); err != nil {
+			return nil, nil, fmt.Errorf("decode response: %w", err)
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: formatMCPTask(t)}},
+		}, nil, nil
+	})
+
+	// create_task
+	mcp.AddTool[createTaskInput, any](server, &mcp.Tool{
+		Name:        "create_task",
+		Description: "Create a new task. Requires a title; due_at is optional and must be RFC3339 when provided. The new task syncs to configured CalDAV devices on the next sync cycle.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input createTaskInput) (*mcp.CallToolResult, any, error) {
+		if client.verbose && client.logger != nil {
+			client.logger.Info("MCP tool call", "tool", "create_task", "input", input)
+		}
+		if input.Title == "" {
+			return nil, nil, fmt.Errorf("title is required")
+		}
+		body := map[string]interface{}{"title": input.Title}
+		if input.DueAt != "" {
+			parsed, err := time.Parse(time.RFC3339, input.DueAt)
+			if err != nil {
+				return nil, nil, fmt.Errorf("due_at must be RFC3339: %w", err)
+			}
+			body["due_at"] = parsed
+		}
+		resp, err := client.postJSON(ctx, "/api/v1/tasks", body)
+		if err != nil {
+			return nil, nil, fmt.Errorf("API request failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 201 {
+			raw, _ := io.ReadAll(resp.Body)
+			return nil, nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(raw))
+		}
+		var created mcpTask
+		if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+			return nil, nil, fmt.Errorf("decode response: %w", err)
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "Created:\n" + formatMCPTask(created)}},
+		}, nil, nil
+	})
+
+	// update_task
+	mcp.AddTool[updateTaskInput, any](server, &mcp.Tool{
+		Name:        "update_task",
+		Description: "Partially update a task. Only supplied fields are changed. Use clear_due_at=true to remove an existing due date (takes priority over due_at when both set). Detail can be cleared by sending an empty string. Title cannot be empty.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input updateTaskInput) (*mcp.CallToolResult, any, error) {
+		if client.verbose && client.logger != nil {
+			client.logger.Info("MCP tool call", "tool", "update_task", "input", input)
+		}
+		if input.ID == "" {
+			return nil, nil, fmt.Errorf("id is required")
+		}
+		body := map[string]interface{}{}
+		if input.Title != nil {
+			body["title"] = *input.Title
+		}
+		if input.DueAt != nil {
+			parsed, err := time.Parse(time.RFC3339, *input.DueAt)
+			if err != nil {
+				return nil, nil, fmt.Errorf("due_at must be RFC3339: %w", err)
+			}
+			body["due_at"] = parsed
+		}
+		if input.ClearDueAt {
+			body["clear_due_at"] = true
+		}
+		if input.Detail != nil {
+			body["detail"] = *input.Detail
+		}
+		if len(body) == 0 {
+			return nil, nil, fmt.Errorf("no fields to update")
+		}
+		resp, err := client.patchJSON(ctx, "/api/v1/tasks/"+url.PathEscape(input.ID), body)
+		if err != nil {
+			return nil, nil, fmt.Errorf("API request failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == 404 {
+			return nil, nil, fmt.Errorf("task not found: %s", input.ID)
+		}
+		if resp.StatusCode != 200 {
+			raw, _ := io.ReadAll(resp.Body)
+			return nil, nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(raw))
+		}
+		var updated mcpTask
+		if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
+			return nil, nil, fmt.Errorf("decode response: %w", err)
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "Updated:\n" + formatMCPTask(updated)}},
+		}, nil, nil
+	})
+
+	// complete_task
+	mcp.AddTool[completeTaskInput, any](server, &mcp.Tool{
+		Name:        "complete_task",
+		Description: "Mark a task as completed. Idempotent — re-completing an already-completed task is a no-op.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input completeTaskInput) (*mcp.CallToolResult, any, error) {
+		if client.verbose && client.logger != nil {
+			client.logger.Info("MCP tool call", "tool", "complete_task", "input", input)
+		}
+		if input.ID == "" {
+			return nil, nil, fmt.Errorf("id is required")
+		}
+		resp, err := client.postJSON(ctx, "/api/v1/tasks/"+url.PathEscape(input.ID)+"/complete", nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("API request failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == 404 {
+			return nil, nil, fmt.Errorf("task not found: %s", input.ID)
+		}
+		if resp.StatusCode != 204 {
+			raw, _ := io.ReadAll(resp.Body)
+			return nil, nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(raw))
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Task %s marked completed.\n", input.ID)}},
+		}, nil, nil
+	})
+
+	// delete_task
+	mcp.AddTool[deleteTaskInput, any](server, &mcp.Tool{
+		Name:        "delete_task",
+		Description: "Soft-delete a task. The task is hidden from all views and removed from device sync, but the row remains in the database with is_deleted=Y for audit purposes.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input deleteTaskInput) (*mcp.CallToolResult, any, error) {
+		if client.verbose && client.logger != nil {
+			client.logger.Info("MCP tool call", "tool", "delete_task", "input", input)
+		}
+		if input.ID == "" {
+			return nil, nil, fmt.Errorf("id is required")
+		}
+		resp, err := client.deleteRequest(ctx, "/api/v1/tasks/"+url.PathEscape(input.ID))
+		if err != nil {
+			return nil, nil, fmt.Errorf("API request failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == 404 {
+			return nil, nil, fmt.Errorf("task not found: %s", input.ID)
+		}
+		if resp.StatusCode != 204 {
+			raw, _ := io.ReadAll(resp.Body)
+			return nil, nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(raw))
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Task %s deleted.\n", input.ID)}},
+		}, nil, nil
+	})
+
+	// purge_completed_tasks
+	mcp.AddTool[purgeCompletedTasksInput, any](server, &mcp.Tool{
+		Name:        "purge_completed_tasks",
+		Description: "Soft-delete every completed task in a single call. Housekeeping convenience for clearing the list after a review session. This is not reversible through the API.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, _ purgeCompletedTasksInput) (*mcp.CallToolResult, any, error) {
+		if client.verbose && client.logger != nil {
+			client.logger.Info("MCP tool call", "tool", "purge_completed_tasks")
+		}
+		resp, err := client.postJSON(ctx, "/api/v1/tasks/purge-completed", nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("API request failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 204 {
+			raw, _ := io.ReadAll(resp.Body)
+			return nil, nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(raw))
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "All completed tasks purged.\n"}},
 		}, nil, nil
 	})
 }
