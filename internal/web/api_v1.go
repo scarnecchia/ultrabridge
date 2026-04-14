@@ -1,16 +1,32 @@
 package web
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
+
+	"github.com/sysop/ultrabridge/internal/service"
+	"github.com/sysop/ultrabridge/internal/taskstore"
 )
+
+// isTaskNotFound returns true when the underlying task store reports a
+// missing id. The real taskdb returns taskstore.ErrNotFound; the in-memory
+// test mocks return sql.ErrNoRows. Accept either so handlers behave
+// identically in both environments.
+func isTaskNotFound(err error) bool {
+	return errors.Is(err, sql.ErrNoRows) || taskstore.IsNotFound(err)
+}
 
 // RegisterAPIv1 registers all v1 standard API endpoints.
 func (h *Handler) RegisterAPIv1() {
 	// Tasks
 	h.mux.HandleFunc("GET /api/v1/tasks", h.handleV1ListTasks)
 	h.mux.HandleFunc("POST /api/v1/tasks", h.handleV1CreateTask)
+	h.mux.HandleFunc("POST /api/v1/tasks/purge-completed", h.handleV1PurgeCompleted)
+	h.mux.HandleFunc("GET /api/v1/tasks/{id}", h.handleV1GetTask)
+	h.mux.HandleFunc("PATCH /api/v1/tasks/{id}", h.handleV1UpdateTask)
 	h.mux.HandleFunc("POST /api/v1/tasks/{id}/complete", h.handleV1CompleteTask)
 	h.mux.HandleFunc("DELETE /api/v1/tasks/{id}", h.handleV1DeleteTask)
 	h.mux.HandleFunc("POST /api/v1/tasks/bulk", h.handleV1BulkTasks)
@@ -35,14 +51,133 @@ func (h *Handler) RegisterAPIv1() {
 
 // --- Tasks ---
 
+// handleV1ListTasks returns active tasks, optionally filtered by status and
+// due-date range. All filters are optional; when omitted the response shape
+// matches the pre-filter contract (array of all active tasks).
+//
+// Query params:
+//   - status=needs_action|completed|all (default: all)
+//   - due_before=<RFC3339>: only tasks due strictly before this instant
+//   - due_after=<RFC3339>: only tasks due at or after this instant
+//
+// Tasks with no due date are excluded when either due_before or due_after
+// is supplied — a "when's this due" filter can't meaningfully match a task
+// without a due date.
 func (h *Handler) handleV1ListTasks(w http.ResponseWriter, r *http.Request) {
 	tasks, err := h.tasks.List(r.Context())
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, "failed to list tasks")
 		return
 	}
+
+	status := r.URL.Query().Get("status")
+	var dueBefore, dueAfter *time.Time
+	if s := r.URL.Query().Get("due_before"); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			apiError(w, http.StatusBadRequest, "due_before must be RFC3339")
+			return
+		}
+		dueBefore = &t
+	}
+	if s := r.URL.Query().Get("due_after"); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			apiError(w, http.StatusBadRequest, "due_after must be RFC3339")
+			return
+		}
+		dueAfter = &t
+	}
+
+	filtered := make([]service.Task, 0, len(tasks))
+	for _, t := range tasks {
+		switch status {
+		case "needs_action":
+			if t.Status != service.StatusNeedsAction {
+				continue
+			}
+		case "completed":
+			if t.Status != service.StatusCompleted {
+				continue
+			}
+		case "", "all":
+			// no status filter
+		default:
+			apiError(w, http.StatusBadRequest, "status must be needs_action, completed, or all")
+			return
+		}
+		if dueBefore != nil || dueAfter != nil {
+			if t.DueAt == nil {
+				continue
+			}
+			if dueBefore != nil && !t.DueAt.Before(*dueBefore) {
+				continue
+			}
+			if dueAfter != nil && t.DueAt.Before(*dueAfter) {
+				continue
+			}
+		}
+		filtered = append(filtered, t)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(tasks)
+	if filtered == nil {
+		filtered = []service.Task{}
+	}
+	json.NewEncoder(w).Encode(filtered)
+}
+
+// handleV1GetTask returns a single task by id. 404 when the id is unknown
+// or soft-deleted.
+func (h *Handler) handleV1GetTask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	task, err := h.tasks.Get(r.Context(), id)
+	if err != nil {
+		if isTaskNotFound(err) {
+			apiError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		apiError(w, http.StatusInternalServerError, "failed to fetch task")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(task)
+}
+
+// handleV1UpdateTask applies a partial update. Unknown fields in the JSON
+// body are ignored; omitted fields leave the task untouched. See
+// service.TaskPatch for the field-level semantics (ClearDueAt, empty-title
+// rejection).
+func (h *Handler) handleV1UpdateTask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var patch service.TaskPatch
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	updated, err := h.tasks.Update(r.Context(), id, patch)
+	if err != nil {
+		if isTaskNotFound(err) {
+			apiError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		// title-required, future validation errors — surface message to client.
+		apiError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(updated)
+}
+
+// handleV1PurgeCompleted soft-deletes every completed task in a single
+// call. Returns 204 on success.
+func (h *Handler) handleV1PurgeCompleted(w http.ResponseWriter, r *http.Request) {
+	if err := h.tasks.PurgeCompleted(r.Context()); err != nil {
+		apiError(w, http.StatusInternalServerError, "failed to purge completed tasks")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) handleV1CreateTask(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +207,10 @@ func (h *Handler) handleV1CreateTask(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleV1CompleteTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := h.tasks.Complete(r.Context(), id); err != nil {
+		if isTaskNotFound(err) {
+			apiError(w, http.StatusNotFound, "task not found")
+			return
+		}
 		apiError(w, http.StatusInternalServerError, "failed to complete task")
 		return
 	}
@@ -81,6 +220,10 @@ func (h *Handler) handleV1CompleteTask(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleV1DeleteTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := h.tasks.Delete(r.Context(), id); err != nil {
+		if isTaskNotFound(err) {
+			apiError(w, http.StatusNotFound, "task not found")
+			return
+		}
 		apiError(w, http.StatusInternalServerError, "failed to delete task")
 		return
 	}

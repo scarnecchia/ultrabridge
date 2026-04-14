@@ -117,11 +117,16 @@ System-wide configuration settings.
 ## Endpoints (Draft)
 
 ### Tasks
-- `GET /api/v1/tasks` - List all tasks
-- `POST /api/v1/tasks` - Create a new task
-- `POST /api/v1/tasks/{id}/complete` - Mark task as completed
-- `DELETE /api/v1/tasks/{id}` - Delete a task
-- `POST /api/v1/tasks/bulk` - Bulk operations (complete, delete)
+- `GET /api/v1/tasks` - List active tasks. Optional filters: `status=needs_action|completed|all` (default all); `due_before=<RFC3339>`; `due_after=<RFC3339>`. Tasks with no due date are excluded when either due-date filter is set.
+- `GET /api/v1/tasks/{id}` - Fetch a single task; 404 on unknown id.
+- `POST /api/v1/tasks` - Create a new task. JSON body: `{title, due_at?}`.
+- `PATCH /api/v1/tasks/{id}` - Partial update. JSON body: `{title?, due_at?, clear_due_at?, detail?}`. `clear_due_at: true` drops the due date (wins over `due_at` if both are set). Empty-string title rejected.
+- `POST /api/v1/tasks/{id}/complete` - Mark task as completed.
+- `DELETE /api/v1/tasks/{id}` - Soft-delete a task.
+- `POST /api/v1/tasks/purge-completed` - Soft-delete every completed task in one call.
+- `POST /api/v1/tasks/bulk` - Bulk operations. JSON body: `{action: "complete"|"delete", ids: [...]}`.
+
+All task mutations flow through the standard sync path; changes propagate to configured CalDAV devices on the next sync cycle (UB-wins conflict resolution).
 
 ### Files
 - `GET /api/v1/files` - List files (with filtering, sorting, pagination)
