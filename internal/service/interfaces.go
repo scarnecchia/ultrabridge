@@ -50,6 +50,24 @@ type NoteFile struct {
 	LastError  *string   `json:"last_error"`
 }
 
+// BooxNoteSummary is a Boox-tab-specific view of a Boox note, surfacing the
+// on-device title, folder, device model, note type, and page count that the
+// merged NoteFile shape hides.
+type BooxNoteSummary struct {
+	Path        string    `json:"path"`
+	NoteID      string    `json:"note_id"`
+	Title       string    `json:"title"`
+	Filename    string    `json:"filename"`
+	DeviceModel string    `json:"device_model"`
+	NoteType    string    `json:"note_type"`
+	Folder      string    `json:"folder"`
+	PageCount   int       `json:"page_count"`
+	SizeBytes   int64     `json:"size_bytes"`
+	CreatedAt   time.Time `json:"created_at"`
+	ModifiedAt  time.Time `json:"modified_at"`
+	JobStatus   string    `json:"job_status"`
+}
+
 // SyncStatus represents the CalDAV sync state.
 type SyncStatus struct {
 	AdapterID     string     `json:"adapter_id"`
@@ -97,6 +115,8 @@ type TaskService interface {
 // NoteService manages note files and background processing.
 type NoteService interface {
 	ListFiles(ctx context.Context, path string, sort, order string, page, perPage int) ([]NoteFile, int, error)
+	ListSupernoteFiles(ctx context.Context, path string, sort, order string, page, perPage int) ([]NoteFile, int, error)
+	ListBooxNotes(ctx context.Context, sort, order string, page, perPage int) ([]BooxNoteSummary, int, error)
 	GetFile(ctx context.Context, path string) (NoteFile, error)
 	GetNoteDetails(ctx context.Context, path string) (interface{}, error) // history/job info
 	GetContent(ctx context.Context, path string) (interface{}, error)     // OCR text and page metadata

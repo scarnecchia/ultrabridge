@@ -122,6 +122,112 @@ func TestNoteService_ListFiles(t *testing.T) {
 	}
 }
 
+func TestNoteService_ListSupernoteFiles(t *testing.T) {
+	ns := &mockNoteStore{
+		files: []notestore.NoteFile{
+			{Name: "SN Note 1", Path: "/notes/sn1", FileType: notestore.FileTypeNote},
+			{Name: "SN Note 2", Path: "/notes/sn2", FileType: notestore.FileTypeNote},
+		},
+	}
+	bs := &mockBooxStore{
+		notes: []booxpipeline.BooxNoteEntry{
+			{Title: "Boox Note", Path: "/boox/bn1"},
+		},
+	}
+	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, "", "", nil)
+
+	files, total, err := svc.ListSupernoteFiles(context.Background(), "", "name", "asc", 1, 10)
+	if err != nil {
+		t.Fatalf("ListSupernoteFiles failed: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("expected 2 Supernote files, got %d (list must exclude Boox)", total)
+	}
+	for _, f := range files {
+		if f.Source != "supernote" {
+			t.Errorf("unexpected non-supernote file in supernote list: %+v", f)
+		}
+	}
+
+	t.Run("no_store_returns_empty", func(t *testing.T) {
+		noneSvc := NewNoteService(nil, nil, bs, nil, nil, nil, nil, "", "", nil)
+		got, n, err := noneSvc.ListSupernoteFiles(context.Background(), "", "", "", 1, 10)
+		if err != nil || n != 0 || len(got) != 0 {
+			t.Errorf("expected empty result when noteStore is nil, got (%v, %d, %v)", got, n, err)
+		}
+	})
+}
+
+func TestNoteService_ListBooxNotes(t *testing.T) {
+	ns := &mockNoteStore{
+		files: []notestore.NoteFile{
+			{Name: "SN Note", Path: "/notes/sn1", FileType: notestore.FileTypeNote},
+		},
+	}
+	bs := &mockBooxStore{
+		notes: []booxpipeline.BooxNoteEntry{
+			{
+				Title:       "Project Notes",
+				Path:        "/boox/bn1.note",
+				NoteID:      "n1",
+				DeviceModel: "NoteAir5C",
+				NoteType:    "Notebooks",
+				Folder:      "Personal",
+				PageCount:   12,
+				JobStatus:   "done",
+			},
+			{
+				Title:     "Reading",
+				Path:      "/boox/bn2.note",
+				NoteID:    "n2",
+				Folder:    "Books",
+				PageCount: 3,
+			},
+		},
+	}
+	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, "", "", nil)
+
+	rows, total, err := svc.ListBooxNotes(context.Background(), "title", "asc", 1, 10)
+	if err != nil {
+		t.Fatalf("ListBooxNotes failed: %v", err)
+	}
+	if total != 2 || len(rows) != 2 {
+		t.Fatalf("expected 2 Boox rows, got total=%d page=%d", total, len(rows))
+	}
+	// asc by title → "Project Notes" before "Reading"
+	if rows[0].Title != "Project Notes" || rows[1].Title != "Reading" {
+		t.Errorf("unexpected title order: %+v", []string{rows[0].Title, rows[1].Title})
+	}
+	// Boox-specific fields populated
+	if rows[0].DeviceModel != "NoteAir5C" || rows[0].Folder != "Personal" ||
+		rows[0].NoteType != "Notebooks" || rows[0].PageCount != 12 || rows[0].NoteID != "n1" ||
+		rows[0].JobStatus != "done" {
+		t.Errorf("unexpected Boox summary: %+v", rows[0])
+	}
+	if rows[0].Filename != "bn1.note" {
+		t.Errorf("filename should be basename of path, got %q", rows[0].Filename)
+	}
+
+	t.Run("sort_by_folder_desc", func(t *testing.T) {
+		rows, _, err := svc.ListBooxNotes(context.Background(), "folder", "desc", 1, 10)
+		if err != nil {
+			t.Fatalf("ListBooxNotes failed: %v", err)
+		}
+		// desc by folder → "Personal" before "Books"
+		if rows[0].Folder != "Personal" || rows[1].Folder != "Books" {
+			t.Errorf("unexpected folder order: %+v", []string{rows[0].Folder, rows[1].Folder})
+		}
+	})
+
+	t.Run("no_store_returns_empty", func(t *testing.T) {
+		noneSvc := NewNoteService(ns, nil, nil, nil, nil, nil, nil, "", "", nil)
+		got, n, err := noneSvc.ListBooxNotes(context.Background(), "", "", 1, 10)
+		if err != nil || n != 0 || len(got) != 0 {
+			t.Errorf("expected empty result when booxStore is nil, got (%v, %d, %v)", got, n, err)
+		}
+	})
+}
+
 func TestNoteService_GetFile(t *testing.T) {
 	ns := &mockNoteStore{
 		files: []notestore.NoteFile{

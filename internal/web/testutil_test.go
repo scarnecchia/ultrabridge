@@ -88,10 +88,25 @@ type mockNoteService struct {
 	// Settings for section visibility
 	pipelineConfigured bool
 	booxEnabled bool
+
+	// Boox-tab list
+	booxNotes []service.BooxNoteSummary
 }
 
 func (m *mockNoteService) ListFiles(ctx context.Context, path, sort, order string, page, perPage int) ([]service.NoteFile, int, error) {
 	return m.files, len(m.files), nil
+}
+func (m *mockNoteService) ListSupernoteFiles(ctx context.Context, path, sort, order string, page, perPage int) ([]service.NoteFile, int, error) {
+	var out []service.NoteFile
+	for _, f := range m.files {
+		if f.Source != "boox" {
+			out = append(out, f)
+		}
+	}
+	return out, len(out), nil
+}
+func (m *mockNoteService) ListBooxNotes(ctx context.Context, sort, order string, page, perPage int) ([]service.BooxNoteSummary, int, error) {
+	return m.booxNotes, len(m.booxNotes), nil
 }
 func (m *mockNoteService) GetFile(ctx context.Context, path string) (service.NoteFile, error) {
 	for _, f := range m.files {
