@@ -426,8 +426,18 @@
             <div class="nav-links">
                 <a class="nav-item {{if eq .activeTab "tasks"}}active{{end}}" 
                    href="/" hx-get="/" hx-target="#main-content" hx-push-url="true">Tasks</a>
-                <a class="nav-item {{if eq .activeTab "files"}}active{{end}}" 
+                {{if .HasSupernoteSource}}
+                <a class="nav-item {{if eq .activeTab "files-supernote"}}active{{end}}"
+                   href="/files/supernote" hx-get="/files/supernote" hx-target="#main-content" hx-push-url="true">Supernote Files</a>
+                {{end}}
+                {{if .HasBooxSource}}
+                <a class="nav-item {{if eq .activeTab "files-boox"}}active{{end}}"
+                   href="/files/boox" hx-get="/files/boox" hx-target="#main-content" hx-push-url="true">Boox Files</a>
+                {{end}}
+                {{if and (not .HasSupernoteSource) (not .HasBooxSource)}}
+                <a class="nav-item {{if eq .activeTab "files"}}active{{end}}"
                    href="/files" hx-get="/files" hx-target="#main-content" hx-push-url="true">Files</a>
+                {{end}}
                 <a class="nav-item {{if eq .activeTab "search"}}active{{end}}" 
                    href="/search" hx-get="/search" hx-target="#main-content" hx-push-url="true">Search</a>
                 {{if .chatEnabled}}
@@ -565,7 +575,7 @@
             if (overrides.per_page) {
                 document.cookie = 'files_per_page=' + overrides.per_page + ';path=/;max-age=31536000;SameSite=Lax';
             }
-            window.location = '/files?' + params.toString();
+            window.location = window.location.pathname + '?' + params.toString();
         }
 
         // Confirm import with todo extraction warning.

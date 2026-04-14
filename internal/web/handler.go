@@ -353,34 +353,29 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	h.renderTemplate(w, r, "tasks", nil)
 }
 
+// handleFiles is the legacy /files entry point. It now redirects to the
+// appropriate source-specific tab, preserving any query string so existing
+// bookmarks like /files?path=Moffitt land on /files/supernote?path=Moffitt.
+// When neither source is configured, it renders a combined empty-state
+// placeholder so the user sees "configure a source in Settings" rather than
+// a 404.
 func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	data := map[string]interface{}{"activeTab": "files"}
-	if detail := r.URL.Query().Get("detail"); detail != "" {
-		data["detailPath"] = detail
+	query := ""
+	if r.URL.RawQuery != "" {
+		query = "?" + r.URL.RawQuery
 	}
-	if !h.notes.HasSupernoteSource() {
-		data["filesError"] = "No Supernote source configured. Add a source in Settings."
-		h.renderTemplate(w, r, "files", data)
-		return
+	switch {
+	case h.notes.HasSupernoteSource():
+		http.Redirect(w, r, "/files/supernote"+query, http.StatusSeeOther)
+	case h.notes.HasBooxSource():
+		http.Redirect(w, r, "/files/boox"+query, http.StatusSeeOther)
+	default:
+		data := map[string]interface{}{
+			"activeTab":  "files",
+			"filesError": "No note sources configured. Add a Supernote or Boox source in Settings.",
+		}
+		h.renderTemplate(w, r, "files_supernote", data)
 	}
-	rawPath := r.URL.Query().Get("path")
-	relPath, ok := safeRelPath(rawPath)
-	if !ok { http.Error(w, "invalid path", http.StatusBadRequest); return }
-	sortField, sortOrder := r.URL.Query().Get("sort"), r.URL.Query().Get("order")
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
-	if perPage <= 0 { perPage = 25 }
-	if page <= 0 { page = 1 }
-
-	files, total, err := h.notes.ListFiles(ctx, relPath, sortField, sortOrder, page, perPage)
-	if err != nil { http.Error(w, "internal error", http.StatusInternalServerError); return }
-	data["files"], data["relPath"], data["breadcrumbs"], data["filesTotalFiles"] = files, relPath, buildBreadcrumbs(relPath), total
-	data["filesPage"], data["filesPerPage"] = page, perPage
-	data["filesTotalPages"] = (total + perPage - 1) / perPage
-	if data["filesTotalPages"] == 0 { data["filesTotalPages"] = 1 }
-	h.renderTemplate(w, r, "files", data)
 }
 
 // handleFilesSupernote renders the Supernote-only Files view. Mirrors the
@@ -997,6 +992,10 @@ func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
 		data["RestartRequired"] = h.config.IsRestartRequired()
 	}
 	data["chatEnabled"] = h.search != nil
+	if h.notes != nil {
+		data["HasSupernoteSource"] = h.notes.HasSupernoteSource()
+		data["HasBooxSource"] = h.notes.HasBooxSource()
+	}
 	return data
 }
 

@@ -142,35 +142,35 @@ func TestFilesPage_ShowsBothSources(t *testing.T) {
 	broadcaster := logging.NewLogBroadcaster()
 	handler := LegacyNewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, booxStore, nil, "/boox/notes", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
-	req := httptest.NewRequest("GET", "/files", nil)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("GET /files returned status %d, want 200", w.Code)
+	// Post-split: /files/supernote renders SN entries only; /files/boox
+	// renders Boox entries only. This test verifies both tabs surface
+	// their respective sources.
+	snReq := httptest.NewRequest("GET", "/files/supernote", nil)
+	snW := httptest.NewRecorder()
+	handler.ServeHTTP(snW, snReq)
+	if snW.Code != http.StatusOK {
+		t.Fatalf("GET /files/supernote returned status %d", snW.Code)
+	}
+	snBody := snW.Body.String()
+	if !strings.Contains(snBody, "note1.note") {
+		t.Errorf("Supernote tab missing note1.note; body:\n%s", snBody)
+	}
+	if !strings.Contains(snBody, "note2.note") {
+		t.Errorf("Supernote tab missing note2.note; body:\n%s", snBody)
 	}
 
-	body := w.Body.String()
-
-	// Verify Supernote entries are present
-	if !strings.Contains(body, "note1.note") {
-		t.Errorf("Response should contain Supernote 'note1.note', got:\n%s", body)
+	booxReq := httptest.NewRequest("GET", "/files/boox", nil)
+	booxW := httptest.NewRecorder()
+	handler.ServeHTTP(booxW, booxReq)
+	if booxW.Code != http.StatusOK {
+		t.Fatalf("GET /files/boox returned status %d", booxW.Code)
 	}
-	if !strings.Contains(body, "note2.note") {
-		t.Errorf("Response should contain Supernote 'note2.note', got:\n%s", body)
+	booxBody := booxW.Body.String()
+	if !strings.Contains(booxBody, "Boox Note 1") {
+		t.Errorf("Boox tab missing 'Boox Note 1'; body:\n%s", booxBody)
 	}
-
-	// Verify Boox entries are present
-	if !strings.Contains(body, "Boox Note 1") {
-		t.Errorf("Response should contain Boox note title 'Boox Note 1', got:\n%s", body)
-	}
-	if !strings.Contains(body, "Boox Note 2") {
-		t.Errorf("Response should contain Boox note title 'Boox Note 2', got:\n%s", body)
-	}
-
-	// Verify badge class is present for Boox entries
-	if !strings.Contains(body, "badge-boox") {
-		t.Errorf("Response should contain 'badge-boox' class for Boox entries, got:\n%s", body)
+	if !strings.Contains(booxBody, "Boox Note 2") {
+		t.Errorf("Boox tab missing 'Boox Note 2'; body:\n%s", booxBody)
 	}
 }
 
@@ -409,7 +409,7 @@ func TestFilesPage_NoBooxNotes(t *testing.T) {
 	broadcaster := logging.NewLogBroadcaster()
 	handler := LegacyNewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, booxStore, nil, "/boox/notes", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
-	req := httptest.NewRequest("GET", "/files", nil)
+	req := httptest.NewRequest("GET", "/files/supernote", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -448,7 +448,7 @@ func TestFilesPage_NoBooxStore(t *testing.T) {
 	broadcaster := logging.NewLogBroadcaster()
 	handler2 := LegacyNewHandler(newMockTaskStore(), nil, noteStore, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
-	req := httptest.NewRequest("GET", "/files", nil)
+	req := httptest.NewRequest("GET", "/files/supernote", nil)
 	w := httptest.NewRecorder()
 	handler2.ServeHTTP(w, req)
 
@@ -462,47 +462,33 @@ func TestFilesPage_NoBooxStore(t *testing.T) {
 	}
 }
 
-// TestNoteSourceFunction verifies noteSource template function correctly identifies sources
+// TestNoteSourceFunction verifies the noteSource template helper still
+// classifies paths correctly. Previously asserted via a combined /files view
+// that rendered B/SN badges inline; that view no longer exists post-split,
+// but the helper is still used by search.html for cross-source search
+// results, so this test now exercises it through a rendered search page.
 func TestNoteSourceFunction(t *testing.T) {
 	handler := newTestHandler()
-	notes := handler.notes.(*mockNoteService)
 	handler.booxNotesPath = "/boox/notes"
-	
-	notes.files = []service.NoteFile{
-		{
-			Path:      "/boox/notes/test.note",
-			RelPath:   "test.note",
-			Name:      "test.note",
-			FileType:  "note",
-		},
-		{
-			Path:      "/sn/notes/test2.note",
-			RelPath:   "test2.note",
-			Name:      "test2.note",
-			FileType:  "note",
-		},
+	search := handler.search.(*mockSearchService)
+	search.results = []service.SearchResult{
+		{Path: "/boox/notes/one.note", Snippet: "boox snippet"},
+		{Path: "/sn/notes/two.note", Snippet: "sn snippet"},
 	}
 
-	req := httptest.NewRequest("GET", "/files", nil)
+	req := httptest.NewRequest("GET", "/search?q=foo", nil)
 	req.Header.Set("HX-Request", "true")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("GET /files returned status %d, want 200", w.Code)
+		t.Fatalf("GET /search returned %d; body=%s", w.Code, w.Body.String())
 	}
-
 	body := w.Body.String()
-	if !strings.Contains(body, "test.note") {
-		t.Errorf("Response should contain test.note, got:\n%s", body)
+	if !strings.Contains(body, "badge-boox") {
+		t.Errorf("search results should tag Boox path; body:\n%s", body)
 	}
-	if !strings.Contains(body, "test2.note") {
-		t.Errorf("Response should contain test2.note, got:\n%s", body)
-	}
-	if !strings.Contains(body, "badge badge-boox") {
-		t.Errorf("Response should contain Boox source badge, got:\n%s", body)
-	}
-	if !strings.Contains(body, "badge badge-sn") {
-		t.Errorf("Response should contain Supernote source badge, got:\n%s", body)
+	if !strings.Contains(body, "badge-sn") {
+		t.Errorf("search results should tag Supernote path; body:\n%s", body)
 	}
 }

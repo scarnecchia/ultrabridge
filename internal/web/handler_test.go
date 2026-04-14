@@ -1039,7 +1039,7 @@ func TestHandleFiles_NoteStoreNil(t *testing.T) {
 	notes := &mockNoteService{pipelineConfigured: false}
 	handler := NewHandler(nil, notes, nil, nil, nil, "", "", logger, broadcaster)
 
-	req := httptest.NewRequest("GET", "/files", nil)
+	req := httptest.NewRequest("GET", "/files/supernote", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -1051,7 +1051,9 @@ func TestHandleFiles_NoteStoreNil(t *testing.T) {
 	}
 }
 
-// TestHandleFiles_PathTraversal verifies AC1.5: traversal attempts return 400
+// TestHandleFiles_PathTraversal verifies that traversal attempts on the
+// Supernote tab return 400. The legacy /files route is now a redirect,
+// so traversal checks happen on the destination handler.
 func TestHandleFiles_PathTraversal(t *testing.T) {
 	ns := newMockNoteStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -1059,7 +1061,7 @@ func TestHandleFiles_PathTraversal(t *testing.T) {
 	handler := LegacyNewHandler(newMockTaskStore(), nil, ns, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	for _, badPath := range []string{"../../etc", "../secrets", "/etc/passwd"} {
-		req := httptest.NewRequest("GET", "/files?path="+badPath, nil)
+		req := httptest.NewRequest("GET", "/files/supernote?path="+badPath, nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
 		if w.Code != http.StatusBadRequest {
@@ -1068,16 +1070,16 @@ func TestHandleFiles_PathTraversal(t *testing.T) {
 	}
 }
 
-// TestHandleFiles_TopLevel verifies AC1.1, AC1.3, AC1.4
+// TestHandleFiles_TopLevel verifies Supernote-tab rendering of top-level files.
 func TestHandleFiles_TopLevel(t *testing.T) {
 	handler := newTestHandler()
 	notes := handler.notes.(*mockNoteService)
 	notes.files = []service.NoteFile{
-		{Name: "test.note", FileType: "note", RelPath: "test.note"},
-		{Name: "readme.pdf", FileType: "pdf", RelPath: "readme.pdf"},
+		{Name: "test.note", FileType: "note", RelPath: "test.note", Source: "supernote"},
+		{Name: "readme.pdf", FileType: "pdf", RelPath: "readme.pdf", Source: "supernote"},
 	}
 
-	req := httptest.NewRequest("GET", "/files", nil)
+	req := httptest.NewRequest("GET", "/files/supernote", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -1096,15 +1098,15 @@ func TestHandleFiles_TopLevel(t *testing.T) {
 	}
 }
 
-// TestHandleFiles_WithPath verifies AC1.2: subdirectory path shows contents and breadcrumb
+// TestHandleFiles_WithPath verifies Supernote-tab subdirectory navigation.
 func TestHandleFiles_WithPath(t *testing.T) {
 	handler := newTestHandler()
 	notes := handler.notes.(*mockNoteService)
 	notes.files = []service.NoteFile{
-		{Name: "deep.note", FileType: "note", RelPath: "Note/Folder/deep.note"},
+		{Name: "deep.note", FileType: "note", RelPath: "Note/Folder/deep.note", Source: "supernote"},
 	}
 
-	req := httptest.NewRequest("GET", "/files?path=Note/Folder", nil)
+	req := httptest.NewRequest("GET", "/files/supernote?path=Note/Folder", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -1118,6 +1120,61 @@ func TestHandleFiles_WithPath(t *testing.T) {
 	if !strings.Contains(body, "Folder") {
 		t.Error("expected breadcrumb Folder in response")
 	}
+}
+
+// TestHandleFilesRedirect verifies the legacy /files route redirects to the
+// right tab based on configured sources, preserving any query string.
+func TestHandleFilesRedirect(t *testing.T) {
+	t.Run("supernote_configured", func(t *testing.T) {
+		h := newTestHandler()
+		h.notes.(*mockNoteService).pipelineConfigured = true
+		h.notes.(*mockNoteService).booxEnabled = false
+
+		req := httptest.NewRequest(http.MethodGet, "/files?path=Personal", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status=%d, want 303", w.Code)
+		}
+		if loc := w.Header().Get("Location"); loc != "/files/supernote?path=Personal" {
+			t.Errorf("Location=%q", loc)
+		}
+	})
+
+	t.Run("boox_only", func(t *testing.T) {
+		h := newTestHandler()
+		h.notes.(*mockNoteService).pipelineConfigured = false
+		h.notes.(*mockNoteService).booxEnabled = true
+
+		req := httptest.NewRequest(http.MethodGet, "/files", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status=%d, want 303", w.Code)
+		}
+		if loc := w.Header().Get("Location"); loc != "/files/boox" {
+			t.Errorf("Location=%q", loc)
+		}
+	})
+
+	t.Run("neither_renders_placeholder", func(t *testing.T) {
+		h := newTestHandler()
+		h.notes.(*mockNoteService).pipelineConfigured = false
+		h.notes.(*mockNoteService).booxEnabled = false
+
+		req := httptest.NewRequest(http.MethodGet, "/files", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d, want 200", w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "No note sources configured") {
+			t.Errorf("expected placeholder message; body:\n%s", w.Body.String())
+		}
+	})
 }
 
 // Helper functions for C&C tests
@@ -1845,109 +1902,128 @@ func TestTaskRowFragmentIdentity(t *testing.T) {
 	}
 }
 
-// TestFileRowFragmentIdentity verifies AC3.4: a file rendered via
-// h.renderFragment(w, r, "_file_row", ctx) carries the same load-bearing HTML
-// tokens as the same file rendered inside files.html via
-// {{range .files}}{{template "_file_row" (makeFileRowCtx . $.relPath)}}{{end}}.
-// Covers both source-badge branches (Supernote, Boox) to prove the conditional
-// markup renders identically across paths.
+// TestFileRowFragmentIdentity verifies AC3.4 post-split: rows rendered inside
+// the tab template (files_supernote.html / files_boox.html) carry the same
+// load-bearing HTML tokens as rows rendered via h.renderFragment after a
+// mutation. Ensures a swapped row matches the shape of the row it replaces.
 func TestFileRowFragmentIdentity(t *testing.T) {
-	type subtest struct {
-		name          string
-		booxNotesPath string
-		file          service.NoteFile
-		sourceBadge   string
-	}
-	cases := []subtest{
-		{
-			name: "supernote",
-			file: service.NoteFile{
-				Path:      "/notes/foo.note",
-				RelPath:   "foo.note",
-				Name:      "foo.note",
-				FileType:  "note",
-				JobStatus: "done",
-				Source:    "supernote",
-			},
-			sourceBadge: `badge-sn`,
-		},
-		{
-			name:          "boox",
-			booxNotesPath: "/boox",
-			file: service.NoteFile{
-				Path:      "/boox/bar.note",
-				RelPath:   "bar.note",
-				Name:      "bar.note",
-				FileType:  "note",
-				JobStatus: "done",
-				Source:    "boox",
-			},
-			sourceBadge: `badge-boox`,
-		},
-	}
-
 	// fileRowID formula from handler.go — kept in-test to avoid exporting.
 	fileRowID := func(path string) string {
 		sum := sha1.Sum([]byte(path))
 		return "file-" + hex.EncodeToString(sum[:])[:12]
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-			broadcaster := logging.NewLogBroadcaster()
-			notes := &mockNoteService{
-				files:              []service.NoteFile{tc.file},
-				docs:               make(map[string][]service.SearchResult),
-				contents:           make(map[string]interface{}),
-				pipelineConfigured: true,
-				booxEnabled:        true,
-			}
-			h := NewHandler(
-				&mockTaskService{},
-				notes,
-				&mockSearchService{embeddingPipelineConfigured: true, chatEnabled: true},
-				&mockConfigService{syncConfigured: true},
-				nil,
-				"",
-				tc.booxNotesPath,
-				logger,
-				broadcaster,
-			)
+	t.Run("supernote", func(t *testing.T) {
+		file := service.NoteFile{
+			Path:      "/notes/foo.note",
+			RelPath:   "foo.note",
+			Name:      "foo.note",
+			FileType:  "note",
+			JobStatus: "done",
+			Source:    "supernote",
+		}
 
-			// Path 1: render through files.html via HX GET /files.
-			w1 := httptest.NewRecorder()
-			r1 := httptest.NewRequest(http.MethodGet, "/files", nil)
-			r1.Header.Set("HX-Request", "true")
-			h.ServeHTTP(w1, r1)
-			if w1.Code != http.StatusOK {
-				t.Fatalf("GET /files returned %d; body=%s", w1.Code, w1.Body.String())
-			}
-			body1 := w1.Body.String()
+		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		broadcaster := logging.NewLogBroadcaster()
+		notes := &mockNoteService{
+			files:              []service.NoteFile{file},
+			docs:               make(map[string][]service.SearchResult),
+			contents:           make(map[string]interface{}),
+			pipelineConfigured: true,
+		}
+		h := NewHandler(
+			&mockTaskService{}, notes,
+			&mockSearchService{}, &mockConfigService{},
+			nil, "", "", logger, broadcaster,
+		)
 
-			// Path 2: renderFragment directly with the same ctx shape.
-			w2 := httptest.NewRecorder()
-			r2 := httptest.NewRequest(http.MethodGet, "/", nil)
-			h.renderFragment(w2, r2, "_file_row", fileRowCtx{File: tc.file, RelPath: ""})
-			body2 := w2.Body.String()
+		// Path 1: render through files_supernote.html via HX GET /files/supernote.
+		w1 := httptest.NewRecorder()
+		r1 := httptest.NewRequest(http.MethodGet, "/files/supernote", nil)
+		r1.Header.Set("HX-Request", "true")
+		h.ServeHTTP(w1, r1)
+		if w1.Code != http.StatusOK {
+			t.Fatalf("GET /files/supernote returned %d; body=%s", w1.Code, w1.Body.String())
+		}
+		body1 := w1.Body.String()
 
-			expectedID := fileRowID(tc.file.Path)
-			markers := []string{
-				`id="` + expectedID + `"`,
-				tc.file.Name,
-				tc.sourceBadge,
-				`hx-target="closest tr"`,
+		// Path 2: renderFragment directly with the same ctx shape.
+		w2 := httptest.NewRecorder()
+		r2 := httptest.NewRequest(http.MethodGet, "/", nil)
+		h.renderFragment(w2, r2, "_sn_file_row", fileRowCtx{File: file, RelPath: ""})
+		body2 := w2.Body.String()
+
+		expectedID := fileRowID(file.Path)
+		markers := []string{
+			`id="` + expectedID + `"`,
+			file.Name,
+			`hx-target="closest tr"`,
+		}
+		for _, m := range markers {
+			if !strings.Contains(body1, m) {
+				t.Errorf("files_supernote.html render missing marker %q; body:\n%s", m, body1)
 			}
-			for _, m := range markers {
-				if !strings.Contains(body1, m) {
-					t.Errorf("files.html render missing marker %q; body:\n%s", m, body1)
-				}
-				if !strings.Contains(body2, m) {
-					t.Errorf("renderFragment output missing marker %q; body:\n%s", m, body2)
-				}
+			if !strings.Contains(body2, m) {
+				t.Errorf("_sn_file_row renderFragment missing marker %q; body:\n%s", m, body2)
 			}
-		})
-	}
+		}
+	})
+
+	t.Run("boox", func(t *testing.T) {
+		summary := service.BooxNoteSummary{
+			Path:      "/boox/bar.note",
+			Filename:  "bar.note",
+			Title:     "Bar Notes",
+			Folder:    "Personal",
+			JobStatus: "done",
+		}
+
+		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		broadcaster := logging.NewLogBroadcaster()
+		notes := &mockNoteService{
+			booxNotes:   []service.BooxNoteSummary{summary},
+			docs:        make(map[string][]service.SearchResult),
+			contents:    make(map[string]interface{}),
+			booxEnabled: true,
+		}
+		h := NewHandler(
+			&mockTaskService{}, notes,
+			&mockSearchService{}, &mockConfigService{},
+			nil, "", "/boox", logger, broadcaster,
+		)
+
+		// Path 1: render through files_boox.html via HX GET /files/boox.
+		w1 := httptest.NewRecorder()
+		r1 := httptest.NewRequest(http.MethodGet, "/files/boox", nil)
+		r1.Header.Set("HX-Request", "true")
+		h.ServeHTTP(w1, r1)
+		if w1.Code != http.StatusOK {
+			t.Fatalf("GET /files/boox returned %d; body=%s", w1.Code, w1.Body.String())
+		}
+		body1 := w1.Body.String()
+
+		// Path 2: renderFragment directly with the same BooxNoteSummary.
+		w2 := httptest.NewRecorder()
+		r2 := httptest.NewRequest(http.MethodGet, "/", nil)
+		h.renderFragment(w2, r2, "_boox_file_row", summary)
+		body2 := w2.Body.String()
+
+		expectedID := fileRowID(summary.Path)
+		markers := []string{
+			`id="` + expectedID + `"`,
+			summary.Title,
+			summary.Folder,
+			`hx-target="closest tr"`,
+		}
+		for _, m := range markers {
+			if !strings.Contains(body1, m) {
+				t.Errorf("files_boox.html render missing marker %q; body:\n%s", m, body1)
+			}
+			if !strings.Contains(body2, m) {
+				t.Errorf("_boox_file_row renderFragment missing marker %q; body:\n%s", m, body2)
+			}
+		}
+	})
 }
 
 // fileRowIDFor is a test-only helper mirroring handler.go's fileRowID FuncMap

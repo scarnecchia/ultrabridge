@@ -17,7 +17,9 @@ func TestRoutes(t *testing.T) {
 		status int
 	}{
 		{"GET", "/", http.StatusOK},
-		{"GET", "/files", http.StatusOK},
+		{"GET", "/files", http.StatusSeeOther}, // legacy route redirects to /files/supernote
+		{"GET", "/files/supernote", http.StatusOK},
+		{"GET", "/files/boox", http.StatusOK},
 		{"GET", "/search", http.StatusOK},
 		{"GET", "/settings", http.StatusOK},
 		{"GET", "/chat", http.StatusOK},
