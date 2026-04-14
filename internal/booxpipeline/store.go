@@ -129,11 +129,18 @@ func (s *Store) EnqueueJob(ctx context.Context, notePath string) error {
 
 // ClaimNextJob atomically claims the oldest pending job using SQLite RETURNING.
 // Returns nil, nil if no jobs are available.
+//
+// Each claim bumps `attempts` by 1, so the column reflects "number of times
+// the worker has started this job." Previously attempts was only incremented
+// by the watchdog (ReclaimStuckJobs / ReclaimAllInProgress), which made the
+// column useless for the Details modal — successful-first-try jobs all read
+// as 0 and even requeued-then-completed jobs usually read 0 unless they
+// happened to time out.
 func (s *Store) ClaimNextJob(ctx context.Context) (*BooxJob, error) {
 	now := time.Now().Unix()
 	var job BooxJob
 	err := s.db.QueryRowContext(ctx, `
-		UPDATE boox_jobs SET status = 'in_progress', started_at = ?
+		UPDATE boox_jobs SET status = 'in_progress', started_at = ?, attempts = attempts + 1
 		WHERE id = (SELECT id FROM boox_jobs WHERE status = 'pending'
 			AND (requeue_after IS NULL OR requeue_after <= ?)
 			ORDER BY queued_at ASC LIMIT 1)

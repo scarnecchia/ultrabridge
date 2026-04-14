@@ -51,6 +51,12 @@ func NewOCRClient(apiURL, apiKey, model, format string) *OCRClient {
 	}
 }
 
+// Model returns the model name this client posts to the vision API. Used
+// by the Boox pipeline to tag completed jobs with the api_model they ran
+// against. (The Supernote pipeline reaches into the unexported field
+// directly because it lives in the same package.)
+func (c *OCRClient) Model() string { return c.model }
+
 // Recognize sends a JPEG page image to the vision API and returns the transcribed text.
 // If prompt is empty, the default prompt is used.
 func (c *OCRClient) Recognize(ctx context.Context, jpegData []byte, prompt string) (string, error) {
