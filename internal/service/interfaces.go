@@ -50,6 +50,40 @@ type NoteFile struct {
 	LastError  *string   `json:"last_error"`
 }
 
+// BooxFolder is one row in the Boox folder facet — the on-device folder
+// label and how many notes live under it. Passed to the Boox Files tab to
+// build the folder-filter pill row.
+type BooxFolder struct {
+	Folder string `json:"folder"`
+	Count  int    `json:"count"`
+}
+
+// BooxDevice is one row in the Boox device facet — the on-device model
+// string and how many notes are attributed to it. The "..", legacy-import
+// field-swap artifact is excluded at the store layer.
+type BooxDevice struct {
+	DeviceModel string `json:"device_model"`
+	Count       int    `json:"count"`
+}
+
+// BooxNoteSummary is a Boox-tab-specific view of a Boox note, surfacing the
+// on-device title, folder, device model, note type, and page count that the
+// merged NoteFile shape hides.
+type BooxNoteSummary struct {
+	Path        string    `json:"path"`
+	NoteID      string    `json:"note_id"`
+	Title       string    `json:"title"`
+	Filename    string    `json:"filename"`
+	DeviceModel string    `json:"device_model"`
+	NoteType    string    `json:"note_type"`
+	Folder      string    `json:"folder"`
+	PageCount   int       `json:"page_count"`
+	SizeBytes   int64     `json:"size_bytes"`
+	CreatedAt   time.Time `json:"created_at"`
+	ModifiedAt  time.Time `json:"modified_at"`
+	JobStatus   string    `json:"job_status"`
+}
+
 // SyncStatus represents the CalDAV sync state.
 type SyncStatus struct {
 	AdapterID     string     `json:"adapter_id"`
@@ -82,10 +116,25 @@ type SyncStatusProvider interface {
 	TriggerSync()
 }
 
+// TaskPatch is a partial update to a Task. Nil pointer fields mean "leave
+// unchanged"; ClearDueAt exists because a *time.Time can't distinguish
+// "don't touch" from "clear to null" on its own (ClearDueAt wins over DueAt
+// when both are set). Title is non-clearable — CalDAV VTODOs require a
+// SUMMARY, and empty-string titles round-trip poorly to the device. Detail
+// is cleared by sending an empty string ("" is a legitimate empty value).
+type TaskPatch struct {
+	Title      *string    `json:"title,omitempty"`
+	DueAt      *time.Time `json:"due_at,omitempty"`
+	ClearDueAt bool       `json:"clear_due_at,omitempty"`
+	Detail     *string    `json:"detail,omitempty"`
+}
+
 // TaskService manages task-related operations.
 type TaskService interface {
 	List(ctx context.Context) ([]Task, error)
+	Get(ctx context.Context, id string) (Task, error)
 	Create(ctx context.Context, title string, dueAt *time.Time) (Task, error)
+	Update(ctx context.Context, id string, patch TaskPatch) (Task, error)
 	Complete(ctx context.Context, id string) error
 	Delete(ctx context.Context, id string) error
 	PurgeCompleted(ctx context.Context) error
@@ -96,6 +145,12 @@ type TaskService interface {
 // NoteService manages note files and background processing.
 type NoteService interface {
 	ListFiles(ctx context.Context, path string, sort, order string, page, perPage int) ([]NoteFile, int, error)
+	ListSupernoteFiles(ctx context.Context, path string, sort, order string, page, perPage int) ([]NoteFile, int, error)
+	ListBooxNotes(ctx context.Context, device, folder, sort, order string, page, perPage int) ([]BooxNoteSummary, int, error)
+	ListBooxFolders(ctx context.Context) ([]BooxFolder, error)
+	ListBooxDevices(ctx context.Context) ([]BooxDevice, error)
+	GetFile(ctx context.Context, path string) (NoteFile, error)
+	GetBooxNote(ctx context.Context, path string) (BooxNoteSummary, error)
 	GetNoteDetails(ctx context.Context, path string) (interface{}, error) // history/job info
 	GetContent(ctx context.Context, path string) (interface{}, error)     // OCR text and page metadata
 	RenderPage(ctx context.Context, path string, page int) (io.ReadCloser, string, error) // image stream, content-type
@@ -113,9 +168,12 @@ type NoteService interface {
 	HasBooxSource() bool
 	ListVersions(ctx context.Context, path string) (interface{}, error)
 	
-	// Pipeline Control
+	// Pipeline Control (Supernote)
 	StartProcessor(ctx context.Context) error
 	StopProcessor(ctx context.Context) error
+	// Pipeline Control (Boox)
+	StartBooxProcessor(ctx context.Context) error
+	StopBooxProcessor(ctx context.Context) error
 	GetProcessorStatus(ctx context.Context) (EmbeddingJobStatus, error)
 	
 	// Import (Boox specific)

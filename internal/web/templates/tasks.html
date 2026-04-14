@@ -3,7 +3,7 @@
     <!-- Create Task Form -->
     <div class="card">
         <h2>Create New Task</h2>
-        <form hx-post="/tasks" hx-target="#main-content" hx-push-url="false">
+        <form hx-post="/tasks" hx-target="#task-table tbody" hx-swap="afterbegin" hx-push-url="false" hx-on:htmx:after-request="if (event.detail.successful) { this.reset(); const es = document.getElementById('empty-state-row'); if (es) es.remove(); }">
             <div class="form-group">
                 <label for="title">Task Title *</label>
                 <input type="text" id="title" name="title" required placeholder="Enter task title">
@@ -37,11 +37,10 @@
           <div class="flex-spacer"></div>
           <button id="sync-now-btn" class="btn-small" onclick="triggerSync()">Sync Now</button>
         </div>
-        {{if .tasks}}
         <div id="bulk-actions" style="display: none; margin-bottom: 1rem; padding: 1rem; background: var(--bg-color); border-radius: var(--radius); border: 1px solid var(--brand-color);">
             <span id="selected-count" class="text-small text-bold" style="margin-right: 1rem;">0 selected</span>
-            <button type="button" hx-post="/tasks/bulk" hx-include=".task-checkbox:checked" hx-vals='{"action": "complete"}' hx-target="#main-content" class="btn-small">Complete Selected</button>
-            <button type="button" hx-post="/tasks/bulk" hx-include=".task-checkbox:checked" hx-vals='{"action": "delete"}' hx-target="#main-content" class="btn-small" style="background: var(--status-text-failed);" onclick="return confirm('Delete selected tasks? This cannot be undone.')">Delete Selected</button>
+            <button type="button" hx-post="/tasks/bulk" hx-include=".task-checkbox:checked" hx-vals='{"action": "complete"}' hx-swap="none" hx-on:htmx:after-request="if(!event.detail.successful) return; const doc = new DOMParser().parseFromString('&lt;table&gt;&lt;tbody&gt;' + event.detail.xhr.responseText + '&lt;/tbody&gt;&lt;/table&gt;', 'text/html'); doc.querySelectorAll('tr[id^=&quot;task-&quot;]').forEach(newRow => { const existing = document.getElementById(newRow.id); if (existing) existing.replaceWith(newRow); }); updateBulkActions();" class="btn-small">Complete Selected</button>
+            <button type="button" hx-post="/tasks/bulk" hx-include=".task-checkbox:checked" hx-vals='{"action": "delete"}' hx-swap="none" hx-on:htmx:after-request="if(!event.detail.successful) return; document.querySelectorAll('.task-checkbox:checked').forEach(cb => cb.closest('tr').remove()); updateBulkActions();" class="btn-small" style="background: var(--status-text-failed);" onclick="return confirm('Delete selected tasks? This cannot be undone.')">Delete Selected</button>
         </div>
         <div class="table-container">
             <table id="task-table">
@@ -57,53 +56,25 @@
                 </thead>
                 <tbody>
                     {{range .tasks}}
-                    <tr data-status="{{.Status}}" {{if eq .Status "completed"}}style="display: none;"{{end}}>
-                        <td><input type="checkbox" name="task_ids" value="{{.ID}}" class="task-checkbox" onchange="updateBulkActions()"></td>
-                        <td class="task-title">
-                            {{.Title}}
-                            {{if .Detail}}
-                            <br><span class="device-info">{{$detail := .Detail}}{{if hasPrefix $detail "From Boox red ink: "}}<a href="#" onclick="showHistory('{{trimPrefix $detail "From Boox red ink: " | js}}'); return false;" style="color:#6b7280;">{{$detail}}</a>{{else}}{{$detail}}{{end}}</span>
-                            {{end}}
-                            {{if .Links}}{{with taskLink .Links}}
-                            <br><span class="device-info"><a href="#" onclick="showHistory('{{.Path | js}}'); return false;" style="color:#6b7280;">⬔ From note, page {{.Page}}</a></span>
-                            {{end}}{{end}}
-                        </td>
-                        <td>
-                            <span class="task-status {{if eq .Status "completed"}}status-completed{{else}}status-needsaction{{end}}">
-                                {{if eq .Status "completed"}}Completed{{else}}Needs Action{{end}}
-                            </span>
-                        </td>
-                        <td class="task-due-date">{{.CompletedAt | formatCreated}}</td>
-                        <td class="task-due-date">
-                            {{if .DueAt}}
-                                {{.DueAt | formatDueTime}}
-                            {{else}}
-                                -
-                            {{end}}
-                        </td>
-                        <td class="task-actions">
-                            {{if ne .Status "completed"}}
-                            <button type="button" hx-post="/tasks/{{.ID}}/complete" hx-target="#main-content" class="btn-small">Complete</button>
-                            {{end}}
-                        </td>
-                    </tr>
+                    {{template "_task_row" .}}
+                    {{end}}
+                    {{if not .tasks}}
+                    <tr id="empty-state-row"><td colspan="6" class="empty-state"><p>No tasks yet.</p><p>Create one above to get started!</p></td></tr>
                     {{end}}
                 </tbody>
             </table>
         </div>
-        <form hx-post="/tasks/purge-completed" hx-target="#main-content" style="margin-top:0.5rem; text-align:right;">
+        <form hx-post="/tasks/purge-completed" hx-swap="none" hx-on:htmx:after-request="if(!event.detail.successful) return; document.querySelectorAll('#task-table tbody tr[data-status=&quot;completed&quot;]').forEach(r => r.remove());" style="margin-top:0.5rem; text-align:right;">
           <button type="submit" class="btn-small" style="background: var(--status-text-failed);" onclick="return confirm('Purge all completed tasks? This cannot be undone.')">✗ Purge Completed</button>
         </form>
-        {{else}}
-        <div class="empty-state">
-            <p>No tasks yet.</p>
-            <p>Create one above to get started!</p>
-        </div>
-        {{end}}
     </div>
 </div>
 
 <script>
-    // Re-initialize visibility on swap
-    toggleCompleted();
+    // Re-initialize visibility on swap. Deferred to DOMContentLoaded because
+    // layout.html defines toggleCompleted AFTER tab content; inline invocation
+    // at first paint otherwise throws ReferenceError.
+    document.addEventListener('DOMContentLoaded', function() {
+        if (typeof toggleCompleted === 'function') toggleCompleted();
+    });
 </script>

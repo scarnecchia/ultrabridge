@@ -203,6 +203,39 @@ func TestCompleteJob(t *testing.T) {
 	}
 }
 
+// TestClaimNextJob_BumpsAttempts verifies that each claim increments the
+// attempts counter so the Details modal reflects "how many times this job
+// has started" instead of always-0 except for watchdog-recovered jobs.
+func TestClaimNextJob_BumpsAttempts(t *testing.T) {
+	s := openTestStore(t)
+
+	if err := s.EnqueueJob(context.Background(), "/tmp/attempt.note"); err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+
+	job, err := s.ClaimNextJob(context.Background())
+	if err != nil || job == nil {
+		t.Fatalf("ClaimNextJob first: err=%v job=%v", err, job)
+	}
+	if job.Attempts != 1 {
+		t.Errorf("attempts after first claim = %d, want 1", job.Attempts)
+	}
+
+	// Simulate a requeue by flipping the job back to pending.
+	if _, err := s.db.ExecContext(context.Background(),
+		`UPDATE boox_jobs SET status='pending' WHERE id = ?`, job.ID); err != nil {
+		t.Fatalf("requeue: %v", err)
+	}
+
+	job2, err := s.ClaimNextJob(context.Background())
+	if err != nil || job2 == nil {
+		t.Fatalf("ClaimNextJob second: err=%v job=%v", err, job2)
+	}
+	if job2.Attempts != 2 {
+		t.Errorf("attempts after second claim = %d, want 2", job2.Attempts)
+	}
+}
+
 // TestFailJob verifies job failure updates status and error message
 func TestFailJob(t *testing.T) {
 	s := openTestStore(t)

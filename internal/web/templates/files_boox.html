@@ -1,0 +1,144 @@
+<!-- Boox Files Tab -->
+<div id="files" class="tab-content active">
+  {{if .filesError}}
+    <div class="card" style="border-color: var(--status-text-failed);">
+        <p class="text-danger">{{.filesError}}</p>
+    </div>
+  {{else}}
+    <div class="status-panel">
+        <span class="text-bold">Pipeline Status:</span>
+        <span id="proc-status" class="text-small">Loading...</span>
+        <div class="flex-spacer"></div>
+        <form hx-post="/processor/boox/start" hx-swap="none" hx-on:htmx:after-request="updateProcessorStatus();" style="display:inline;">
+            <button type="submit" class="btn-small">▶ Start</button>
+        </form>
+        <form hx-post="/processor/boox/stop" hx-swap="none" hx-on:htmx:after-request="updateProcessorStatus();" style="display:inline;">
+            <button type="submit" class="btn-small" style="background: var(--text-secondary);">⏹ Stop</button>
+        </form>
+    </div>
+
+    <div class="toolbar">
+      {{if .BooxImportPath}}
+      <form hx-post="/files/import" hx-swap="none" hx-on:htmx:after-request="updateProcessorStatus();" style="display:inline;">
+        <button type="submit" class="btn-small" onclick="return confirmImport()">⬇ Import</button>
+      </form>
+      <form hx-post="/files/migrate-imports" hx-swap="none" hx-on:htmx:after-request="updateProcessorStatus();" style="display:inline;">
+        <button type="submit" class="btn-small">↪ Migrate Imports</button>
+      </form>
+      {{end}}
+      <form hx-post="/files/retry-failed" hx-swap="none" hx-on:htmx:after-request="updateProcessorStatus();" style="display:inline;">
+        <button type="submit" class="btn-small">↻ Retry Failed</button>
+      </form>
+
+      <div class="flex-spacer"></div>
+
+      <select onchange="filesNav({per_page:this.value,page:1})" style="width: auto;">
+        <option value="10" {{if eq .filesPerPage 10}}selected{{end}}>10 / page</option>
+        <option value="25" {{if eq .filesPerPage 25}}selected{{end}}>25 / page</option>
+        <option value="50" {{if eq .filesPerPage 50}}selected{{end}}>50 / page</option>
+      </select>
+      <span class="text-small">{{.filesTotalFiles}} notes</span>
+    </div>
+
+    {{if .booxDevices}}
+    <div class="toolbar" style="flex-wrap: wrap; gap: 0.25rem;">
+      <span class="text-small" style="margin-right:0.5rem;">Devices:</span>
+      <a href="/files/boox{{if .booxFolderFilter}}?folder={{.booxFolderFilter | urlquery}}{{end}}"
+         hx-get="/files/boox{{if .booxFolderFilter}}?folder={{.booxFolderFilter | urlquery}}{{end}}"
+         hx-target="#main-content" hx-push-url="true"
+         class="btn-small"
+         {{if not .booxDeviceFilter}}style="background: var(--accent-color); color: var(--bg-color);"{{end}}>
+        All
+      </a>
+      {{range .booxDevices}}
+      <a href="/files/boox?device={{.DeviceModel | urlquery}}{{if $.booxFolderFilter}}&folder={{$.booxFolderFilter | urlquery}}{{end}}"
+         hx-get="/files/boox?device={{.DeviceModel | urlquery}}{{if $.booxFolderFilter}}&folder={{$.booxFolderFilter | urlquery}}{{end}}"
+         hx-target="#main-content" hx-push-url="true"
+         class="btn-small"
+         {{if eq $.booxDeviceFilter .DeviceModel}}style="background: var(--accent-color); color: var(--bg-color);"{{end}}>
+        {{if .DeviceModel}}{{.DeviceModel}}{{else}}(no device){{end}} <span class="text-small">({{.Count}})</span>
+      </a>
+      {{end}}
+    </div>
+    {{end}}
+
+    {{if .booxFolders}}
+    <div class="toolbar" style="flex-wrap: wrap; gap: 0.25rem;">
+      <span class="text-small" style="margin-right:0.5rem;">Folders:</span>
+      <a href="/files/boox{{if .booxDeviceFilter}}?device={{.booxDeviceFilter | urlquery}}{{end}}"
+         hx-get="/files/boox{{if .booxDeviceFilter}}?device={{.booxDeviceFilter | urlquery}}{{end}}"
+         hx-target="#main-content" hx-push-url="true"
+         class="btn-small"
+         {{if not .booxFolderFilter}}style="background: var(--accent-color); color: var(--bg-color);"{{end}}>
+        All
+      </a>
+      {{range .booxFolders}}
+      <a href="/files/boox?folder={{.Folder | urlquery}}{{if $.booxDeviceFilter}}&device={{$.booxDeviceFilter | urlquery}}{{end}}"
+         hx-get="/files/boox?folder={{.Folder | urlquery}}{{if $.booxDeviceFilter}}&device={{$.booxDeviceFilter | urlquery}}{{end}}"
+         hx-target="#main-content" hx-push-url="true"
+         class="btn-small"
+         {{if eq $.booxFolderFilter .Folder}}style="background: var(--accent-color); color: var(--bg-color);"{{end}}>
+        {{if .Folder}}{{.Folder}}{{else}}(unfiled){{end}} <span class="text-small">({{.Count}})</span>
+      </a>
+      {{end}}
+    </div>
+    {{end}}
+
+    <div class="card">
+    <form id="bulk-delete-form" hx-post="/files/delete-bulk" hx-swap="none" hx-on:htmx:after-request="if (!event.detail.successful) return; document.querySelectorAll('.file-checkbox:checked').forEach(cb => cb.closest('tr').remove()); updateBulkDeleteBar();">
+    <div class="table-container">
+    <table class="task-table">
+      <thead>
+        <tr>
+          <th style="width:2rem;"><input type="checkbox" id="select-all-files" onclick="toggleAllFiles(this)"></th>
+          <th><a href="#" onclick="filesNav({sort:'title', order: '{{if and (eq $.filesSort "title") (eq $.filesOrder "asc")}}desc{{else}}asc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Title {{if eq $.filesSort "title"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th><a href="#" onclick="filesNav({sort:'folder', order: '{{if and (eq $.filesSort "folder") (eq $.filesOrder "asc")}}desc{{else}}asc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Folder {{if eq $.filesSort "folder"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th><a href="#" onclick="filesNav({sort:'pages', order: '{{if and (eq $.filesSort "pages") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Pages {{if eq $.filesSort "pages"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th><a href="#" onclick="filesNav({sort:'size', order: '{{if and (eq $.filesSort "size") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Size {{if eq $.filesSort "size"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th><a href="#" onclick="filesNav({sort:'created', order: '{{if and (eq $.filesSort "created") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Created {{if eq $.filesSort "created"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th><a href="#" onclick="filesNav({sort:'modified', order: '{{if and (eq $.filesSort "modified") (eq $.filesOrder "desc")}}asc{{else}}desc{{end}}'}); return false;" style="color:inherit; text-decoration:none;">Modified {{if eq $.filesSort "modified"}}{{if eq $.filesOrder "asc"}}▴{{else}}▾{{end}}{{end}}</a></th>
+          <th>Status</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .booxNotes}}
+        {{range .booxNotes}}
+        {{template "_boox_file_row" .}}
+        {{end}}
+        {{else}}
+        <tr><td colspan="9" style="text-align:center; padding:1rem;">No Boox notes found.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+    </div>
+    <div id="bulk-delete-bar" class="toolbar" style="display:none; margin-top: 1rem; padding: 0.5rem; background: var(--bg-color); border-radius: var(--radius);">
+      <button type="submit" class="btn-small" style="background: var(--status-text-failed);"
+        onclick="return confirm('Delete selected notes?')">✗ Delete Selected</button>
+      <span id="bulk-delete-count" class="text-small"></span>
+    </div>
+    </form>
+    </div> {{/* end of card */}}
+
+    {{if gt .filesTotalPages 1}}
+    <div style="margin-top:0.75rem; display:flex; align-items:center; gap:0.5rem; font-size:0.9rem;">
+      {{if gt .filesPage 1}}
+        <button class="btn-small" hx-get="/files/boox?page={{sub .filesPage 1}}{{if .booxFolderFilter}}&folder={{.booxFolderFilter | urlquery}}{{end}}{{if .booxDeviceFilter}}&device={{.booxDeviceFilter | urlquery}}{{end}}" hx-target="#main-content" hx-push-url="true">◂ Prev</button>
+      {{end}}
+      <span>Page {{.filesPage}} of {{.filesTotalPages}}</span>
+      {{if lt .filesPage .filesTotalPages}}
+        <button class="btn-small" hx-get="/files/boox?page={{add .filesPage 1}}{{if .booxFolderFilter}}&folder={{.booxFolderFilter | urlquery}}{{end}}{{if .booxDeviceFilter}}&device={{.booxDeviceFilter | urlquery}}{{end}}" hx-target="#main-content" hx-push-url="true">Next ▸</button>
+      {{end}}
+    </div>
+    {{end}}
+  {{end}}
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        if (typeof updateBulkDeleteBar === 'function') updateBulkDeleteBar();
+        if (typeof updateProcessorStatus === 'function') updateProcessorStatus();
+        {{if .detailPath}}
+        showHistory("{{.detailPath}}");
+        {{end}}
+    });
+</script>

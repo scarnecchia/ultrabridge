@@ -130,7 +130,7 @@ var defaultValues = map[string]string{
 	KeyLogFileMaxMB:          "50",
 	KeyLogFileMaxAge:         "30",
 	KeyLogFileMaxBackup:      "5",
-	KeyCalDAVCollectionName:  "Supernote Tasks",
+	KeyCalDAVCollectionName:  "Tasks",
 	KeyDueTimeMode:           "preserve",
 	KeyWebEnabled:            "true",
 	KeySocketIOURL:           "ws://supernote-service:8080/socket.io/",
@@ -172,4 +172,5 @@ var restartRequired = map[string]bool{
 	KeyDBPort:               true,
 	KeyDBEnvPath:            true,
 	KeyUserID:               true,
+	KeyCalDAVCollectionName: true,
 }

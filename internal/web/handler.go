@@ -2,9 +2,11 @@ package web
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
 	"embed"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,8 +28,18 @@ import (
 	"github.com/sysop/ultrabridge/internal/service"
 )
 
-//go:embed templates
+//go:embed all:templates
 var templateFS embed.FS
+
+// fileRowCtx is the data shape passed to the _file_row template block.
+// It pairs a single NoteFile with the containing directory's RelPath so
+// per-row buttons can emit back= query strings on their hx-post URLs.
+// Unexported: internal to the web package; templates access .File and
+// .RelPath via reflection (field export is what matters there).
+type fileRowCtx struct {
+	File    service.NoteFile
+	RelPath string
+}
 
 //go:embed static
 var staticFS embed.FS
@@ -123,6 +135,13 @@ func NewHandler(
 			return time.UnixMilli(ms).UTC().Format("2006-01-02 15:04")
 		},
 		"fileTypeStr": func(ft string) string { return ft },
+		"fileRowID": func(path string) string {
+			sum := sha1.Sum([]byte(path))
+			return "file-" + hex.EncodeToString(sum[:])[:12]
+		},
+		"makeFileRowCtx": func(f service.NoteFile, relPath string) fileRowCtx {
+			return fileRowCtx{File: f, RelPath: relPath}
+		},
 		"noteSource": func(path string) string {
 			if h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath) { return "Boox" }
 			if h.booxImportPath != "" && strings.HasPrefix(path, h.booxImportPath) { return "Boox" }
@@ -184,6 +203,8 @@ func NewHandler(
 	}
 	
 	h.mux.HandleFunc("GET /files", h.handleFiles)
+	h.mux.HandleFunc("GET /files/supernote", h.handleFilesSupernote)
+	h.mux.HandleFunc("GET /files/boox", h.handleFilesBoox)
 	h.mux.HandleFunc("GET /search", h.handleSearch)
 	h.mux.HandleFunc("POST /files/queue", h.handleFilesQueue)
 	h.mux.HandleFunc("POST /files/skip", h.handleFilesSkip)
@@ -195,8 +216,10 @@ func NewHandler(
 	h.mux.HandleFunc("GET /files/render", h.handleFilesRender)
 	h.mux.HandleFunc("GET /files/boox/render", h.handleBooxRender)
 	h.mux.HandleFunc("GET /files/boox/versions", h.handleBooxVersions)
-	h.mux.HandleFunc("POST /processor/start", h.handleProcessorStart)
-	h.mux.HandleFunc("POST /processor/stop", h.handleProcessorStop)
+	h.mux.HandleFunc("POST /processor/supernote/start", h.handleProcessorStart)
+	h.mux.HandleFunc("POST /processor/supernote/stop", h.handleProcessorStop)
+	h.mux.HandleFunc("POST /processor/boox/start", h.handleBooxProcessorStart)
+	h.mux.HandleFunc("POST /processor/boox/stop", h.handleBooxProcessorStop)
 	h.mux.HandleFunc("POST /files/scan", h.handleFilesScan)
 	h.mux.HandleFunc("POST /files/import", h.handleFilesImport)
 	h.mux.HandleFunc("POST /files/retry-failed", h.handleFilesRetryFailed)
@@ -310,38 +333,151 @@ func (h *Handler) renderTemplate(w http.ResponseWriter, r *http.Request, name st
 	t.ExecuteTemplate(w, "layout.html", data)
 }
 
+// renderFragment executes a named, pre-parsed template block (e.g. "_task_row")
+// without the layout shell. It Clones h.tmpl before executing so that h.tmpl
+// remains Clone-able: html/template permanently locks a template tree against
+// future Clones once ExecuteTemplate has run on it, and renderTemplate relies
+// on Clone per request.
+func (h *Handler) renderFragment(w http.ResponseWriter, r *http.Request, name string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	t, err := h.tmpl.Clone()
+	if err != nil {
+		h.logger.Error("failed to clone template for fragment", "name", name, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := t.ExecuteTemplate(w, name, data); err != nil {
+		h.logger.Error("failed to execute fragment", "name", name, "error", err)
+	}
+}
+
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	h.renderTemplate(w, r, "tasks", nil)
 }
 
+// handleFiles is the legacy /files entry point. It now redirects to the
+// appropriate source-specific tab, preserving any query string so existing
+// bookmarks like /files?path=Moffitt land on /files/supernote?path=Moffitt.
+// When neither source is configured, it renders a combined empty-state
+// placeholder so the user sees "configure a source in Settings" rather than
+// a 404.
 func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
+	query := ""
+	if r.URL.RawQuery != "" {
+		query = "?" + r.URL.RawQuery
+	}
+	switch {
+	case h.notes.HasSupernoteSource():
+		http.Redirect(w, r, "/files/supernote"+query, http.StatusSeeOther)
+	case h.notes.HasBooxSource():
+		http.Redirect(w, r, "/files/boox"+query, http.StatusSeeOther)
+	default:
+		data := map[string]interface{}{
+			"activeTab":  "files",
+			"filesError": "No note sources configured. Add a Supernote or Boox source in Settings.",
+		}
+		h.renderTemplate(w, r, "files_supernote", data)
+	}
+}
+
+// handleFilesSupernote renders the Supernote-only Files view. Mirrors the
+// directory/breadcrumb browser model of the legacy /files route but excludes
+// Boox notes entirely.
+func (h *Handler) handleFilesSupernote(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	data := map[string]interface{}{"activeTab": "files"}
+	data := map[string]interface{}{"activeTab": "files-supernote"}
 	if detail := r.URL.Query().Get("detail"); detail != "" {
 		data["detailPath"] = detail
 	}
 	if !h.notes.HasSupernoteSource() {
 		data["filesError"] = "No Supernote source configured. Add a source in Settings."
-		h.renderTemplate(w, r, "files", data)
+		h.renderTemplate(w, r, "files_supernote", data)
 		return
 	}
 	rawPath := r.URL.Query().Get("path")
 	relPath, ok := safeRelPath(rawPath)
-	if !ok { http.Error(w, "invalid path", http.StatusBadRequest); return }
+	if !ok {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
 	sortField, sortOrder := r.URL.Query().Get("sort"), r.URL.Query().Get("order")
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
-	if perPage <= 0 { perPage = 25 }
-	if page <= 0 { page = 1 }
+	if perPage <= 0 {
+		perPage = 25
+	}
+	if page <= 0 {
+		page = 1
+	}
 
-	files, total, err := h.notes.ListFiles(ctx, relPath, sortField, sortOrder, page, perPage)
-	if err != nil { http.Error(w, "internal error", http.StatusInternalServerError); return }
+	files, total, err := h.notes.ListSupernoteFiles(ctx, relPath, sortField, sortOrder, page, perPage)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	data["files"], data["relPath"], data["breadcrumbs"], data["filesTotalFiles"] = files, relPath, buildBreadcrumbs(relPath), total
 	data["filesPage"], data["filesPerPage"] = page, perPage
+	data["filesSort"], data["filesOrder"] = sortField, sortOrder
 	data["filesTotalPages"] = (total + perPage - 1) / perPage
-	if data["filesTotalPages"] == 0 { data["filesTotalPages"] = 1 }
-	h.renderTemplate(w, r, "files", data)
+	if data["filesTotalPages"] == 0 {
+		data["filesTotalPages"] = 1
+	}
+	h.renderTemplate(w, r, "files_supernote", data)
+}
+
+// handleFilesBoox renders the Boox-only Files view. Flat catalog list — no
+// directory navigation — with per-note Title/Folder/Device/NoteType/Pages
+// columns surfaced from BooxNoteSummary.
+func (h *Handler) handleFilesBoox(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	data := map[string]interface{}{"activeTab": "files-boox"}
+	if detail := r.URL.Query().Get("detail"); detail != "" {
+		data["detailPath"] = detail
+	}
+	if !h.notes.HasBooxSource() {
+		data["filesError"] = "No Boox source configured. Add a source in Settings."
+		h.renderTemplate(w, r, "files_boox", data)
+		return
+	}
+	sortField, sortOrder := r.URL.Query().Get("sort"), r.URL.Query().Get("order")
+	folder := r.URL.Query().Get("folder")
+	device := r.URL.Query().Get("device")
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage <= 0 {
+		perPage = 25
+	}
+	if page <= 0 {
+		page = 1
+	}
+
+	rows, total, err := h.notes.ListBooxNotes(ctx, device, folder, sortField, sortOrder, page, perPage)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	folders, err := h.notes.ListBooxFolders(ctx)
+	if err != nil {
+		// Non-fatal: the folder-filter row is a convenience. Log and continue
+		// so the file list still renders.
+		h.logger.Error("list boox folders", "error", err)
+	}
+	devices, err := h.notes.ListBooxDevices(ctx)
+	if err != nil {
+		h.logger.Error("list boox devices", "error", err)
+	}
+	data["booxNotes"], data["filesTotalFiles"] = rows, total
+	data["booxFolders"], data["booxFolderFilter"] = folders, folder
+	data["booxDevices"], data["booxDeviceFilter"] = devices, device
+	data["filesPage"], data["filesPerPage"] = page, perPage
+	data["filesSort"], data["filesOrder"] = sortField, sortOrder
+	data["filesTotalPages"] = (total + perPage - 1) / perPage
+	if data["filesTotalPages"] == 0 {
+		data["filesTotalPages"] = 1
+	}
+	h.renderTemplate(w, r, "files_boox", data)
 }
 
 func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -392,11 +528,15 @@ func (h *Handler) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, err := h.tasks.Create(r.Context(), title, dueAt); err != nil {
+	created, err := h.tasks.Create(r.Context(), title, dueAt)
+	if err != nil {
 		http.Error(w, "failed to create task", http.StatusInternalServerError)
 		return
 	}
-	if r.Header.Get("HX-Request") == "true" { h.handleIndex(w, r); return }
+	if r.Header.Get("HX-Request") == "true" {
+		h.renderFragment(w, r, "_task_row", created)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -414,7 +554,16 @@ func (h *Handler) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to complete task", http.StatusInternalServerError)
 		return
 	}
-	if r.Header.Get("HX-Request") == "true" { h.handleIndex(w, r); return }
+	if r.Header.Get("HX-Request") == "true" {
+		t, err := h.tasks.Get(r.Context(), taskID)
+		if err != nil {
+			h.logger.Error("failed to fetch completed task for fragment render", "id", taskID, "error", err)
+			http.Error(w, "failed to render row", http.StatusInternalServerError)
+			return
+		}
+		h.renderFragment(w, r, "_task_row", t)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -425,15 +574,43 @@ func (h *Handler) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(ids) > 0 {
-		if action == "complete" { h.tasks.BulkComplete(r.Context(), ids) } else if action == "delete" { h.tasks.BulkDelete(r.Context(), ids) }
+		var err error
+		if action == "complete" {
+			err = h.tasks.BulkComplete(r.Context(), ids)
+		} else {
+			err = h.tasks.BulkDelete(r.Context(), ids)
+		}
+		if err != nil {
+			http.Error(w, "bulk action failed", http.StatusInternalServerError)
+			return
+		}
 	}
-	if r.Header.Get("HX-Request") == "true" { h.handleIndex(w, r); return }
+	if r.Header.Get("HX-Request") == "true" {
+		if action == "complete" {
+			for _, id := range ids {
+				t, err := h.tasks.Get(r.Context(), id)
+				if err != nil {
+					h.logger.Error("bulk complete: failed to fetch task for fragment render", "id", id, "error", err)
+					continue
+				}
+				h.renderFragment(w, r, "_task_row", t)
+			}
+		}
+		// action=delete: empty response body; client removes checked rows.
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (h *Handler) handlePurgeCompleted(w http.ResponseWriter, r *http.Request) {
-	h.tasks.PurgeCompleted(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleIndex(w, r); return }
+	if err := h.tasks.PurgeCompleted(r.Context()); err != nil {
+		http.Error(w, "purge failed", http.StatusInternalServerError)
+		return
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -448,6 +625,9 @@ func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		cfg.ChatEnabled = r.FormValue("chat_enabled") == "true"
 		cfg.ChatAPIURL, cfg.ChatModel = r.FormValue("chat_api_url"), r.FormValue("chat_model")
 		cfg.LogVerboseAPI = r.FormValue("log_verbose_api") == "true"
+		if v := strings.TrimSpace(r.FormValue("caldav_collection_name")); v != "" {
+			cfg.CalDAVCollectionName = v
+		}
 	}
 	h.config.UpdateConfig(r.Context(), cfg)
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)
@@ -462,53 +642,91 @@ func (h *Handler) handleBackfillEmbeddings(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
+// respondEmptyOrRedirect is the shared HX/non-HX tail for broad file mutations
+// (scan, import, retry-failed, migrate-imports, processor start/stop). On HX
+// it emits an empty 200 body; the client-side poller picks up the effect on
+// its next tick (updateProcessorStatus is also hooked via hx-on to refresh
+// immediately). On non-HX it redirects to the caller-specified tab so each
+// action lands back on the page it was triggered from.
+func (h *Handler) respondEmptyOrRedirect(w http.ResponseWriter, r *http.Request, redirectTo string) {
+	if r.Header.Get("HX-Request") == "true" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, redirectTo, http.StatusSeeOther)
+}
+
 func (h *Handler) handleProcessorStart(w http.ResponseWriter, r *http.Request) {
 	h.notes.StartProcessor(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	h.respondEmptyOrRedirect(w, r, "/files/supernote")
 }
 
 func (h *Handler) handleProcessorStop(w http.ResponseWriter, r *http.Request) {
 	h.notes.StopProcessor(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	h.respondEmptyOrRedirect(w, r, "/files/supernote")
+}
+
+func (h *Handler) handleBooxProcessorStart(w http.ResponseWriter, r *http.Request) {
+	h.notes.StartBooxProcessor(r.Context())
+	h.respondEmptyOrRedirect(w, r, "/files/boox")
+}
+
+func (h *Handler) handleBooxProcessorStop(w http.ResponseWriter, r *http.Request) {
+	h.notes.StopBooxProcessor(r.Context())
+	h.respondEmptyOrRedirect(w, r, "/files/boox")
 }
 
 func (h *Handler) handleFilesScan(w http.ResponseWriter, r *http.Request) {
 	h.notes.ScanFiles(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	h.respondEmptyOrRedirect(w, r, "/files/supernote")
 }
 
 func (h *Handler) handleFilesImport(w http.ResponseWriter, r *http.Request) {
 	h.notes.ImportFiles(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	h.respondEmptyOrRedirect(w, r, "/files/boox")
 }
 
 func (h *Handler) handleFilesRetryFailed(w http.ResponseWriter, r *http.Request) {
 	h.notes.RetryFailed(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	h.respondEmptyOrRedirect(w, r, "/files/boox")
 }
 
 func (h *Handler) handleFilesDeleteNote(w http.ResponseWriter, r *http.Request) {
-	h.notes.DeleteNote(r.Context(), r.FormValue("path"))
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	if err := h.notes.DeleteNote(r.Context(), r.FormValue("path")); err != nil {
+		http.Error(w, "failed to delete note", http.StatusInternalServerError)
+		return
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	// DeleteNote is Boox-only (service layer no-ops Supernote paths), so
+	// the non-HX landing tab is always /files/boox.
+	http.Redirect(w, r, "/files/boox", http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesDeleteBulk(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
 	paths := r.Form["paths"]
-	if len(paths) > 0 { h.notes.BulkDelete(r.Context(), paths) }
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	if len(paths) > 0 {
+		if err := h.notes.BulkDelete(r.Context(), paths); err != nil {
+			http.Error(w, "failed to delete", http.StatusInternalServerError)
+			return
+		}
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/files/boox", http.StatusSeeOther)
 }
 
 func (h *Handler) handleFilesMigrateImports(w http.ResponseWriter, r *http.Request) {
 	h.notes.MigrateImports(r.Context())
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files", http.StatusSeeOther)
+	h.respondEmptyOrRedirect(w, r, "/files/boox")
 }
 
 func (h *Handler) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
@@ -524,28 +742,74 @@ func (h *Handler) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
+// respondFileRowOrRedirect fetches the updated file and emits a source-
+// specific row fragment on HX-Request; otherwise redirects back to the
+// appropriate tab with the caller-supplied `back` query string preserved.
+// Boox paths dispatch to `_boox_file_row` + `/files/boox`; everything else
+// goes to `_sn_file_row` + `/files/supernote`.
+func (h *Handler) respondFileRowOrRedirect(w http.ResponseWriter, r *http.Request, path string) {
+	isBoox := h.booxNotesPath != "" && strings.HasPrefix(path, h.booxNotesPath)
+	if r.Header.Get("HX-Request") == "true" {
+		if isBoox {
+			bn, err := h.notes.GetBooxNote(r.Context(), path)
+			if err != nil {
+				h.logger.Error("failed to fetch boox note for fragment render", "path", path, "error", err)
+				http.Error(w, "failed to render row", http.StatusInternalServerError)
+				return
+			}
+			h.renderFragment(w, r, "_boox_file_row", bn)
+			return
+		}
+		f, err := h.notes.GetFile(r.Context(), path)
+		if err != nil {
+			h.logger.Error("failed to fetch file for fragment render", "path", path, "error", err)
+			http.Error(w, "failed to render row", http.StatusInternalServerError)
+			return
+		}
+		h.renderFragment(w, r, "_sn_file_row", fileRowCtx{File: f, RelPath: r.FormValue("back")})
+		return
+	}
+	if isBoox {
+		http.Redirect(w, r, "/files/boox", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/files/supernote?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
+}
+
 func (h *Handler) handleFilesQueue(w http.ResponseWriter, r *http.Request) {
-	h.notes.Enqueue(r.Context(), r.FormValue("path"), false)
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
+	path := r.FormValue("path")
+	if err := h.notes.Enqueue(r.Context(), path, false); err != nil {
+		http.Error(w, "failed to enqueue", http.StatusInternalServerError)
+		return
+	}
+	h.respondFileRowOrRedirect(w, r, path)
 }
 
 func (h *Handler) handleFilesSkip(w http.ResponseWriter, r *http.Request) {
-	h.notes.Skip(r.Context(), r.FormValue("path"), "manual")
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
+	path := r.FormValue("path")
+	if err := h.notes.Skip(r.Context(), path, "manual"); err != nil {
+		http.Error(w, "failed to skip", http.StatusInternalServerError)
+		return
+	}
+	h.respondFileRowOrRedirect(w, r, path)
 }
 
 func (h *Handler) handleFilesUnskip(w http.ResponseWriter, r *http.Request) {
-	h.notes.Unskip(r.Context(), r.FormValue("path"))
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
+	path := r.FormValue("path")
+	if err := h.notes.Unskip(r.Context(), path); err != nil {
+		http.Error(w, "failed to unskip", http.StatusInternalServerError)
+		return
+	}
+	h.respondFileRowOrRedirect(w, r, path)
 }
 
 func (h *Handler) handleFilesForce(w http.ResponseWriter, r *http.Request) {
-	h.notes.Enqueue(r.Context(), r.FormValue("path"), true)
-	if r.Header.Get("HX-Request") == "true" { h.handleFiles(w, r); return }
-	http.Redirect(w, r, "/files?path="+url.QueryEscape(r.FormValue("back")), http.StatusSeeOther)
+	path := r.FormValue("path")
+	if err := h.notes.Enqueue(r.Context(), path, true); err != nil {
+		http.Error(w, "failed to force-enqueue", http.StatusInternalServerError)
+		return
+	}
+	h.respondFileRowOrRedirect(w, r, path)
 }
 
 func (h *Handler) handleBooxRender(w http.ResponseWriter, r *http.Request) {
@@ -757,6 +1021,10 @@ func (h *Handler) baseTemplateData(ctx context.Context) map[string]interface{} {
 		data["RestartRequired"] = h.config.IsRestartRequired()
 	}
 	data["chatEnabled"] = h.search != nil
+	if h.notes != nil {
+		data["HasSupernoteSource"] = h.notes.HasSupernoteSource()
+		data["HasBooxSource"] = h.notes.HasBooxSource()
+	}
 	return data
 }
 

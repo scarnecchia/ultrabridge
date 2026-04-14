@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"log/slog"
 	"time"
+
+	"github.com/sysop/ultrabridge/internal/processor"
 )
 
 // Processor manages the Boox notes processing pipeline.
@@ -96,10 +98,13 @@ func (p *Processor) processJob(ctx context.Context, job *BooxJob) {
 	}
 
 	ocrSource := "api"
+	apiModel := ""
 	if p.cfg.OCR == nil {
 		ocrSource = ""
+	} else if client, ok := p.cfg.OCR.(*processor.OCRClient); ok {
+		apiModel = client.Model()
 	}
-	if err := p.store.CompleteJob(ctx, job.ID, ocrSource, ""); err != nil {
+	if err := p.store.CompleteJob(ctx, job.ID, ocrSource, apiModel); err != nil {
 		p.logger.Error("complete boox job", "job_id", job.ID, "error", err)
 	}
 	p.logger.Info("boox note processed", "path", job.NotePath, "job_id", job.ID)

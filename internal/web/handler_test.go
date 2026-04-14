@@ -2,7 +2,9 @@ package web
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -67,7 +69,7 @@ func LegacyNewHandler(
 	}
 	
 	// Create actual service with mocks
-	noteSvc := service.NewNoteService(noteStore, proc, booxStore, booxImporter, searchIndex, scanner, noteDB, booxCachePath, booxNotesPath, logger)
+	noteSvc := service.NewNoteService(noteStore, proc, booxStore, booxImporter, nil, searchIndex, scanner, noteDB, booxCachePath, booxNotesPath, logger)
 	searchSvc := service.NewSearchService(searchIndex, retriever, embedder, embedStore, embedModel, chatStore, ragDisplay.ChatAPIURL, ragDisplay.ChatModel, logger)
 	config := service.NewConfigService(noteDB, syncProvider, runningConfig)
 
@@ -471,6 +473,72 @@ func TestPostCreateTaskMinimal(t *testing.T) {
 	}
 }
 
+// TestEmptyStateRendersTaskTable verifies that GET / with zero tasks still
+// renders the #task-table skeleton (including tbody) so that the create form's
+// hx-target="#task-table tbody" swap works on the first-ever task creation.
+// Prior to this structural fix, an empty task list rendered a bare
+// .empty-state div with no table, so HTMX silently failed to swap the first
+// created row into the DOM and the UI appeared to do nothing.
+func TestEmptyStateRendersTaskTable(t *testing.T) {
+	handler := newTestHandler()
+	// newTestHandler's mockTaskService starts empty.
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET / returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `id="task-table"`) {
+		t.Errorf("empty-state page missing #task-table; body:\n%s", body)
+	}
+	if !strings.Contains(body, `<tbody>`) {
+		t.Errorf("empty-state page missing <tbody>; body:\n%s", body)
+	}
+	if !strings.Contains(body, `id="empty-state-row"`) {
+		t.Errorf("empty-state page missing empty-state-row placeholder; body:\n%s", body)
+	}
+	if !strings.Contains(body, `No tasks yet`) {
+		t.Errorf("empty-state page missing user-facing message; body:\n%s", body)
+	}
+}
+
+// TestPostCreateTaskHXReturnsRow verifies AC1.6: an HX-Request POST to
+// /tasks returns 200 with a single <tr id="task-{newID}"> fragment carrying
+// the submitted title; non-HX behavior (redirect) covered by sibling tests.
+func TestPostCreateTaskHXReturnsRow(t *testing.T) {
+	store := newMockTaskStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+
+	tasks := service.NewTaskService(store, nil)
+	handler := NewHandler(tasks, nil, nil, nil, nil, "", "", logger, broadcaster)
+
+	form := url.Values{}
+	form.Set("title", "HX Task")
+	req := httptest.NewRequest("POST", "/tasks", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX-Request POST returned %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `HX Task`) {
+		t.Errorf("response missing submitted title; body:\n%s", body)
+	}
+	// Deterministic id comes from the TaskID generator; we only know the prefix.
+	if !strings.Contains(body, `id="task-`) {
+		t.Errorf("response missing id=\"task-…\" prefix; body:\n%s", body)
+	}
+	if strings.Contains(body, `<nav class="sidebar">`) {
+		t.Errorf("response leaked layout shell; body:\n%s", body)
+	}
+}
+
 // TestPostCreateTaskWithDueDate verifies POST /tasks with optional due date
 func TestPostCreateTaskWithDueDate(t *testing.T) {
 	store := newMockTaskStore()
@@ -603,6 +671,45 @@ func TestPostCompleteTaskUpdatesStatus(t *testing.T) {
 	}
 }
 
+// TestPostCompleteTaskHXReturnsRow verifies AC1.1 and AC1.3: an HX-Request
+// to POST /tasks/{id}/complete returns 200 with a single <tr id="task-{id}">
+// carrying data-status="completed" so the client-side toggleCompleted filter
+// keeps working.
+func TestPostCompleteTaskHXReturnsRow(t *testing.T) {
+	store := newMockTaskStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+
+	tasks := service.NewTaskService(store, nil)
+	handler := NewHandler(tasks, nil, nil, nil, nil, "", "", logger, broadcaster)
+
+	store.tasks["task-hx"] = &taskstore.Task{
+		TaskID:    "task-hx",
+		Title:     taskstore.SqlStr("Complete me"),
+		Status:    taskstore.SqlStr("needsAction"),
+		IsDeleted: "N",
+	}
+
+	req := httptest.NewRequest("POST", "/tasks/task-hx/complete", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX-Request POST returned %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `id="task-task-hx"`) {
+		t.Errorf("response missing id=\"task-task-hx\"; body:\n%s", body)
+	}
+	if !strings.Contains(body, `data-status="completed"`) {
+		t.Errorf("response missing data-status=\"completed\"; body:\n%s", body)
+	}
+	if strings.Contains(body, `<nav class="sidebar">`) {
+		t.Errorf("response leaked layout shell (should be a bare row fragment); body:\n%s", body)
+	}
+}
+
 // TestPostCompleteTaskAlreadyCompleted verifies completing an already-completed task
 func TestPostCompleteTaskAlreadyCompleted(t *testing.T) {
 	store := newMockTaskStore()
@@ -726,6 +833,110 @@ func TestPostCreateTaskWithWhitespace(t *testing.T) {
 	}
 }
 
+// TestBulkCompleteHXReturnsRowFragments verifies AC1.4: HX POST /tasks/bulk with
+// action=complete and two task IDs returns 200 with one <tr> per task, concatenated.
+func TestBulkCompleteHXReturnsRowFragments(t *testing.T) {
+	store := newMockTaskStore()
+	store.tasks["a"] = &taskstore.Task{TaskID: "a", Title: taskstore.SqlStr("A"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
+	store.tasks["b"] = &taskstore.Task{TaskID: "b", Title: taskstore.SqlStr("B"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
+	handler := LegacyNewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+
+	form := url.Values{}
+	form.Set("action", "complete")
+	form.Add("task_ids", "a")
+	form.Add("task_ids", "b")
+	req := httptest.NewRequest("POST", "/tasks/bulk", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX bulk complete returned %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `id="task-a"`) {
+		t.Errorf("response missing id=\"task-a\"; body:\n%s", body)
+	}
+	if !strings.Contains(body, `id="task-b"`) {
+		t.Errorf("response missing id=\"task-b\"; body:\n%s", body)
+	}
+	if got := strings.Count(body, `data-status="completed"`); got != 2 {
+		t.Errorf("response contains %d completed rows, want 2; body:\n%s", got, body)
+	}
+}
+
+// TestBulkDeleteHXReturnsEmptyBody verifies AC1.5: HX POST /tasks/bulk with
+// action=delete returns 200 with an empty body (client removes rows via JS).
+func TestBulkDeleteHXReturnsEmptyBody(t *testing.T) {
+	store := newMockTaskStore()
+	store.tasks["a"] = &taskstore.Task{TaskID: "a", Title: taskstore.SqlStr("A"), IsDeleted: "N"}
+	handler := LegacyNewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+
+	form := url.Values{}
+	form.Set("action", "delete")
+	form.Add("task_ids", "a")
+	req := httptest.NewRequest("POST", "/tasks/bulk", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX bulk delete returned %d, want %d", w.Code, http.StatusOK)
+	}
+	if body := w.Body.String(); body != "" {
+		t.Errorf("expected empty body, got %q", body)
+	}
+	if store.tasks["a"].IsDeleted != "Y" {
+		t.Errorf("task a should be soft-deleted")
+	}
+}
+
+// TestPurgeCompletedHXReturnsEmptyBody verifies AC1.7: HX POST /tasks/purge-completed
+// returns 200 with an empty body; client-side JS sweeps completed rows from the DOM.
+func TestPurgeCompletedHXReturnsEmptyBody(t *testing.T) {
+	store := newMockTaskStore()
+	store.tasks["done"] = &taskstore.Task{TaskID: "done", Title: taskstore.SqlStr("Done"), Status: taskstore.SqlStr("completed"), IsDeleted: "N"}
+	store.tasks["open"] = &taskstore.Task{TaskID: "open", Title: taskstore.SqlStr("Open"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
+	handler := LegacyNewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+
+	req := httptest.NewRequest("POST", "/tasks/purge-completed", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX purge returned %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if body := w.Body.String(); body != "" {
+		t.Errorf("expected empty body, got %q", body)
+	}
+	if store.tasks["done"].IsDeleted != "Y" {
+		t.Error("completed task should be purged (IsDeleted='Y')")
+	}
+	if store.tasks["open"].IsDeleted != "N" {
+		t.Error("non-completed task should remain")
+	}
+}
+
+// TestPurgeCompletedNonHXRedirects verifies the non-HX path still redirects to /.
+func TestPurgeCompletedNonHXRedirects(t *testing.T) {
+	store := newMockTaskStore()
+	handler := LegacyNewHandler(store, nil, nil, nil, nil, nil, nil, nil, nil, "", "", nil, slog.Default(), logging.NewLogBroadcaster(), nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
+
+	req := httptest.NewRequest("POST", "/tasks/purge-completed", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("non-HX purge returned %d, want %d", w.Code, http.StatusSeeOther)
+	}
+	if loc := w.Header().Get("Location"); loc != "/" {
+		t.Errorf("redirect location is %q, want /", loc)
+	}
+}
+
 func TestBulkCompleteMultipleTasks(t *testing.T) {
 	store := newMockTaskStore()
 	store.tasks["t1"] = &taskstore.Task{TaskID: "t1", Title: taskstore.SqlStr("Task 1"), Status: taskstore.SqlStr("needsAction"), IsDeleted: "N"}
@@ -828,7 +1039,7 @@ func TestHandleFiles_NoteStoreNil(t *testing.T) {
 	notes := &mockNoteService{pipelineConfigured: false}
 	handler := NewHandler(nil, notes, nil, nil, nil, "", "", logger, broadcaster)
 
-	req := httptest.NewRequest("GET", "/files", nil)
+	req := httptest.NewRequest("GET", "/files/supernote", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -840,7 +1051,9 @@ func TestHandleFiles_NoteStoreNil(t *testing.T) {
 	}
 }
 
-// TestHandleFiles_PathTraversal verifies AC1.5: traversal attempts return 400
+// TestHandleFiles_PathTraversal verifies that traversal attempts on the
+// Supernote tab return 400. The legacy /files route is now a redirect,
+// so traversal checks happen on the destination handler.
 func TestHandleFiles_PathTraversal(t *testing.T) {
 	ns := newMockNoteStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -848,7 +1061,7 @@ func TestHandleFiles_PathTraversal(t *testing.T) {
 	handler := LegacyNewHandler(newMockTaskStore(), nil, ns, nil, nil, nil, nil, nil, nil, "", "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
 	for _, badPath := range []string{"../../etc", "../secrets", "/etc/passwd"} {
-		req := httptest.NewRequest("GET", "/files?path="+badPath, nil)
+		req := httptest.NewRequest("GET", "/files/supernote?path="+badPath, nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
 		if w.Code != http.StatusBadRequest {
@@ -857,16 +1070,16 @@ func TestHandleFiles_PathTraversal(t *testing.T) {
 	}
 }
 
-// TestHandleFiles_TopLevel verifies AC1.1, AC1.3, AC1.4
+// TestHandleFiles_TopLevel verifies Supernote-tab rendering of top-level files.
 func TestHandleFiles_TopLevel(t *testing.T) {
 	handler := newTestHandler()
 	notes := handler.notes.(*mockNoteService)
 	notes.files = []service.NoteFile{
-		{Name: "test.note", FileType: "note", RelPath: "test.note"},
-		{Name: "readme.pdf", FileType: "pdf", RelPath: "readme.pdf"},
+		{Name: "test.note", FileType: "note", RelPath: "test.note", Source: "supernote"},
+		{Name: "readme.pdf", FileType: "pdf", RelPath: "readme.pdf", Source: "supernote"},
 	}
 
-	req := httptest.NewRequest("GET", "/files", nil)
+	req := httptest.NewRequest("GET", "/files/supernote", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -885,15 +1098,15 @@ func TestHandleFiles_TopLevel(t *testing.T) {
 	}
 }
 
-// TestHandleFiles_WithPath verifies AC1.2: subdirectory path shows contents and breadcrumb
+// TestHandleFiles_WithPath verifies Supernote-tab subdirectory navigation.
 func TestHandleFiles_WithPath(t *testing.T) {
 	handler := newTestHandler()
 	notes := handler.notes.(*mockNoteService)
 	notes.files = []service.NoteFile{
-		{Name: "deep.note", FileType: "note", RelPath: "Note/Folder/deep.note"},
+		{Name: "deep.note", FileType: "note", RelPath: "Note/Folder/deep.note", Source: "supernote"},
 	}
 
-	req := httptest.NewRequest("GET", "/files?path=Note/Folder", nil)
+	req := httptest.NewRequest("GET", "/files/supernote?path=Note/Folder", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -907,6 +1120,61 @@ func TestHandleFiles_WithPath(t *testing.T) {
 	if !strings.Contains(body, "Folder") {
 		t.Error("expected breadcrumb Folder in response")
 	}
+}
+
+// TestHandleFilesRedirect verifies the legacy /files route redirects to the
+// right tab based on configured sources, preserving any query string.
+func TestHandleFilesRedirect(t *testing.T) {
+	t.Run("supernote_configured", func(t *testing.T) {
+		h := newTestHandler()
+		h.notes.(*mockNoteService).pipelineConfigured = true
+		h.notes.(*mockNoteService).booxEnabled = false
+
+		req := httptest.NewRequest(http.MethodGet, "/files?path=Personal", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status=%d, want 303", w.Code)
+		}
+		if loc := w.Header().Get("Location"); loc != "/files/supernote?path=Personal" {
+			t.Errorf("Location=%q", loc)
+		}
+	})
+
+	t.Run("boox_only", func(t *testing.T) {
+		h := newTestHandler()
+		h.notes.(*mockNoteService).pipelineConfigured = false
+		h.notes.(*mockNoteService).booxEnabled = true
+
+		req := httptest.NewRequest(http.MethodGet, "/files", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status=%d, want 303", w.Code)
+		}
+		if loc := w.Header().Get("Location"); loc != "/files/boox" {
+			t.Errorf("Location=%q", loc)
+		}
+	})
+
+	t.Run("neither_renders_placeholder", func(t *testing.T) {
+		h := newTestHandler()
+		h.notes.(*mockNoteService).pipelineConfigured = false
+		h.notes.(*mockNoteService).booxEnabled = false
+
+		req := httptest.NewRequest(http.MethodGet, "/files", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d, want 200", w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "No note sources configured") {
+			t.Errorf("expected placeholder message; body:\n%s", w.Body.String())
+		}
+	})
 }
 
 // Helper functions for C&C tests
@@ -1503,5 +1771,815 @@ func TestHandleMCPTokenCreate_EmptyLabel(t *testing.T) {
 
 	if w2.Code != http.StatusBadRequest {
 		t.Errorf("POST with whitespace-only label status = %d, want 400", w2.Code)
+	}
+}
+
+// TestRenderFragmentAC41 verifies htmx-fragment-mutations.AC4.1: renderFragment
+// renders a named template block without the layout shell. Uses the real
+// _task_row fragment (introduced in Phase 2) as the probe; the earlier in-test
+// _test_fixture_row bootstrap was removed in Phase 6.
+// AC4.3 (fragments loaded via the existing embed.FS) is demonstrated by the
+// same test — _task_row is picked up via ParseFS in NewHandler, no new
+// filesystem plumbing.
+func TestRenderFragmentAC41(t *testing.T) {
+	h := newTestHandler()
+	task := service.Task{
+		ID:        "phase6-probe",
+		Title:     "Phase-6 regression fixture",
+		Status:    service.StatusNeedsAction,
+		CreatedAt: time.Now().UTC(),
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	h.renderFragment(w, r, "_task_row", task)
+
+	body := w.Body.String()
+	if !strings.Contains(body, `id="task-phase6-probe"`) {
+		t.Errorf("response missing id=\"task-phase6-probe\"; body:\n%s", body)
+	}
+	if !strings.Contains(body, `Phase-6 regression fixture`) {
+		t.Errorf("response missing title text; body:\n%s", body)
+	}
+	if strings.Contains(body, `<nav class="sidebar">`) {
+		t.Errorf("response leaked layout shell; body:\n%s", body)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html…", ct)
+	}
+}
+
+// TestRenderTemplate verifies AC4.2: renderTemplate continues to branch on HX-Request
+// without regression. Tests the tasks tab both with and without HX-Request.
+func TestRenderTemplate(t *testing.T) {
+	t.Run("without HX-Request includes layout", func(t *testing.T) {
+		h := newTestHandler()
+		data := map[string]interface{}{
+			"tasks": []service.Task{},
+		}
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/", nil)
+		// No HX-Request header
+
+		h.renderTemplate(w, r, "tasks", data)
+
+		// Layout marker: should be present when NOT an HTMX request
+		body := w.Body.String()
+		if !strings.Contains(body, `<nav class="sidebar">`) {
+			t.Errorf("Without HX-Request, response should contain layout marker '<nav class=\"sidebar\">', got:\n%s", body)
+		}
+
+		// Task tab marker: should still be present
+		if !strings.Contains(body, `Create New Task`) {
+			t.Errorf("Without HX-Request, response should contain task tab marker 'Create New Task', got:\n%s", body)
+		}
+	})
+
+	t.Run("with HX-Request omits layout", func(t *testing.T) {
+		h := newTestHandler()
+		data := map[string]interface{}{
+			"tasks": []service.Task{},
+		}
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("HX-Request", "true")
+
+		h.renderTemplate(w, r, "tasks", data)
+
+		body := w.Body.String()
+
+		// Layout marker: should NOT be present when HX-Request is true
+		if strings.Contains(body, `<nav class="sidebar">`) {
+			t.Errorf("With HX-Request: true, response should NOT contain layout marker '<nav class=\"sidebar\">', got:\n%s", body)
+		}
+
+		// Task tab marker: should still be present
+		if !strings.Contains(body, `Create New Task`) {
+			t.Errorf("With HX-Request: true, response should contain task tab marker 'Create New Task', got:\n%s", body)
+		}
+	})
+}
+
+// TestTaskRowFragmentIdentity verifies htmx-fragment-mutations.AC3.3: a task rendered
+// via renderFragment("_task_row", task) produces the same load-bearing HTML tokens as
+// the same task rendered inside tasks.html via {{range .tasks}}{{template "_task_row" .}}{{end}}.
+// Substring equivalence on the load-bearing tokens is sufficient — whitespace normalization
+// by html/template may differ between the two paths.
+func TestTaskRowFragmentIdentity(t *testing.T) {
+	h := newTestHandler()
+	task := service.Task{ID: "abc", Title: "Fixture Row", Status: service.StatusNeedsAction}
+	h.tasks.(*mockTaskService).tasks = []service.Task{task}
+
+	// Path 1: renderFragment directly.
+	w1 := httptest.NewRecorder()
+	r1 := httptest.NewRequest(http.MethodGet, "/", nil)
+	h.renderFragment(w1, r1, "_task_row", task)
+	body1 := w1.Body.String()
+
+	// Path 2: HTMX GET / — handleIndex renders tasks.html which invokes
+	// {{template "_task_row" .}} inside {{range .tasks}}.
+	w2 := httptest.NewRecorder()
+	r2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	r2.Header.Set("HX-Request", "true")
+	h.ServeHTTP(w2, r2)
+	body2 := w2.Body.String()
+
+	markers := []string{
+		`id="task-abc"`,
+		`data-status="needsAction"`,
+		`Fixture Row`,
+		`hx-post="/tasks/abc/complete"`,
+	}
+	for _, m := range markers {
+		if !strings.Contains(body1, m) {
+			t.Errorf("renderFragment output missing marker %q\nbody:\n%s", m, body1)
+		}
+		if !strings.Contains(body2, m) {
+			t.Errorf("tasks.html render missing marker %q\nbody:\n%s", m, body2)
+		}
+	}
+}
+
+// TestFileRowFragmentIdentity verifies AC3.4 post-split: rows rendered inside
+// the tab template (files_supernote.html / files_boox.html) carry the same
+// load-bearing HTML tokens as rows rendered via h.renderFragment after a
+// mutation. Ensures a swapped row matches the shape of the row it replaces.
+func TestFileRowFragmentIdentity(t *testing.T) {
+	// fileRowID formula from handler.go — kept in-test to avoid exporting.
+	fileRowID := func(path string) string {
+		sum := sha1.Sum([]byte(path))
+		return "file-" + hex.EncodeToString(sum[:])[:12]
+	}
+
+	t.Run("supernote", func(t *testing.T) {
+		file := service.NoteFile{
+			Path:      "/notes/foo.note",
+			RelPath:   "foo.note",
+			Name:      "foo.note",
+			FileType:  "note",
+			JobStatus: "done",
+			Source:    "supernote",
+		}
+
+		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		broadcaster := logging.NewLogBroadcaster()
+		notes := &mockNoteService{
+			files:              []service.NoteFile{file},
+			docs:               make(map[string][]service.SearchResult),
+			contents:           make(map[string]interface{}),
+			pipelineConfigured: true,
+		}
+		h := NewHandler(
+			&mockTaskService{}, notes,
+			&mockSearchService{}, &mockConfigService{},
+			nil, "", "", logger, broadcaster,
+		)
+
+		// Path 1: render through files_supernote.html via HX GET /files/supernote.
+		w1 := httptest.NewRecorder()
+		r1 := httptest.NewRequest(http.MethodGet, "/files/supernote", nil)
+		r1.Header.Set("HX-Request", "true")
+		h.ServeHTTP(w1, r1)
+		if w1.Code != http.StatusOK {
+			t.Fatalf("GET /files/supernote returned %d; body=%s", w1.Code, w1.Body.String())
+		}
+		body1 := w1.Body.String()
+
+		// Path 2: renderFragment directly with the same ctx shape.
+		w2 := httptest.NewRecorder()
+		r2 := httptest.NewRequest(http.MethodGet, "/", nil)
+		h.renderFragment(w2, r2, "_sn_file_row", fileRowCtx{File: file, RelPath: ""})
+		body2 := w2.Body.String()
+
+		expectedID := fileRowID(file.Path)
+		markers := []string{
+			`id="` + expectedID + `"`,
+			file.Name,
+			`hx-target="closest tr"`,
+		}
+		for _, m := range markers {
+			if !strings.Contains(body1, m) {
+				t.Errorf("files_supernote.html render missing marker %q; body:\n%s", m, body1)
+			}
+			if !strings.Contains(body2, m) {
+				t.Errorf("_sn_file_row renderFragment missing marker %q; body:\n%s", m, body2)
+			}
+		}
+	})
+
+	t.Run("boox", func(t *testing.T) {
+		summary := service.BooxNoteSummary{
+			Path:      "/boox/bar.note",
+			Filename:  "bar.note",
+			Title:     "Bar Notes",
+			Folder:    "Personal",
+			JobStatus: "done",
+		}
+
+		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		broadcaster := logging.NewLogBroadcaster()
+		notes := &mockNoteService{
+			booxNotes:   []service.BooxNoteSummary{summary},
+			docs:        make(map[string][]service.SearchResult),
+			contents:    make(map[string]interface{}),
+			booxEnabled: true,
+		}
+		h := NewHandler(
+			&mockTaskService{}, notes,
+			&mockSearchService{}, &mockConfigService{},
+			nil, "", "/boox", logger, broadcaster,
+		)
+
+		// Path 1: render through files_boox.html via HX GET /files/boox.
+		w1 := httptest.NewRecorder()
+		r1 := httptest.NewRequest(http.MethodGet, "/files/boox", nil)
+		r1.Header.Set("HX-Request", "true")
+		h.ServeHTTP(w1, r1)
+		if w1.Code != http.StatusOK {
+			t.Fatalf("GET /files/boox returned %d; body=%s", w1.Code, w1.Body.String())
+		}
+		body1 := w1.Body.String()
+
+		// Path 2: renderFragment directly with the same BooxNoteSummary.
+		w2 := httptest.NewRecorder()
+		r2 := httptest.NewRequest(http.MethodGet, "/", nil)
+		h.renderFragment(w2, r2, "_boox_file_row", summary)
+		body2 := w2.Body.String()
+
+		expectedID := fileRowID(summary.Path)
+		markers := []string{
+			`id="` + expectedID + `"`,
+			summary.Title,
+			summary.Folder,
+			`hx-target="closest tr"`,
+		}
+		for _, m := range markers {
+			if !strings.Contains(body1, m) {
+				t.Errorf("files_boox.html render missing marker %q; body:\n%s", m, body1)
+			}
+			if !strings.Contains(body2, m) {
+				t.Errorf("_boox_file_row renderFragment missing marker %q; body:\n%s", m, body2)
+			}
+		}
+	})
+}
+
+// fileRowIDFor is a test-only helper mirroring handler.go's fileRowID FuncMap
+// entry. Duplicated deliberately; if the production formula changes, these
+// tests will fail and force the update.
+func fileRowIDFor(path string) string {
+	sum := sha1.Sum([]byte(path))
+	return "file-" + hex.EncodeToString(sum[:])[:12]
+}
+
+// TestHandleFilesSingleRowMutations covers AC2.1 (HX fragment) and AC2.5
+// (non-HX redirect preserving back) for the four single-row file handlers.
+// The mockNoteService's Enqueue/Skip/Unskip mutate JobStatus on the matching
+// file, so the subsequent GetFile returns the post-mutation state and the
+// fragment reflects the correct badge class.
+func TestHandleFilesSingleRowMutations(t *testing.T) {
+	type mutationCase struct {
+		name       string
+		endpoint   string
+		initialJob string
+		wantBadge  string
+	}
+	cases := []mutationCase{
+		{name: "queue", endpoint: "/files/queue", initialJob: "done", wantBadge: `badge-pending`},
+		{name: "skip", endpoint: "/files/skip", initialJob: "", wantBadge: `badge-skipped`},
+		{name: "unskip", endpoint: "/files/unskip", initialJob: "skipped", wantBadge: `badge-unprocessed`},
+		{name: "force", endpoint: "/files/force", initialJob: "done", wantBadge: `badge-pending`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name+"/HX_returns_fragment", func(t *testing.T) {
+			h := newTestHandler()
+			filePath := "/notes/foo.note"
+			h.notes.(*mockNoteService).files = []service.NoteFile{
+				{Path: filePath, Name: "foo.note", FileType: "note", JobStatus: tc.initialJob, Source: "supernote"},
+			}
+
+			form := url.Values{}
+			form.Set("path", filePath)
+			form.Set("back", "subdir")
+			req := httptest.NewRequest("POST", tc.endpoint, strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("HX-Request", "true")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("HX %s returned %d, want 200; body=%s", tc.endpoint, w.Code, w.Body.String())
+			}
+			body := w.Body.String()
+			wantID := `id="` + fileRowIDFor(filePath) + `"`
+			if !strings.Contains(body, wantID) {
+				t.Errorf("response missing %s; body:\n%s", wantID, body)
+			}
+			if !strings.Contains(body, tc.wantBadge) {
+				t.Errorf("response missing badge %s; body:\n%s", tc.wantBadge, body)
+			}
+			if strings.Contains(body, `<nav class="sidebar">`) {
+				t.Errorf("response leaked layout shell; body:\n%s", body)
+			}
+		})
+
+		t.Run(tc.name+"/non-HX_redirects_preserving_back", func(t *testing.T) {
+			h := newTestHandler()
+			h.notes.(*mockNoteService).files = []service.NoteFile{
+				{Path: "/notes/foo.note", Name: "foo.note", FileType: "note", JobStatus: tc.initialJob, Source: "supernote"},
+			}
+
+			form := url.Values{}
+			form.Set("path", "/notes/foo.note")
+			form.Set("back", "sub/dir with space")
+			req := httptest.NewRequest("POST", tc.endpoint, strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			// no HX-Request header
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("non-HX %s returned %d, want 303; body=%s", tc.endpoint, w.Code, w.Body.String())
+			}
+			loc := w.Header().Get("Location")
+			want := "/files/supernote?path=" + url.QueryEscape("sub/dir with space")
+			if loc != want {
+				t.Errorf("Location=%q, want %q", loc, want)
+			}
+		})
+	}
+}
+
+// TestHandleBroadFileMutations verifies the broad file-mutation handlers
+// return 200 OK + empty body on HX-Request and 303 redirect to the
+// source-appropriate tab on non-HX. Each endpoint is source-specific, so
+// its redirect target is now the tab that owns it (scan → supernote,
+// import/migrate/retry → boox, processor start/stop split by source).
+func TestHandleBroadFileMutations(t *testing.T) {
+	endpoints := []struct {
+		path     string
+		wantLoc  string
+	}{
+		{"/files/scan", "/files/supernote"},
+		{"/files/import", "/files/boox"},
+		{"/files/retry-failed", "/files/boox"},
+		{"/files/migrate-imports", "/files/boox"},
+		{"/processor/supernote/start", "/files/supernote"},
+		{"/processor/supernote/stop", "/files/supernote"},
+		{"/processor/boox/start", "/files/boox"},
+		{"/processor/boox/stop", "/files/boox"},
+	}
+	for _, tc := range endpoints {
+		t.Run(tc.path+"/HX_empty_body", func(t *testing.T) {
+			h := newTestHandler()
+			req := httptest.NewRequest("POST", tc.path, nil)
+			req.Header.Set("HX-Request", "true")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("HX %s returned %d, want 200; body=%q", tc.path, w.Code, w.Body.String())
+			}
+			if body := w.Body.String(); body != "" {
+				t.Errorf("%s expected empty body, got %q", tc.path, body)
+			}
+		})
+		t.Run(tc.path+"/non-HX_redirects", func(t *testing.T) {
+			h := newTestHandler()
+			req := httptest.NewRequest("POST", tc.path, nil)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("non-HX %s returned %d, want 303", tc.path, w.Code)
+			}
+			if loc := w.Header().Get("Location"); loc != tc.wantLoc {
+				t.Errorf("%s Location=%q, want %q", tc.path, loc, tc.wantLoc)
+			}
+		})
+	}
+}
+
+// TestBooxProcessorControls verifies the new Boox-specific start/stop
+// endpoints call through to the service and that the mock tracks state
+// independently from the Supernote processor.
+func TestBooxProcessorControls(t *testing.T) {
+	h := newTestHandler()
+	notes := h.notes.(*mockNoteService)
+
+	// Start Boox processor
+	req := httptest.NewRequest("POST", "/processor/boox/start", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("start returned %d", w.Code)
+	}
+	if !notes.booxProcessorStarted {
+		t.Errorf("booxProcessorStarted should be true after /processor/boox/start")
+	}
+	if notes.processorStarted {
+		t.Errorf("supernote processorStarted should remain false")
+	}
+
+	// Stop Boox processor
+	req = httptest.NewRequest("POST", "/processor/boox/stop", nil)
+	req.Header.Set("HX-Request", "true")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("stop returned %d", w.Code)
+	}
+	if notes.booxProcessorStarted {
+		t.Errorf("booxProcessorStarted should be false after /processor/boox/stop")
+	}
+}
+
+// TestHandleFilesDeleteNoteHXEmptyBody verifies AC2.2: HX-Request POST
+// /files/delete-note calls the service DeleteNote and returns 200 OK with
+// empty body; client-side JS removes the row from the DOM.
+func TestHandleFilesDeleteNoteHXEmptyBody(t *testing.T) {
+	h := newTestHandler()
+	notes := h.notes.(*mockNoteService)
+	notes.files = []service.NoteFile{{Path: "/notes/foo.note", Name: "foo.note"}}
+
+	form := url.Values{}
+	form.Set("path", "/notes/foo.note")
+	req := httptest.NewRequest("POST", "/files/delete-note", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX delete-note returned %d, want 200; body=%q", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); body != "" {
+		t.Errorf("expected empty body, got %q", body)
+	}
+	if len(notes.deletedPaths) != 1 || notes.deletedPaths[0] != "/notes/foo.note" {
+		t.Errorf("expected DeleteNote called with /notes/foo.note, got %v", notes.deletedPaths)
+	}
+}
+
+// TestHandleFilesDeleteBulkHXEmptyBody verifies AC2.3: HX-Request POST
+// /files/delete-bulk with multiple paths returns 200 + empty body and the
+// service BulkDelete was invoked with the posted paths.
+func TestHandleFilesDeleteBulkHXEmptyBody(t *testing.T) {
+	h := newTestHandler()
+	notes := h.notes.(*mockNoteService)
+
+	form := url.Values{}
+	form.Add("paths", "/notes/a.note")
+	form.Add("paths", "/notes/b.note")
+	req := httptest.NewRequest("POST", "/files/delete-bulk", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HX delete-bulk returned %d, want 200; body=%q", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); body != "" {
+		t.Errorf("expected empty body, got %q", body)
+	}
+	wantDeleted := []string{"/notes/a.note", "/notes/b.note"}
+	if len(notes.deletedPaths) != 2 || notes.deletedPaths[0] != wantDeleted[0] || notes.deletedPaths[1] != wantDeleted[1] {
+		t.Errorf("expected BulkDelete called with %v, got %v", wantDeleted, notes.deletedPaths)
+	}
+}
+
+// TestHandlerRenderPathsDoNotPoisonEachOther is a regression guard for cross-path
+// state coupling on h.tmpl. html/template permanently locks a tree against Clone
+// once ExecuteTemplate has run, so any method that executes h.tmpl directly would
+// brick every subsequent Clone-based render. This test exercises both paths in
+// sequence on one Handler; a regression surfaces as a 5xx body or a non-HTML
+// response on any call past the first.
+func TestHandlerRenderPathsDoNotPoisonEachOther(t *testing.T) {
+	h := newTestHandler()
+	h.tasks.(*mockTaskService).tasks = []service.Task{
+		{ID: "x", Title: "x task", Status: service.StatusNeedsAction},
+	}
+	task := service.Task{ID: "x", Title: "x task", Status: service.StatusNeedsAction}
+
+	renderTab := func() string {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Header.Set("HX-Request", "true")
+		h.ServeHTTP(w, r)
+		return w.Body.String()
+	}
+	renderRow := func() string {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		h.renderFragment(w, r, "_task_row", task)
+		return w.Body.String()
+	}
+
+	steps := []struct {
+		name string
+		call func() string
+	}{
+		{"tab-1", renderTab},
+		{"row-1", renderRow},
+		{"tab-2-after-row", renderTab},
+		{"row-2", renderRow},
+		{"tab-3-after-row", renderTab},
+	}
+	for _, s := range steps {
+		body := s.call()
+		if strings.Contains(body, "internal error") || strings.Contains(body, "template error") || strings.Contains(body, "template not found") {
+			t.Fatalf("step %s produced error body:\n%s", s.name, body)
+		}
+		if !strings.Contains(body, "x task") {
+			t.Errorf("step %s missing task content; body:\n%s", s.name, body)
+		}
+	}
+}
+
+// TestHandleFilesSupernoteFiltersBoox verifies the /files/supernote route
+// renders only Supernote files — Boox-sourced files from the mock are
+// filtered out by ListSupernoteFiles.
+func TestHandleFilesSupernoteFiltersBoox(t *testing.T) {
+	h := newTestHandler()
+	h.notes.(*mockNoteService).files = []service.NoteFile{
+		{Path: "/notes/sn-only.note", Name: "sn-only.note", FileType: "note", Source: "supernote"},
+		{Path: "/boox/hidden.note", Name: "hidden.note", FileType: "note", Source: "boox"},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/files/supernote", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /files/supernote returned %d; body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "sn-only.note") {
+		t.Errorf("supernote row missing; body:\n%s", body)
+	}
+	if strings.Contains(body, "hidden.note") {
+		t.Errorf("boox row leaked into supernote view; body:\n%s", body)
+	}
+}
+
+// TestHandleFilesBooxRendersBooxColumns verifies /files/boox surfaces the
+// BooxNoteSummary fields (Title, Folder, DeviceModel, PageCount) that the
+// merged view hides.
+func TestHandleFilesBooxRendersBooxColumns(t *testing.T) {
+	h := newTestHandler()
+	h.notes.(*mockNoteService).booxNotes = []service.BooxNoteSummary{
+		{
+			Path:        "/boox/project.note",
+			Filename:    "project.note",
+			Title:       "Project Plan",
+			DeviceModel: "NoteAir5C",
+			NoteType:    "Notebooks",
+			Folder:      "Personal",
+			PageCount:   42,
+			JobStatus:   "done",
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/files/boox", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /files/boox returned %d; body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{"Project Plan", "NoteAir5C", "Notebooks", "Personal", "42"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("boox view missing %q; body:\n%s", want, body)
+		}
+	}
+}
+
+// TestHandleFilesBoox_Filters verifies folder + device pills render and
+// that ?folder= and ?device= narrow the list independently and together.
+// Rows with device_model=".." are filtered out of the device pill row so
+// the legacy-import field-swap artifact doesn't clutter the UI.
+func TestHandleFilesBoox_Filters(t *testing.T) {
+	h := newTestHandler()
+	h.notes.(*mockNoteService).booxNotes = []service.BooxNoteSummary{
+		{Path: "/boox/a.note", Title: "NoteMax Personal", DeviceModel: "NoteMax", Folder: "Personal"},
+		{Path: "/boox/b.note", Title: "NoteMax Moffitt", DeviceModel: "NoteMax", Folder: "Moffitt"},
+		{Path: "/boox/c.note", Title: "Go7 Personal", DeviceModel: "Go7", Folder: "Personal"},
+		{Path: "/boox/d.note", Title: "Broken Legacy", DeviceModel: "..", Folder: "Go103"},
+	}
+
+	t.Run("no_filter_shows_all_and_hides_broken_device_pill", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/files/boox", nil)
+		req.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d", w.Code)
+		}
+		body := w.Body.String()
+		for _, want := range []string{"NoteMax Personal", "NoteMax Moffitt", "Go7 Personal"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("unfiltered view missing %q", want)
+			}
+		}
+		// Device pill row has NoteMax and Go7 but not ".."
+		if !strings.Contains(body, "NoteMax") || !strings.Contains(body, "Go7") {
+			t.Errorf("device pills missing; body:\n%s", body)
+		}
+		// The ".." device must not appear as its own pill (the artifact rows
+		// still appear as rows because we don't filter ListBooxNotes itself).
+		// Look for a pill-button href with `?device=..` which would only come
+		// from the device-pill rendering; that shouldn't exist.
+		if strings.Contains(body, "?device=..") || strings.Contains(body, "?device=%2E%2E") {
+			t.Errorf("device pill for '..' leaked into UI; body:\n%s", body)
+		}
+	})
+
+	t.Run("filter_by_device", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/files/boox?device=NoteMax", nil)
+		req.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d", w.Code)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "NoteMax Personal") || !strings.Contains(body, "NoteMax Moffitt") {
+			t.Errorf("NoteMax rows missing; body:\n%s", body)
+		}
+		if strings.Contains(body, "Go7 Personal") {
+			t.Errorf("Go7 row leaked into NoteMax filter; body:\n%s", body)
+		}
+	})
+
+	t.Run("filter_by_folder", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/files/boox?folder=Personal", nil)
+		req.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d", w.Code)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "NoteMax Personal") || !strings.Contains(body, "Go7 Personal") {
+			t.Errorf("Personal rows missing; body:\n%s", body)
+		}
+		if strings.Contains(body, "NoteMax Moffitt") {
+			t.Errorf("Moffitt row leaked into Personal filter; body:\n%s", body)
+		}
+	})
+
+	t.Run("filter_by_device_and_folder", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/files/boox?device=NoteMax&folder=Personal", nil)
+		req.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d", w.Code)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "NoteMax Personal") {
+			t.Errorf("intersection row missing; body:\n%s", body)
+		}
+		if strings.Contains(body, "NoteMax Moffitt") || strings.Contains(body, "Go7 Personal") {
+			t.Errorf("filter leak; body:\n%s", body)
+		}
+	})
+}
+
+// TestHandleFilesSupernoteNoSource verifies the error branch renders an
+// informative empty-state card (not a 500) when no Supernote source is wired.
+func TestHandleFilesSupernoteNoSource(t *testing.T) {
+	h := newTestHandler()
+	h.notes.(*mockNoteService).pipelineConfigured = false
+
+	req := httptest.NewRequest(http.MethodGet, "/files/supernote", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with error banner, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "No Supernote source configured") {
+		t.Errorf("expected empty-state banner; body:\n%s", w.Body.String())
+	}
+}
+
+// TestHandleFilesBooxNoSource verifies the equivalent empty-state for the
+// Boox tab.
+func TestHandleFilesBooxNoSource(t *testing.T) {
+	h := newTestHandler()
+	h.notes.(*mockNoteService).booxEnabled = false
+
+	req := httptest.NewRequest(http.MethodGet, "/files/boox", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with error banner, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "No Boox source configured") {
+		t.Errorf("expected empty-state banner; body:\n%s", w.Body.String())
+	}
+}
+
+// TestRowMutationDispatchesByBooxPrefix verifies that a mutation on a Boox
+// path emits a _boox_file_row fragment (with Boox-specific Title/Folder
+// markup) rather than the legacy _sn_file_row shape.
+func TestRowMutationDispatchesByBooxPrefix(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	notes := &mockNoteService{
+		docs:               make(map[string][]service.SearchResult),
+		contents:           make(map[string]interface{}),
+		pipelineConfigured: true,
+		booxEnabled:        true,
+		booxNotes: []service.BooxNoteSummary{
+			{
+				Path:      "/boox/bar.note",
+				Title:     "Bar Notes",
+				Folder:    "Personal",
+				JobStatus: "done",
+			},
+		},
+	}
+	h := NewHandler(
+		&mockTaskService{},
+		notes,
+		&mockSearchService{},
+		&mockConfigService{},
+		nil,
+		"",
+		"/boox",
+		logger,
+		broadcaster,
+	)
+
+	form := url.Values{}
+	form.Set("path", "/boox/bar.note")
+	req := httptest.NewRequest(http.MethodPost, "/files/queue", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("queue returned %d; body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	// _boox_file_row-specific markup: Title + Folder ("Personal") column.
+	if !strings.Contains(body, "Bar Notes") {
+		t.Errorf("expected boox-fragment with Title; body:\n%s", body)
+	}
+	if !strings.Contains(body, "Personal") {
+		t.Errorf("expected boox-fragment with Folder column; body:\n%s", body)
+	}
+}
+
+// TestRowMutationBooxNonHXRedirectsToBooxTab verifies that the non-HX
+// redirect for a Boox-path mutation lands on /files/boox, not /files/
+// supernote.
+func TestRowMutationBooxNonHXRedirectsToBooxTab(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	notes := &mockNoteService{
+		docs:               make(map[string][]service.SearchResult),
+		contents:           make(map[string]interface{}),
+		pipelineConfigured: true,
+		booxEnabled:        true,
+	}
+	h := NewHandler(
+		&mockTaskService{},
+		notes,
+		&mockSearchService{},
+		&mockConfigService{},
+		nil,
+		"",
+		"/boox",
+		logger,
+		broadcaster,
+	)
+
+	form := url.Values{}
+	form.Set("path", "/boox/bar.note")
+	req := httptest.NewRequest(http.MethodPost, "/files/queue", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// no HX-Request header
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303; got %d body=%s", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	if loc != "/files/boox" {
+		t.Errorf("Location=%q, want /files/boox", loc)
 	}
 }

@@ -35,6 +35,8 @@ type BooxStore interface {
 	SkipNote(ctx context.Context, path, reason string) error
 	UnskipNote(ctx context.Context, path string) error
 	GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error)
+	ListFolders(ctx context.Context) ([]booxpipeline.FolderCount, error)
+	ListDevices(ctx context.Context) ([]booxpipeline.DeviceCount, error)
 }
 
 // BooxImporter is the interface required by the NoteService for Boox imports.
@@ -42,6 +44,15 @@ type BooxImporter interface {
 	ScanAndEnqueue(ctx context.Context, cfg booxpipeline.ImportConfig, logger *slog.Logger) booxpipeline.ImportResult
 	MigrateImportedFiles(ctx context.Context, importPath, notesPath string, logger *slog.Logger) booxpipeline.MigrateResult
 	Enqueue(ctx context.Context, notePath string) error
+}
+
+// BooxProcessor is the narrow handle the NoteService needs to start and stop
+// the Boox pipeline worker on demand. Implemented by *booxpipeline.Processor.
+// Kept separate from BooxImporter so tests can mock the controls without
+// having to build importer plumbing too.
+type BooxProcessor interface {
+	Start(ctx context.Context) error
+	Stop()
 }
 
 // FileScanner triggers a filesystem scan.
@@ -54,6 +65,7 @@ type noteService struct {
 	proc          processor.Processor
 	booxStore     BooxStore
 	booxImporter  BooxImporter
+	booxProc      BooxProcessor
 	searchIndex   search.SearchIndex
 	scanner       FileScanner
 	noteDB        *sql.DB // for settings
@@ -67,6 +79,7 @@ func NewNoteService(
 	p processor.Processor,
 	bs BooxStore,
 	bi BooxImporter,
+	bp BooxProcessor,
 	si search.SearchIndex,
 	scanner FileScanner,
 	noteDB *sql.DB,
@@ -79,6 +92,7 @@ func NewNoteService(
 		proc:          p,
 		booxStore:     bs,
 		booxImporter:  bi,
+		booxProc:      bp,
 		searchIndex:   si,
 		scanner:       scanner,
 		noteDB:        noteDB,
@@ -179,6 +193,166 @@ func (s *noteService) ListFiles(ctx context.Context, path string, sortField, ord
 	}
 
 	return files[start:end], totalFiles, nil
+}
+
+// ListSupernoteFiles returns only Supernote-sourced files (directory tree
+// browser model). Sort/pagination matches ListFiles; no Boox notes are mixed
+// in. Returns an empty page with total=0 when no Supernote store is wired.
+func (s *noteService) ListSupernoteFiles(ctx context.Context, path, sortField, order string, page, perPage int) ([]NoteFile, int, error) {
+	if s.noteStore == nil {
+		return nil, 0, nil
+	}
+	snFiles, err := s.noteStore.List(ctx, path)
+	if err != nil {
+		s.logger.Error("list supernote files", "path", path, "error", err)
+		return nil, 0, err
+	}
+	files := make([]NoteFile, 0, len(snFiles))
+	for _, f := range snFiles {
+		files = append(files, mapSupernoteFile(f))
+	}
+	sortNoteFiles(files, sortField, order)
+	return paginateNoteFiles(files, page, perPage)
+}
+
+// ListBooxNotes returns Boox-catalog rows with the richer per-note fields
+// (Title, Folder, DeviceModel, NoteType, PageCount) that NoteFile flattens.
+// Both device and folder are exact-match filters — empty means "all".
+// They compose (supply both to narrow to that device+folder slice).
+// Sort supports "title" (default), "folder", "pages", "size", "created",
+// "modified". Returns empty/zero when no Boox store is wired.
+func (s *noteService) ListBooxNotes(ctx context.Context, device, folder, sortField, order string, page, perPage int) ([]BooxNoteSummary, int, error) {
+	if s.booxStore == nil {
+		return nil, 0, nil
+	}
+	rows, err := s.booxStore.ListNotes(ctx)
+	if err != nil {
+		s.logger.Error("list boox notes", "error", err)
+		return nil, 0, err
+	}
+	out := make([]BooxNoteSummary, 0, len(rows))
+	for _, bn := range rows {
+		if device != "" && bn.DeviceModel != device {
+			continue
+		}
+		if folder != "" && bn.Folder != folder {
+			continue
+		}
+		out = append(out, mapBooxSummary(bn))
+	}
+	sortBooxNotes(out, sortField, order)
+
+	totalFiles := len(out)
+	if perPage <= 0 {
+		perPage = 25
+	}
+	if page <= 0 {
+		page = 1
+	}
+	totalPages := (totalFiles + perPage - 1) / perPage
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * perPage
+	if start > totalFiles {
+		start = totalFiles
+	}
+	end := start + perPage
+	if end > totalFiles {
+		end = totalFiles
+	}
+	return out[start:end], totalFiles, nil
+}
+
+// ListBooxFolders returns every unique Boox folder with its note count.
+// Used by the Boox Files tab to build the folder-filter pill row.
+// Returns nil when no Boox store is wired.
+func (s *noteService) ListBooxFolders(ctx context.Context) ([]BooxFolder, error) {
+	if s.booxStore == nil {
+		return nil, nil
+	}
+	rows, err := s.booxStore.ListFolders(ctx)
+	if err != nil {
+		s.logger.Error("list boox folders", "error", err)
+		return nil, err
+	}
+	out := make([]BooxFolder, 0, len(rows))
+	for _, fc := range rows {
+		out = append(out, BooxFolder{Folder: fc.Folder, Count: fc.Count})
+	}
+	return out, nil
+}
+
+// ListBooxDevices returns every unique Boox device_model with its note
+// count, excluding the ".." legacy-import field-swap sentinel (filtered
+// at the store layer). Returns nil when no Boox store is wired.
+func (s *noteService) ListBooxDevices(ctx context.Context) ([]BooxDevice, error) {
+	if s.booxStore == nil {
+		return nil, nil
+	}
+	rows, err := s.booxStore.ListDevices(ctx)
+	if err != nil {
+		s.logger.Error("list boox devices", "error", err)
+		return nil, err
+	}
+	out := make([]BooxDevice, 0, len(rows))
+	for _, dc := range rows {
+		out = append(out, BooxDevice{DeviceModel: dc.DeviceModel, Count: dc.Count})
+	}
+	return out, nil
+}
+
+// GetBooxNote returns the Boox-tab summary for a single path. Returns
+// sql.ErrNoRows if the path is not in the Boox catalog.
+func (s *noteService) GetBooxNote(ctx context.Context, path string) (BooxNoteSummary, error) {
+	if s.booxStore == nil {
+		return BooxNoteSummary{}, fmt.Errorf("boox store not available")
+	}
+	rows, err := s.booxStore.ListNotes(ctx)
+	if err != nil {
+		return BooxNoteSummary{}, err
+	}
+	for _, bn := range rows {
+		if bn.Path == path {
+			return mapBooxSummary(bn), nil
+		}
+	}
+	return BooxNoteSummary{}, sql.ErrNoRows
+}
+
+// GetFile returns a single NoteFile by path, dispatching to the Boox or
+// Supernote branch based on isBooxPath. Returns sql.ErrNoRows when the path
+// is not found in the relevant store.
+func (s *noteService) GetFile(ctx context.Context, path string) (NoteFile, error) {
+	if s.isBooxPath(path) {
+		if s.booxStore == nil {
+			return NoteFile{}, fmt.Errorf("boox store not available")
+		}
+		notes, err := s.booxStore.ListNotes(ctx)
+		if err != nil {
+			return NoteFile{}, err
+		}
+		for _, bn := range notes {
+			if bn.Path == path {
+				return mapBooxFile(bn), nil
+			}
+		}
+		return NoteFile{}, sql.ErrNoRows
+	}
+	if s.noteStore == nil {
+		return NoteFile{}, fmt.Errorf("note store not available")
+	}
+	f, err := s.noteStore.Get(ctx, path)
+	if err != nil {
+		return NoteFile{}, err
+	}
+	if f == nil {
+		return NoteFile{}, sql.ErrNoRows
+	}
+	return mapSupernoteFile(*f), nil
 }
 
 func (s *noteService) GetNoteDetails(ctx context.Context, path string) (interface{}, error) {
@@ -366,6 +540,23 @@ func (s *noteService) StopProcessor(ctx context.Context) error {
 	return nil
 }
 
+// StartBooxProcessor starts the Boox pipeline worker. Nil-safe: returns nil
+// when no Boox source is wired.
+func (s *noteService) StartBooxProcessor(ctx context.Context) error {
+	if s.booxProc != nil {
+		return s.booxProc.Start(ctx)
+	}
+	return nil
+}
+
+// StopBooxProcessor signals shutdown on the Boox worker. Nil-safe.
+func (s *noteService) StopBooxProcessor(ctx context.Context) error {
+	if s.booxProc != nil {
+		s.booxProc.Stop()
+	}
+	return nil
+}
+
 func (s *noteService) GetProcessorStatus(ctx context.Context) (EmbeddingJobStatus, error) {
 	status := EmbeddingJobStatus{}
 	
@@ -490,6 +681,142 @@ func mapBooxFile(bn booxpipeline.BooxNoteEntry) NoteFile {
 		DeviceInfo: &deviceInfo,
 		JobStatus:  bn.JobStatus,
 	}
+}
+
+func mapBooxSummary(bn booxpipeline.BooxNoteEntry) BooxNoteSummary {
+	var mtime, ctime time.Time
+	if bn.UpdatedAt > 0 {
+		mtime = time.UnixMilli(bn.UpdatedAt)
+	}
+	if bn.CreatedAt > 0 {
+		ctime = time.UnixMilli(bn.CreatedAt)
+	}
+	var size int64
+	if info, err := os.Stat(bn.Path); err == nil {
+		size = info.Size()
+	}
+	return BooxNoteSummary{
+		Path:        bn.Path,
+		NoteID:      bn.NoteID,
+		Title:       bn.Title,
+		Filename:    filepath.Base(bn.Path),
+		DeviceModel: bn.DeviceModel,
+		NoteType:    bn.NoteType,
+		Folder:      bn.Folder,
+		PageCount:   bn.PageCount,
+		SizeBytes:   size,
+		CreatedAt:   ctime,
+		ModifiedAt:  mtime,
+		JobStatus:   bn.JobStatus,
+	}
+}
+
+// sortNoteFiles sorts files in place: directories first, then by the named
+// field. Matches the ordering ListFiles applies to its merged result.
+func sortNoteFiles(files []NoteFile, sortField, order string) {
+	if sortField == "" {
+		sortField = "name"
+	}
+	if order == "" {
+		order = "asc"
+	}
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].IsDir != files[j].IsDir {
+			return files[i].IsDir
+		}
+		var cmp int
+		switch sortField {
+		case "created":
+			cmp = compareTime(files[i].CreatedAt, files[j].CreatedAt)
+		case "modified":
+			cmp = compareTime(files[i].ModifiedAt, files[j].ModifiedAt)
+		case "size":
+			if files[i].SizeBytes == files[j].SizeBytes {
+				cmp = strings.Compare(files[i].Name, files[j].Name)
+			} else if files[i].SizeBytes < files[j].SizeBytes {
+				cmp = -1
+			} else {
+				cmp = 1
+			}
+		default:
+			cmp = strings.Compare(files[i].Name, files[j].Name)
+		}
+		if order == "desc" {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+}
+
+// paginateNoteFiles returns the page slice and the total count before paging.
+func paginateNoteFiles(files []NoteFile, page, perPage int) ([]NoteFile, int, error) {
+	total := len(files)
+	if perPage <= 0 {
+		perPage = 25
+	}
+	if page <= 0 {
+		page = 1
+	}
+	totalPages := (total + perPage - 1) / perPage
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * perPage
+	if start > total {
+		start = total
+	}
+	end := start + perPage
+	if end > total {
+		end = total
+	}
+	return files[start:end], total, nil
+}
+
+// sortBooxNotes sorts in place by the requested field. Supports "title",
+// "folder", "pages", "size", "created", "modified". Default "title" asc.
+func sortBooxNotes(rows []BooxNoteSummary, sortField, order string) {
+	if sortField == "" {
+		sortField = "title"
+	}
+	if order == "" {
+		order = "asc"
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		var cmp int
+		switch sortField {
+		case "folder":
+			cmp = strings.Compare(rows[i].Folder, rows[j].Folder)
+			if cmp == 0 {
+				cmp = strings.Compare(rows[i].Title, rows[j].Title)
+			}
+		case "pages":
+			cmp = rows[i].PageCount - rows[j].PageCount
+			if cmp == 0 {
+				cmp = strings.Compare(rows[i].Title, rows[j].Title)
+			}
+		case "size":
+			if rows[i].SizeBytes < rows[j].SizeBytes {
+				cmp = -1
+			} else if rows[i].SizeBytes > rows[j].SizeBytes {
+				cmp = 1
+			} else {
+				cmp = strings.Compare(rows[i].Title, rows[j].Title)
+			}
+		case "created":
+			cmp = compareTime(rows[i].CreatedAt, rows[j].CreatedAt)
+		case "modified":
+			cmp = compareTime(rows[i].ModifiedAt, rows[j].ModifiedAt)
+		default:
+			cmp = strings.Compare(rows[i].Title, rows[j].Title)
+		}
+		if order == "desc" {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
 }
 
 func compareTime(a, b time.Time) int {

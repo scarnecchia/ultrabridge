@@ -36,11 +36,15 @@ func RequestID(logger *slog.Logger) func(http.Handler) http.Handler {
 
 			next.ServeHTTP(rw, r)
 
+			path := r.URL.Path
+			if r.URL.RawQuery != "" {
+				path = path + "?" + r.URL.RawQuery
+			}
 			logger.Info("request",
 				"request_id", id,
 				"remote_ip", r.RemoteAddr,
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", path,
 				"status", rw.status,
 				"duration_ms", time.Since(start).Milliseconds(),
 			)

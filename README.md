@@ -89,7 +89,8 @@ Navigate to `http://<host>:<port>/` after starting the service.
 | Tab | What it does |
 |-----|-------------|
 | **Tasks** | View, create, and complete tasks; bulk actions; purge all completed tasks |
-| **Files** | Browse `.note` files from both Supernote and Boox with source badges; sort by name, size, or date; view rendered pages, OCR text, and version history; queue/skip/force processing; scan now |
+| **Supernote Files** | Directory-tree browser of Supernote `.note` files; sort by name, size, or date; view rendered pages, OCR text, and processing status; queue/skip/force per row; Scan Now. |
+| **Boox Files** | Flat catalog of Boox notes with Title, Folder, Device, NoteType, and Pages columns; bulk delete; Import and Migrate Imports for bulk filesystem-to-catalog ingest; per-row queue/skip/force/details. |
 | **Search** | Full-text keyword search across all indexed notes with source badges and folder filter |
 | **Chat** | Ask questions about your notes with streaming AI responses and clickable `[filename, p.N]` citations |
 | **Logs** | Live log stream with level filtering and remote IP tracking |
@@ -160,7 +161,7 @@ Configure sources in Settings → Sources:
 
 Each source can be enabled/disabled independently.
 
-On the Boox device, configure WebDAV sync under Settings > Cloud Storage with `http://<host>:<port>/webdav/` as the server URL and your UltraBridge credentials. Uploaded notes appear in the Files tab with a "B" badge.
+On the Boox device, configure WebDAV sync under Settings > Cloud Storage with `http://<host>:<port>/webdav/` as the server URL and your UltraBridge credentials. Uploaded notes appear in the **Boox Files** tab.
 
 Re-uploaded notes are versioned automatically — the previous version is archived under `.versions/` before the new file is written.
 
@@ -181,15 +182,34 @@ If Ollama is unreachable, embedding silently skips — OCR indexing continues no
 
 ### JSON API
 
-Three JSON endpoints are available when the embedding pipeline is enabled (or in FTS-only mode when it isn't). All require Basic Auth.
+UltraBridge exposes a headless JSON API under `/api/v1/*` covering tasks,
+files, search, chat, and system status. All routes require Basic Auth or a
+bearer token (see **MCP Tokens** in Settings).
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/search?q=...&folder=...&device=...&from=...&to=...&limit=...` | Hybrid search (vector + FTS5), returns JSON array with note paths, page text, scores, and metadata |
-| `GET /api/notes/pages?path=...` | All indexed page content for a note, ordered by page number |
-| `GET /api/notes/pages/image?path=...&page=...` | Rendered JPEG image of a note page |
+Highlights:
 
-Date parameters use `YYYY-MM-DD` format. `limit` defaults to 20.
+- `GET /api/v1/tasks` — list active tasks; optional `status`, `due_before`,
+  `due_after` filters.
+- `GET /api/v1/tasks/{id}` / `PATCH /api/v1/tasks/{id}` — fetch or
+  partial-update a single task.
+- `POST /api/v1/tasks` / `POST /api/v1/tasks/{id}/complete` /
+  `DELETE /api/v1/tasks/{id}` / `POST /api/v1/tasks/purge-completed` —
+  standard CRUD + housekeeping.
+- `GET /api/v1/files`, `GET /api/v1/search`, `POST /api/v1/chat/ask`,
+  `GET /api/v1/status`.
+
+A lighter-weight compatibility surface also exists for legacy integrations:
+
+- `GET /api/search`, `GET /api/notes/pages`, `GET /api/notes/pages/image` —
+  used by the built-in MCP note tools.
+
+Full endpoint reference, request/response shapes, and query-parameter rules
+live in [`docs/api-spec.md`](docs/api-spec.md).
+
+All task mutations (both via the API and via MCP tools) emit a structured
+audit log line tagged with the auth method and the token label / username
+that made the change, so "why did that task disappear" is answerable from
+`docker logs`.
 
 ### MCP Server (Claude integration)
 
@@ -214,11 +234,30 @@ For local use with Claude Desktop or command-line agents, use the `ub-mcp` stand
 
 **Tools:**
 
+Note-oriented (read-only):
+
 | Tool | Description |
 |------|-------------|
 | `search_notes` | Search notes by keyword with optional folder/device/date filters |
 | `get_note_pages` | Get all page text for a specific note |
 | `get_note_image` | Get a rendered page image (JPEG) |
+
+Task-oriented (mutates the CalDAV-synced task list):
+
+| Tool | Description |
+|------|-------------|
+| `list_tasks` | List active tasks, optionally filtered by status and/or due-date range |
+| `get_task` | Fetch a single task by id, including any back-reference to the note it was auto-extracted from |
+| `create_task` | Create a new task (title + optional RFC3339 due date) |
+| `update_task` | Partial update — change the title, due date, or detail. `clear_due_at=true` removes an existing due date. |
+| `complete_task` | Mark a task as completed |
+| `delete_task` | Soft-delete a task |
+| `purge_completed_tasks` | Drop every completed task in one call |
+
+Task mutations flow through UltraBridge's normal sync path, so changes
+made by the agent propagate to your configured CalDAV device on the next
+sync cycle (UB wins on conflicts). Every mutation is audit-logged with
+the token label, so you can see which agent did what.
 
 **Build and configure Claude Desktop** (`claude_desktop_config.json`):
 
@@ -264,106 +303,34 @@ The UltraBridge installer automatically configures the Docker network and volume
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│ Supernote Private Cloud Stack                                        │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────────┐ │
-│  │  nginx       │  │  MariaDB     │  │  .note file store          │ │
-│  │  (proxy)     │  │  (tasks)     │  │  (NFS / volume)            │ │
-│  └──────────────┘  └──────────────┘  └────────────────────────────┘ │
-│         ▲                 ▲                       ▲                  │
-│         │                 │                       │                  │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │  UltraBridge                                                  │  │
-│  │                                                               │  │
-│  │  ┌──────────────────────┐  ┌───────────────────────────────┐  │  │
-│  │  │  CalDAV subsystem    │  │  Supernote notes pipeline     │  │  │
-│  │  │  CalDAV ← TaskStore  │  │   ↓ fsnotify watcher          │  │  │
-│  │  │        → MariaDB     │  │   ↓ reconciler                │  │  │
-│  │  │        → Engine.IO   │  │  NoteStore → SQLite           │  │  │
-│  │  └──────────────────────┘  │  Processor (OCR jobs)         │  │  │
-│  │                            └───────────────────────────────┘  │  │
-│  │  ┌──────────────────────┐  ┌───────────────────────────────┐  │  │
-│  │  │  Boox notes pipeline │  │  Shared services              │  │  │
-│  │  │  WebDAV server ←─────│──│  SearchIndex (FTS5)           │  │  │
-│  │  │   ↓ .note parser    │  │  Embedding cache (Ollama)     │  │  │
-│  │  │   ↓ page renderer   │  │  Hybrid retriever (RRF)       │  │  │
-│  │  │   ↓ OCR + indexer ──│─▶│  JSON API + MCP server        │  │  │
-│  │  │  Version archive     │  │  Chat (vLLM SSE proxy)        │  │  │
-│  │  └──────────────────────┘  │  Web UI (Tasks/Files/Search)  │  │  │
-│  │                            │  Auth middleware               │  │  │
-│  │                            └───────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────┘
-```
+UltraBridge is organised as four services (Task, Note, Search, Config)
+sitting on top of a SQLite store, plus a pair of source-specific
+notes pipelines (Supernote via fsnotify+SPC, Boox via WebDAV). The
+CalDAV subsystem is SQLite-backed; MariaDB is only consulted to sync
+the Supernote catalog after an OCR injection, and only when SPC is
+actually present.
 
-### Supernote notes pipeline flow
+For the full system diagram, the two pipeline flow diagrams
+(Supernote and Boox), the task-mutation flow, and the service-layer
+contracts, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-```
-.note file written/changed on device
-         │
-         ▼
-   fsnotify watcher  ──(2s debounce)──▶  Processor queue
-         +
-   reconciler (15 min)
-         │
-         ▼
-   Worker picks up job
-         │
-         ├─ backup original (if UB_BACKUP_PATH set)
-         ├─ extract existing MyScript RECOGNTEXT → index as "myScript"
-         ├─ if OCR enabled:
-         │    render page → JPEG → vision API → inject RECOGNTEXT
-         │    index as "api"
-         │    if embedding enabled: text → Ollama → vector stored
-         └─ job marked done
-                  │
-                  ▼
-           FTS5 search index + vector cache
-```
-
-### Boox notes pipeline flow
-
-```
-Boox device syncs via WebDAV
-         │
-         ▼
-   WebDAV PUT /webdav/onyx/{model}/{type}/{folder}/{name}.note
-         │
-         ├─ version-on-overwrite (old file → .versions/)
-         ├─ parent directories auto-created
-         └─ upload callback → enqueue job
-                  │
-                  ▼
-   Boox processor picks up job (5s poll)
-         │
-         ├─ parse ZIP (protobuf metadata, shapes, point files)
-         ├─ extract title, device model, page count
-         ├─ render each page → JPEG cache
-         ├─ if OCR enabled: vision API → text
-         ├─ index page text → FTS5
-         ├─ if embedding enabled: text → Ollama → vector stored
-         └─ job marked done
-                  │
-                  ▼
-   Unified FTS5 search index + vector cache (shared with Supernote)
-```
+Per-package deep dives live in each `internal/*/CLAUDE.md`.
 
 ## Development
 
 ### Build
 
+From the repo root:
+
 ```bash
-go build -C /home/sysop/src/ultrabridge ./cmd/ultrabridge/
-go build -C /home/sysop/src/ultrabridge ./cmd/ub-mcp/
+go build ./cmd/ultrabridge/
+go build ./cmd/ub-mcp/
 ```
 
 ### Test
 
 ```bash
-go test -C /home/sysop/src/ultrabridge ./...
+go test ./...
 ```
 
 Integration tests require a running MariaDB:
@@ -384,35 +351,27 @@ Or manually:
 docker build -t ultrabridge:dev .
 ```
 
-### Generate a password hash
+### Admin subcommands
+
+The `ultrabridge` binary ships two admin helpers for headless / automated setup:
 
 ```bash
+# Generate a bcrypt hash for UB_PASSWORD_HASH (legacy env-var flow):
 docker run --rm ultrabridge:dev hash-password "yourpassword"
+
+# Pre-provision credentials directly into the settings DB so the container
+# skips the web setup wizard on first boot:
+docker run --rm -v ./ultrabridge-data:/data ultrabridge:dev \
+  seed-user myusername "mypassword"
 ```
 
-## Appendix: Standalone OCR Injection
+## Standalone OCR injection
 
-The [go-sn](https://github.com/jdkruzr/go-sn) library includes `sninject`, a standalone tool for processing `.note` files outside of UltraBridge's pipeline. It renders each page, sends it to a vision API, injects JIIX RECOGNTEXT, and optionally zeros RECOGNFILE to prevent device re-recognition. No database, sync, or watcher involved.
-
-```bash
-go install github.com/jdkruzr/go-sn/cmd/sninject@latest
-
-# Process a note using the same vLLM endpoint as UltraBridge
-sninject -in original.note -out processed.note \
-  -api-url http://192.168.9.199:8000 \
-  -model Qwen/Qwen3-VL-8B-Instruct
-
-# Dry run — see OCR results without modifying the file
-sninject -in original.note -out /dev/null -dry-run
-```
-
-This is useful for debugging injection issues, testing OCR quality on specific files, or one-off processing without starting the full pipeline. See the [go-sn README](https://github.com/jdkruzr/go-sn#sninject) for full usage.
-
-### Why `-zero-recognfile`?
-
-When UltraBridge (or `sninject`) injects RECOGNTEXT into an RTR note, the device's MyScript engine detects a mismatch between the injected text and its own RECOGNFILE (iink recognition data). On the next sync, the device re-runs recognition from RECOGNFILE and overwrites the injected text — often with lower quality results (especially for math, symbols, and measurements).
-
-Zeroing RECOGNFILE removes the data the device uses to re-derive RECOGNTEXT, preventing this clobbering. The trade-off: if you later add new strokes to that page on the device, it may need to do a full recognition pass instead of an incremental update.
+For one-off OCR processing outside UltraBridge's pipeline (debugging
+a specific file, backup processing, etc.), the
+[go-sn](https://github.com/jdkruzr/go-sn) library ships a standalone
+`sninject` tool. See [`docs/OCR_INJECTION.md`](docs/OCR_INJECTION.md)
+for usage and the `-zero-recognfile` explanation.
 
 ## Known Limitations
 
@@ -422,62 +381,15 @@ Zeroing RECOGNFILE removes the data the device uses to re-derive RECOGNTEXT, pre
 
 ## Troubleshooting
 
-### Claude.ai "Authorization Failed"
+Most common issues — can't log in, Claude.ai OAuth failures, OCR
+jobs stuck, Boox WebDAV not syncing, RAG search falling back to
+FTS-only — are covered in
+[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
 
-1. Ensure your UltraBridge instance is accessible via a public URL (e.g., using a tunnel or reverse proxy) if connecting from Claude.ai web.
-2. Verify that **Verbose API Logging** is enabled in **Settings > General**.
-3. Check the Docker logs for "auth failure" messages to see why the request was rejected.
-4. If you recently changed your password, you may need to disconnect and reconnect the server in Claude.ai to trigger a new OAuth flow.
-
-### MCP tools not appearing in Claude
-
-1. Ensure the MCP server is enabled in **Settings > General**.
-2. Verify the SSE endpoint is correct (typically `https://your-host/mcp`).
-3. Check the **Logs** tab in UltraBridge for "MCP tool call" entries to verify that Claude is successfully reaching the server.
-
-### "database connection failed"
-
-This is expected in standalone mode (no Supernote Private Cloud).
- The warning is non-fatal — UltraBridge continues with SQLite-only storage.
-
-If you have SPC installed, check that `.dbenv` is readable and MariaDB is running:
-
-```bash
-cat /mnt/supernote/.dbenv
-docker ps | grep mariadb
-```
-
-### "user resolution failed"
-
-- **"no users found"** — No users in the database yet. Sync your Supernote device first.
-- **"multiple users found"** — Set `UB_USER_ID` in `.ultrabridge.env`.
-
-### Files tab shows "No Supernote source configured"
-
-Add a Supernote source in **Settings > Sources** with the path to your `.note` files.
-
-### OCR jobs stuck in "in_progress"
-
-The watchdog reclaims stuck jobs after 10 minutes. If jobs consistently get stuck, check that your OCR API URL and API key are correct in **Settings > OCR** and the API is reachable from inside the container.
-
-### Boox WebDAV sync fails
-
-1. Verify a Boox source is added and enabled in **Settings > Sources**
-2. Check the WebDAV URL is `http://<host>:<port>/webdav/` (trailing slash required for some Boox firmware)
-3. Confirm credentials match your UltraBridge username/password
-4. Check container logs: `docker logs ultrabridge | grep boox`
-
-### Boox notes not appearing in Files tab
-
-1. Verify a Boox source exists in **Settings > Sources** with a valid notes path
-2. Check the Docker volume mount includes the Boox notes path
-3. Uploaded files should appear at `{notes_path}/onyx/{model}/...`
-
-### CalDAV client shows empty collection
-
-1. `curl -u admin:password http://localhost:8443/health` — should return `{"status":"ok"}`
-2. Verify credentials in the CalDAV client
-3. Check logs: `docker logs ultrabridge`
+If you hit something that isn't in that document: `docker logs
+ultrabridge` almost always has a specific reason, and enabling
+**Verbose API Logging** in Settings > General surfaces per-request
+auth-failure detail.
 
 ## License
 

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"log/slog"
 	"time"
@@ -41,6 +42,14 @@ type mockTaskService struct {
 func (m *mockTaskService) List(ctx context.Context) ([]service.Task, error) {
 	return m.tasks, nil
 }
+func (m *mockTaskService) Get(ctx context.Context, id string) (service.Task, error) {
+	for _, t := range m.tasks {
+		if t.ID == id {
+			return t, nil
+		}
+	}
+	return service.Task{}, sql.ErrNoRows
+}
 func (m *mockTaskService) Create(ctx context.Context, title string, dueAt *time.Time) (service.Task, error) {
 	t := service.Task{ID: "test-id", Title: title, Status: service.StatusNeedsAction}
 	if dueAt != nil {
@@ -48,6 +57,25 @@ func (m *mockTaskService) Create(ctx context.Context, title string, dueAt *time.
 	}
 	m.tasks = append(m.tasks, t)
 	return t, nil
+}
+func (m *mockTaskService) Update(ctx context.Context, id string, patch service.TaskPatch) (service.Task, error) {
+	for i := range m.tasks {
+		if m.tasks[i].ID == id {
+			if patch.Title != nil {
+				m.tasks[i].Title = *patch.Title
+			}
+			if patch.ClearDueAt {
+				m.tasks[i].DueAt = nil
+			} else if patch.DueAt != nil {
+				m.tasks[i].DueAt = patch.DueAt
+			}
+			if patch.Detail != nil {
+				m.tasks[i].Detail = patch.Detail
+			}
+			return m.tasks[i], nil
+		}
+	}
+	return service.Task{}, sql.ErrNoRows
 }
 func (m *mockTaskService) Complete(ctx context.Context, id string) error { return nil }
 func (m *mockTaskService) Delete(ctx context.Context, id string) error   { return nil }
@@ -71,17 +99,88 @@ type mockNoteService struct {
 	contents map[string]interface{}
 	renders  map[string]io.ReadCloser
 	
-	processorStarted bool
-	importTriggered bool
-	migrateTriggered bool
+	processorStarted     bool
+	booxProcessorStarted bool
+	importTriggered      bool
+	migrateTriggered     bool
+	deletedPaths         []string
 	
 	// Settings for section visibility
 	pipelineConfigured bool
 	booxEnabled bool
+
+	// Boox-tab list
+	booxNotes []service.BooxNoteSummary
 }
 
 func (m *mockNoteService) ListFiles(ctx context.Context, path, sort, order string, page, perPage int) ([]service.NoteFile, int, error) {
 	return m.files, len(m.files), nil
+}
+func (m *mockNoteService) ListSupernoteFiles(ctx context.Context, path, sort, order string, page, perPage int) ([]service.NoteFile, int, error) {
+	var out []service.NoteFile
+	for _, f := range m.files {
+		if f.Source != "boox" {
+			out = append(out, f)
+		}
+	}
+	return out, len(out), nil
+}
+func (m *mockNoteService) ListBooxNotes(ctx context.Context, device, folder, sort, order string, page, perPage int) ([]service.BooxNoteSummary, int, error) {
+	if device == "" && folder == "" {
+		return m.booxNotes, len(m.booxNotes), nil
+	}
+	var out []service.BooxNoteSummary
+	for _, bn := range m.booxNotes {
+		if device != "" && bn.DeviceModel != device {
+			continue
+		}
+		if folder != "" && bn.Folder != folder {
+			continue
+		}
+		out = append(out, bn)
+	}
+	return out, len(out), nil
+}
+func (m *mockNoteService) ListBooxFolders(ctx context.Context) ([]service.BooxFolder, error) {
+	seen := map[string]int{}
+	for _, bn := range m.booxNotes {
+		seen[bn.Folder]++
+	}
+	out := make([]service.BooxFolder, 0, len(seen))
+	for f, c := range seen {
+		out = append(out, service.BooxFolder{Folder: f, Count: c})
+	}
+	return out, nil
+}
+func (m *mockNoteService) ListBooxDevices(ctx context.Context) ([]service.BooxDevice, error) {
+	seen := map[string]int{}
+	for _, bn := range m.booxNotes {
+		if bn.DeviceModel == ".." {
+			continue
+		}
+		seen[bn.DeviceModel]++
+	}
+	out := make([]service.BooxDevice, 0, len(seen))
+	for d, c := range seen {
+		out = append(out, service.BooxDevice{DeviceModel: d, Count: c})
+	}
+	return out, nil
+}
+func (m *mockNoteService) GetBooxNote(ctx context.Context, path string) (service.BooxNoteSummary, error) {
+	for _, bn := range m.booxNotes {
+		if bn.Path == path {
+			return bn, nil
+		}
+	}
+	return service.BooxNoteSummary{}, sql.ErrNoRows
+}
+func (m *mockNoteService) GetFile(ctx context.Context, path string) (service.NoteFile, error) {
+	for _, f := range m.files {
+		if f.Path == path {
+			return f, nil
+		}
+	}
+	return service.NoteFile{}, sql.ErrNoRows
 }
 func (m *mockNoteService) GetNoteDetails(ctx context.Context, path string) (interface{}, error) {
 	return nil, nil
@@ -93,18 +192,53 @@ func (m *mockNoteService) RenderPage(ctx context.Context, path string, page int)
 	return m.renders[path], "image/jpeg", nil
 }
 func (m *mockNoteService) ScanFiles(ctx context.Context) error { return nil }
-func (m *mockNoteService) Enqueue(ctx context.Context, path string, force bool) error { return nil }
-func (m *mockNoteService) Skip(ctx context.Context, path, reason string) error { return nil }
-func (m *mockNoteService) Unskip(ctx context.Context, path string) error { return nil }
+func (m *mockNoteService) Enqueue(ctx context.Context, path string, force bool) error {
+	for i := range m.files {
+		if m.files[i].Path == path {
+			m.files[i].JobStatus = "pending"
+		}
+	}
+	return nil
+}
+func (m *mockNoteService) Skip(ctx context.Context, path, reason string) error {
+	for i := range m.files {
+		if m.files[i].Path == path {
+			m.files[i].JobStatus = "skipped"
+		}
+	}
+	return nil
+}
+func (m *mockNoteService) Unskip(ctx context.Context, path string) error {
+	for i := range m.files {
+		if m.files[i].Path == path {
+			m.files[i].JobStatus = ""
+		}
+	}
+	return nil
+}
 func (m *mockNoteService) RetryFailed(ctx context.Context) error { return nil }
-func (m *mockNoteService) DeleteNote(ctx context.Context, path string) error { return nil }
-func (m *mockNoteService) BulkDelete(ctx context.Context, paths []string) error { return nil }
+func (m *mockNoteService) DeleteNote(ctx context.Context, path string) error {
+	m.deletedPaths = append(m.deletedPaths, path)
+	return nil
+}
+func (m *mockNoteService) BulkDelete(ctx context.Context, paths []string) error {
+	m.deletedPaths = append(m.deletedPaths, paths...)
+	return nil
+}
 func (m *mockNoteService) StartProcessor(ctx context.Context) error {
 	m.processorStarted = true
 	return nil
 }
 func (m *mockNoteService) StopProcessor(ctx context.Context) error {
 	m.processorStarted = false
+	return nil
+}
+func (m *mockNoteService) StartBooxProcessor(ctx context.Context) error {
+	m.booxProcessorStarted = true
+	return nil
+}
+func (m *mockNoteService) StopBooxProcessor(ctx context.Context) error {
+	m.booxProcessorStarted = false
 	return nil
 }
 func (m *mockNoteService) GetProcessorStatus(ctx context.Context) (service.EmbeddingJobStatus, error) {

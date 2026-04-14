@@ -444,12 +444,11 @@ func main() {
 		return u, h
 	})
 	// Enable bearer token auth (MCP tokens from Settings UI + internal loopback)
-	authMW.SetTokenValidator(func(token string) error {
+	authMW.SetTokenValidator(func(token string) (string, error) {
 		if token == internalToken {
-			return nil
+			return "internal", nil
 		}
-		_, err := mcpauth.ValidateToken(context.Background(), noteDB, token)
-		return err
+		return mcpauth.ValidateToken(context.Background(), noteDB, token)
 	})
 
 	// Create log broadcaster for web UI
@@ -480,12 +479,37 @@ func main() {
 			ConfigDirty: configDirty,
 		})
 	})
-	mux.Handle("/caldav/", authMW.Wrap(caldavHandler))
-	mux.HandleFunc("/.well-known/caldav", func(w http.ResponseWriter, r *http.Request) {
-		authMW.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/caldav/", http.StatusMovedPermanently)
-		})).ServeHTTP(w, r)
+	// Wrap the CalDAV handler with a PROPPATCH stub so clients can rename
+	// the collection (DAV:displayname) without hitting the 501 from the
+	// go-webdav library. The callback persists the new name to the settings
+	// DB and updates the running backend so subsequent PROPFIND responses
+	// reflect the change without a container restart.
+	caldavWithProppatch := ubcaldav.ProppatchStub(ubcaldav.GetOnCollectionStub(caldavHandler), ubcaldav.ProppatchOptions{
+		OnDisplayName: func(name string) error {
+			trimmed := strings.TrimSpace(name)
+			if trimmed == "" {
+				return nil
+			}
+			backend.SetCollectionName(trimmed)
+			if noteDB != nil {
+				return notedb.SetSetting(context.Background(), noteDB, appconfig.KeyCalDAVCollectionName, trimmed)
+			}
+			return nil
+		},
+		Logger: func(format string, args ...any) {
+			logger.Warn(fmt.Sprintf(format, args...))
+		},
 	})
+	mux.Handle("/caldav/", authMW.Wrap(caldavWithProppatch))
+	// Register both trailing-slash variants because Go's net/http ServeMux
+	// treats "/.well-known/caldav" (exact) and "/.well-known/caldav/" (prefix)
+	// as distinct patterns. RFC 6764 uses the no-slash form but some clients
+	// probe with a trailing slash; both should redirect to /caldav/.
+	wellKnownCalDAV := authMW.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/caldav/", http.StatusMovedPermanently)
+	}))
+	mux.Handle("/.well-known/caldav", wellKnownCalDAV)
+	mux.Handle("/.well-known/caldav/", wellKnownCalDAV)
 
 	// MCP discovery for Claude/OAuth clients
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, r *http.Request) {
@@ -536,7 +560,8 @@ func main() {
 		var scanner service.FileScanner
 		var booxStore service.BooxStore
 		var booxImporter service.BooxImporter
-		
+		var booxProc service.BooxProcessor
+
 		for _, s := range sources {
 			switch s.Type() {
 			case "supernote":
@@ -549,6 +574,7 @@ func main() {
 				if booxSource, ok := s.(*boox.Source); ok {
 					booxStore = booxSource.Processor().Store()
 					booxImporter = booxSource.Processor()
+					booxProc = booxSource.Processor()
 				}
 			}
 		}
@@ -569,7 +595,7 @@ func main() {
 		if booxNotesPath != "" {
 			booxCachePath = filepath.Join(booxNotesPath, ".cache")
 		}
-		noteSvc := service.NewNoteService(ns, proc, booxStore, booxImporter, si, scanner, noteDB, booxCachePath, booxNotesPath, logger)
+		noteSvc := service.NewNoteService(ns, proc, booxStore, booxImporter, booxProc, si, scanner, noteDB, booxCachePath, booxNotesPath, logger)
 
 		// 3. Search Service
 		var chatStore *chat.Store

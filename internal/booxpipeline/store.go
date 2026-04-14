@@ -129,11 +129,18 @@ func (s *Store) EnqueueJob(ctx context.Context, notePath string) error {
 
 // ClaimNextJob atomically claims the oldest pending job using SQLite RETURNING.
 // Returns nil, nil if no jobs are available.
+//
+// Each claim bumps `attempts` by 1, so the column reflects "number of times
+// the worker has started this job." Previously attempts was only incremented
+// by the watchdog (ReclaimStuckJobs / ReclaimAllInProgress), which made the
+// column useless for the Details modal — successful-first-try jobs all read
+// as 0 and even requeued-then-completed jobs usually read 0 unless they
+// happened to time out.
 func (s *Store) ClaimNextJob(ctx context.Context) (*BooxJob, error) {
 	now := time.Now().Unix()
 	var job BooxJob
 	err := s.db.QueryRowContext(ctx, `
-		UPDATE boox_jobs SET status = 'in_progress', started_at = ?
+		UPDATE boox_jobs SET status = 'in_progress', started_at = ?, attempts = attempts + 1
 		WHERE id = (SELECT id FROM boox_jobs WHERE status = 'pending'
 			AND (requeue_after IS NULL OR requeue_after <= ?)
 			ORDER BY queued_at ASC LIMIT 1)
@@ -448,6 +455,67 @@ func (s *Store) ListNotes(ctx context.Context) ([]BooxNoteEntry, error) {
 		return nil, fmt.Errorf("list notes iteration: %w", err)
 	}
 	return entries, nil
+}
+
+// FolderCount is one row in the Boox folder facet — the on-device folder
+// string and how many notes live in it.
+type FolderCount struct {
+	Folder string
+	Count  int
+}
+
+// ListFolders returns unique Boox folders with note counts, sorted by
+// folder name. Empty-folder rows (catalog entries without a folder) are
+// reported under a zero-length Folder string.
+func (s *Store) ListFolders(ctx context.Context) ([]FolderCount, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT folder, COUNT(*) FROM boox_notes GROUP BY folder ORDER BY folder`)
+	if err != nil {
+		return nil, fmt.Errorf("list folders query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []FolderCount
+	for rows.Next() {
+		var fc FolderCount
+		if err := rows.Scan(&fc.Folder, &fc.Count); err != nil {
+			return nil, fmt.Errorf("scan folder row: %w", err)
+		}
+		out = append(out, fc)
+	}
+	return out, rows.Err()
+}
+
+// DeviceCount is one row in the Boox device facet — the on-device model
+// string and how many notes are attributed to it.
+type DeviceCount struct {
+	DeviceModel string
+	Count       int
+}
+
+// ListDevices returns unique Boox device_model values with note counts,
+// sorted by device name. Rows whose device_model is the ".." sentinel
+// (field-swap artifact from a legacy import path) are filtered out so
+// they don't clutter the UI; see docs/follow-ups-2026-04-13.md item 18.
+func (s *Store) ListDevices(ctx context.Context) ([]DeviceCount, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT device_model, COUNT(*) FROM boox_notes
+		WHERE device_model != '..'
+		GROUP BY device_model ORDER BY device_model`)
+	if err != nil {
+		return nil, fmt.Errorf("list devices query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []DeviceCount
+	for rows.Next() {
+		var dc DeviceCount
+		if err := rows.Scan(&dc.DeviceModel, &dc.Count); err != nil {
+			return nil, fmt.Errorf("scan device row: %w", err)
+		}
+		out = append(out, dc)
+	}
+	return out, rows.Err()
 }
 
 // GetVersions returns archived versions of a Boox note.

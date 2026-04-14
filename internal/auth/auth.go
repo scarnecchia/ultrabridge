@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/subtle"
 	"log/slog"
 	"net/http"
@@ -14,8 +15,38 @@ import (
 // (e.g., seed-user, setup page, Settings UI) take effect immediately.
 type CredentialFunc func() (username, passwordHash string)
 
-// TokenValidator validates a bearer token. Returns nil if valid.
-type TokenValidator func(token string) error
+// TokenValidator validates a bearer token. Returns the token's identifying
+// label on success (empty string is allowed for anonymous/internal tokens);
+// returns an error otherwise. The label is exposed to downstream handlers
+// via auth.IdentityFromContext so mutation audit logs can attribute who
+// did what.
+type TokenValidator func(token string) (label string, err error)
+
+// Identity describes the auth path that succeeded for a request. Surfaced
+// to handlers via IdentityFromContext. Method is "basic", "bearer", or "" if
+// no auth middleware was hit.
+type Identity struct {
+	Method string
+	Label  string // bearer-token label, or the basic-auth username
+}
+
+type identityCtxKey struct{}
+
+// IdentityFromContext extracts the Identity installed by the auth
+// middleware. Returns the zero Identity when absent (e.g. pre-middleware
+// code paths or tests that skip auth).
+func IdentityFromContext(ctx context.Context) Identity {
+	if v, ok := ctx.Value(identityCtxKey{}).(Identity); ok {
+		return v
+	}
+	return Identity{}
+}
+
+// WithIdentity attaches an Identity to a context. Exported so tests can
+// drive handlers directly without exercising the middleware.
+func WithIdentity(ctx context.Context, id Identity) context.Context {
+	return context.WithValue(ctx, identityCtxKey{}, id)
+}
 
 type Middleware struct {
 	credsFn        CredentialFunc
@@ -56,8 +87,9 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 		if m.tokenValidator != nil {
 			if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
 				token := authHeader[len("Bearer "):]
-				if m.tokenValidator(token) == nil {
-					next.ServeHTTP(w, r)
+				if label, err := m.tokenValidator(token); err == nil {
+					id := Identity{Method: "bearer", Label: label}
+					next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), id)))
 					return
 				}
 				if m.verbose && m.logger != nil {
@@ -70,7 +102,8 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 		user, pass, ok := r.BasicAuth()
 		if ok {
 			if m.validBasic(user, pass) {
-				next.ServeHTTP(w, r)
+				id := Identity{Method: "basic", Label: user}
+				next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), id)))
 				return
 			}
 			if m.verbose && m.logger != nil {
