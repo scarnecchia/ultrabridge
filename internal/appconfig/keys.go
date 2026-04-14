@@ -68,6 +68,12 @@ const (
 	KeyBooxImportNotes    = "boox_import_notes"
 	KeyBooxImportPDFs     = "boox_import_pdfs"
 	KeyBooxImportOnyxPaths = "boox_import_onyx_paths"
+	// KeyBooxExternalBaseURL is the externally-reachable base URL of this
+	// UltraBridge deployment (e.g. https://ub.example.com). Prepended to
+	// red-ink-TODO detail links so CalDAV clients render a full clickable
+	// URL. Empty string falls back to a relative path (web UI still works,
+	// external clients see path-as-text).
+	KeyBooxExternalBaseURL = "boox_external_base_url"
 )
 
 // envVarForKey maps each setting key to its UB_ env var name.

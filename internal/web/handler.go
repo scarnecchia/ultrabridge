@@ -550,6 +550,27 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if h.noteDB != nil {
 		tokens, _ := mcpauth.ListTokens(ctx, h.noteDB)
 		data["MCPTokens"], data["MCPTokensEnabled"] = tokens, true
+
+		// Populate Boox-specific runtime settings. The Settings template
+		// references these as top-level fields (not Config.X) because
+		// they're stored in the settings table but not in the Config
+		// struct — read them on demand so the form fields render with
+		// current values.
+		data["BooxActive"] = h.notes != nil && h.notes.HasBooxSource()
+		ocrPrompt, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxOCRPrompt)
+		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoEnabled)
+		todoPrompt, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoPrompt)
+		importNotes, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportNotes)
+		importPDFs, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPDFs)
+		importOnyx, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxImportOnyxPaths)
+		extBaseURL, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxExternalBaseURL)
+		data["BooxOCRPrompt"] = ocrPrompt
+		data["BooxTodoEnabled"] = todoEnabled == "true"
+		data["BooxTodoPrompt"] = todoPrompt
+		data["BooxImportNotes"] = importNotes == "true"
+		data["BooxImportPDFs"] = importPDFs == "true"
+		data["BooxImportOnyxPaths"] = importOnyx == "true"
+		data["BooxExternalBaseURL"] = extBaseURL
 	}
 	if nt := r.URL.Query().Get("new_token"); nt != "" { data["NewMCPToken"] = nt }
 	h.renderTemplate(w, r, "settings", data)
@@ -672,6 +693,31 @@ func (h *Handler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		if v := strings.TrimSpace(r.FormValue("caldav_collection_name")); v != "" {
 			cfg.CalDAVCollectionName = v
 		}
+	case "boox":
+		// Boox settings are stored as runtime-configurable keys in the
+		// settings table (not on the Config struct); write them
+		// directly via notedb so they take effect on the next
+		// processor run without a restart.
+		if h.noteDB != nil {
+			ctx := r.Context()
+			if v := r.FormValue("ocr_prompt"); v != "" {
+				_ = notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxOCRPrompt, v)
+			}
+			_ = notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoEnabled, r.FormValue("todo_enabled"))
+			if v := r.FormValue("todo_prompt"); v != "" {
+				_ = notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoPrompt, v)
+			}
+			_ = notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxImportNotes, r.FormValue("import_notes"))
+			_ = notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxImportPDFs, r.FormValue("import_pdfs"))
+			// external_base_url: explicit empty string clears it (so the
+			// user can go back to relative-path mode); otherwise trim
+			// trailing slash and save.
+			extURL := strings.TrimSpace(r.FormValue("external_base_url"))
+			extURL = strings.TrimRight(extURL, "/")
+			_ = notedb.SetSetting(ctx, h.noteDB, appconfig.KeyBooxExternalBaseURL, extURL)
+		}
+		http.Redirect(w, r, "/settings", http.StatusSeeOther)
+		return
 	}
 	h.config.UpdateConfig(r.Context(), cfg)
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)

@@ -16,8 +16,13 @@ type TaskCreator interface {
 }
 
 // CreateTasksFromTodos creates CalDAV tasks from extracted red ink todos,
-// deduplicating against existing tasks by title (both incomplete and completed).
-func CreateTasksFromTodos(ctx context.Context, tc TaskCreator, notePath string, todos []TodoItem, logger *slog.Logger) int {
+// deduplicating against existing tasks by title (both incomplete and
+// completed). externalBaseURL, when non-empty, is prepended to the
+// /files/boox?detail=... link in the task's Detail so CalDAV clients see
+// an absolute URL they can render as clickable (e.g.
+// https://ub.example.com/files/boox?detail=...). Empty fallback emits
+// the bare relative path.
+func CreateTasksFromTodos(ctx context.Context, tc TaskCreator, notePath string, todos []TodoItem, externalBaseURL string, logger *slog.Logger) int {
 	existing, err := tc.List(ctx)
 	if err != nil {
 		logger.Error("todo: list tasks for dedup", "error", err)
@@ -47,6 +52,14 @@ func CreateTasksFromTodos(ctx context.Context, tc TaskCreator, notePath string, 
 		// URLs will also expose the second line as a clickable link.
 		basename := filepath.Base(notePath)
 		detailURL := "/files/boox?detail=" + url.QueryEscape(notePath)
+		if externalBaseURL != "" {
+			// Trim any trailing slash so we don't emit "https://host//files/...".
+			trimmed := externalBaseURL
+			if trimmed[len(trimmed)-1] == '/' {
+				trimmed = trimmed[:len(trimmed)-1]
+			}
+			detailURL = trimmed + detailURL
+		}
 		task := &taskstore.Task{
 			Title: taskstore.SqlStr(todo.Text),
 			Detail: taskstore.SqlStr(

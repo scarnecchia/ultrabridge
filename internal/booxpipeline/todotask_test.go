@@ -45,7 +45,7 @@ func TestCreateTasksFromTodos_CreatesNew(t *testing.T) {
 		{Type: "todo", Text: "Call dentist"},
 	}
 
-	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, testLogger())
+	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, "", testLogger())
 
 	if created != 2 {
 		t.Errorf("created = %d, want 2", created)
@@ -72,6 +72,30 @@ func TestCreateTasksFromTodos_CreatesNew(t *testing.T) {
 	}
 }
 
+func TestCreateTasksFromTodos_ExternalBaseURL(t *testing.T) {
+	tc := &mockTaskCreator{}
+	todos := []TodoItem{{Type: "todo", Text: "External link"}}
+
+	// With base URL set, Detail's second line should contain the absolute URL.
+	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, "https://ub.example.com", testLogger())
+	if created != 1 {
+		t.Fatalf("created = %d, want 1", created)
+	}
+	got := tc.created[0].Detail.String
+	want := "Open: https://ub.example.com/files/boox?detail=%2Fnotes%2Ftest.note"
+	if !strings.Contains(got, want) {
+		t.Errorf("detail missing absolute URL %q; got %q", want, got)
+	}
+
+	// Trailing slash on base URL should be stripped (no double slash).
+	tc2 := &mockTaskCreator{}
+	_ = CreateTasksFromTodos(context.Background(), tc2, "/notes/test.note", todos, "https://ub.example.com/", testLogger())
+	got2 := tc2.created[0].Detail.String
+	if strings.Contains(got2, "com//files") {
+		t.Errorf("trailing slash not stripped; got %q", got2)
+	}
+}
+
 func TestCreateTasksFromTodos_SkipsDuplicateIncomplete(t *testing.T) {
 	tc := &mockTaskCreator{
 		tasks: []taskstore.Task{
@@ -83,7 +107,7 @@ func TestCreateTasksFromTodos_SkipsDuplicateIncomplete(t *testing.T) {
 		{Type: "todo", Text: "New task"},
 	}
 
-	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, testLogger())
+	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, "", testLogger())
 
 	if created != 1 {
 		t.Errorf("created = %d, want 1 (duplicate skipped)", created)
@@ -107,7 +131,7 @@ func TestCreateTasksFromTodos_SkipsDuplicateCompleted(t *testing.T) {
 		{Type: "todo", Text: "Already done"},
 	}
 
-	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, testLogger())
+	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, "", testLogger())
 
 	if created != 0 {
 		t.Errorf("created = %d, want 0 (completed task should not be re-created)", created)
@@ -122,7 +146,7 @@ func TestCreateTasksFromTodos_DedupsWithinBatch(t *testing.T) {
 		{Type: "todo", Text: "Same thing"},
 	}
 
-	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, testLogger())
+	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, "", testLogger())
 
 	if created != 1 {
 		t.Errorf("created = %d, want 1 (batch dedup)", created)
@@ -131,7 +155,7 @@ func TestCreateTasksFromTodos_DedupsWithinBatch(t *testing.T) {
 
 func TestCreateTasksFromTodos_EmptyList(t *testing.T) {
 	tc := &mockTaskCreator{}
-	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", nil, testLogger())
+	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", nil, "", testLogger())
 
 	if created != 0 {
 		t.Errorf("created = %d, want 0", created)
@@ -146,7 +170,7 @@ func TestCreateTasksFromTodos_ListError(t *testing.T) {
 		{Type: "todo", Text: "Should not be created"},
 	}
 
-	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, testLogger())
+	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, "", testLogger())
 
 	if created != 0 {
 		t.Errorf("created = %d, want 0 (list error should abort)", created)
@@ -162,7 +186,7 @@ func TestCreateTasksFromTodos_CreateError(t *testing.T) {
 		{Type: "todo", Text: "Also fail"},
 	}
 
-	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, testLogger())
+	created := CreateTasksFromTodos(context.Background(), tc, "/notes/test.note", todos, "", testLogger())
 
 	if created != 0 {
 		t.Errorf("created = %d, want 0 (create errors)", created)

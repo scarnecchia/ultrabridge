@@ -323,7 +323,10 @@ func main() {
 		return boox.NewSource(db, row, deps, boox.BooxDeps{
 			ContentDeleter: si,
 			OnTodosFound: func(ctx context.Context, notePath string, todos []booxpipeline.TodoItem) {
-				created := booxpipeline.CreateTasksFromTodos(ctx, store, notePath, todos, logger)
+				// Read the external base URL each time so changes from Settings
+				// take effect immediately without a restart.
+				externalBaseURL, _ := notedb.GetSetting(ctx, noteDB, appconfig.KeyBooxExternalBaseURL)
+				created := booxpipeline.CreateTasksFromTodos(ctx, store, notePath, todos, externalBaseURL, logger)
 				if created > 0 && notifier != nil {
 					notifier.Notify(ctx)
 				}

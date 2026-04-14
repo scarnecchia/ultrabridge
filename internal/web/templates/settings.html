@@ -255,6 +255,11 @@
             <label for="boox-todo-prompt">To-do Extraction Prompt</label>
             <textarea id="boox-todo-prompt" name="todo_prompt" rows="4">{{.BooxTodoPrompt}}</textarea>
         </div>
+        <div class="form-group">
+            <label for="boox-external-base-url">External Base URL (optional)</label>
+            <p class="device-info" style="margin-bottom: 0.5rem;">The externally-reachable URL of this UltraBridge instance (e.g. <code>https://ub.example.com</code>). When set, red-ink to-do links in task descriptions include this prefix so CalDAV clients (DAVx5, 2Do, Apple Reminders) render a fully-clickable absolute URL. Leave blank for a relative path — the web UI still works; external clients see the path as text.</p>
+            <input id="boox-external-base-url" name="external_base_url" type="url" placeholder="https://ub.example.com" value="{{.BooxExternalBaseURL}}">
+        </div>
 
         <hr>
 

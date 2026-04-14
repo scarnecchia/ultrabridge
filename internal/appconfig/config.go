@@ -22,6 +22,7 @@ var runtimeKeys = []string{
 	KeyBooxImportNotes,
 	KeyBooxImportPDFs,
 	KeyBooxImportOnyxPaths,
+	KeyBooxExternalBaseURL,
 }
 
 // Config represents application configuration. Fields are grouped by concern.
