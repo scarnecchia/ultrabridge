@@ -35,6 +35,7 @@ type BooxStore interface {
 	SkipNote(ctx context.Context, path, reason string) error
 	UnskipNote(ctx context.Context, path string) error
 	GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error)
+	ListFolders(ctx context.Context) ([]booxpipeline.FolderCount, error)
 }
 
 // BooxImporter is the interface required by the NoteService for Boox imports.
@@ -215,9 +216,12 @@ func (s *noteService) ListSupernoteFiles(ctx context.Context, path, sortField, o
 
 // ListBooxNotes returns Boox-catalog rows with the richer per-note fields
 // (Title, Folder, DeviceModel, NoteType, PageCount) that NoteFile flattens.
+// When folder is non-empty, rows are filtered to exact matches on the
+// Folder field — on-device folder strings are used as opaque labels so
+// nested paths (e.g. "Notebooks/Personal") round-trip unchanged.
 // Sort supports "title" (default), "folder", "pages", "size", "created",
 // "modified". Returns empty/zero when no Boox store is wired.
-func (s *noteService) ListBooxNotes(ctx context.Context, sortField, order string, page, perPage int) ([]BooxNoteSummary, int, error) {
+func (s *noteService) ListBooxNotes(ctx context.Context, folder, sortField, order string, page, perPage int) ([]BooxNoteSummary, int, error) {
 	if s.booxStore == nil {
 		return nil, 0, nil
 	}
@@ -228,6 +232,9 @@ func (s *noteService) ListBooxNotes(ctx context.Context, sortField, order string
 	}
 	out := make([]BooxNoteSummary, 0, len(rows))
 	for _, bn := range rows {
+		if folder != "" && bn.Folder != folder {
+			continue
+		}
 		out = append(out, mapBooxSummary(bn))
 	}
 	sortBooxNotes(out, sortField, order)
@@ -255,6 +262,25 @@ func (s *noteService) ListBooxNotes(ctx context.Context, sortField, order string
 		end = totalFiles
 	}
 	return out[start:end], totalFiles, nil
+}
+
+// ListBooxFolders returns every unique Boox folder with its note count.
+// Used by the Boox Files tab to build the folder-filter pill row.
+// Returns nil when no Boox store is wired.
+func (s *noteService) ListBooxFolders(ctx context.Context) ([]BooxFolder, error) {
+	if s.booxStore == nil {
+		return nil, nil
+	}
+	rows, err := s.booxStore.ListFolders(ctx)
+	if err != nil {
+		s.logger.Error("list boox folders", "error", err)
+		return nil, err
+	}
+	out := make([]BooxFolder, 0, len(rows))
+	for _, fc := range rows {
+		out = append(out, BooxFolder{Folder: fc.Folder, Count: fc.Count})
+	}
+	return out, nil
 }
 
 // GetBooxNote returns the Boox-tab summary for a single path. Returns

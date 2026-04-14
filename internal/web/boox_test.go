@@ -77,6 +77,18 @@ func (m *mockBooxStore) GetQueueStatus(ctx context.Context) (booxpipeline.QueueS
 	return booxpipeline.QueueStatus{}, nil
 }
 
+func (m *mockBooxStore) ListFolders(ctx context.Context) ([]booxpipeline.FolderCount, error) {
+	counts := map[string]int{}
+	for _, bn := range m.notes {
+		counts[bn.Folder]++
+	}
+	var out []booxpipeline.FolderCount
+	for f, c := range counts {
+		out = append(out, booxpipeline.FolderCount{Folder: f, Count: c})
+	}
+	return out, nil
+}
+
 func (m *mockBooxStore) CountNotesWithPrefix(ctx context.Context, prefix string) (int, error) {
 	return 0, nil
 }

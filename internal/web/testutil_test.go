@@ -125,8 +125,28 @@ func (m *mockNoteService) ListSupernoteFiles(ctx context.Context, path, sort, or
 	}
 	return out, len(out), nil
 }
-func (m *mockNoteService) ListBooxNotes(ctx context.Context, sort, order string, page, perPage int) ([]service.BooxNoteSummary, int, error) {
-	return m.booxNotes, len(m.booxNotes), nil
+func (m *mockNoteService) ListBooxNotes(ctx context.Context, folder, sort, order string, page, perPage int) ([]service.BooxNoteSummary, int, error) {
+	if folder == "" {
+		return m.booxNotes, len(m.booxNotes), nil
+	}
+	var out []service.BooxNoteSummary
+	for _, bn := range m.booxNotes {
+		if bn.Folder == folder {
+			out = append(out, bn)
+		}
+	}
+	return out, len(out), nil
+}
+func (m *mockNoteService) ListBooxFolders(ctx context.Context) ([]service.BooxFolder, error) {
+	seen := map[string]int{}
+	for _, bn := range m.booxNotes {
+		seen[bn.Folder]++
+	}
+	out := make([]service.BooxFolder, 0, len(seen))
+	for f, c := range seen {
+		out = append(out, service.BooxFolder{Folder: f, Count: c})
+	}
+	return out, nil
 }
 func (m *mockNoteService) GetBooxNote(ctx context.Context, path string) (service.BooxNoteSummary, error) {
 	for _, bn := range m.booxNotes {

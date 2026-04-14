@@ -40,6 +40,24 @@
       <span class="text-small">{{.filesTotalFiles}} notes</span>
     </div>
 
+    {{if .booxFolders}}
+    <div class="toolbar" style="flex-wrap: wrap; gap: 0.25rem;">
+      <span class="text-small" style="margin-right:0.5rem;">Folders:</span>
+      <a href="/files/boox" hx-get="/files/boox" hx-target="#main-content" hx-push-url="true"
+         class="btn-small"
+         {{if not .booxFolderFilter}}style="background: var(--accent-color); color: var(--bg-color);"{{end}}>
+        All
+      </a>
+      {{range .booxFolders}}
+      <a href="/files/boox?folder={{.Folder | urlquery}}" hx-get="/files/boox?folder={{.Folder | urlquery}}" hx-target="#main-content" hx-push-url="true"
+         class="btn-small"
+         {{if eq $.booxFolderFilter .Folder}}style="background: var(--accent-color); color: var(--bg-color);"{{end}}>
+        {{if .Folder}}{{.Folder}}{{else}}(unfiled){{end}} <span class="text-small">({{.Count}})</span>
+      </a>
+      {{end}}
+    </div>
+    {{end}}
+
     <div class="card">
     <form id="bulk-delete-form" hx-post="/files/delete-bulk" hx-swap="none" hx-on:htmx:after-request="if (!event.detail.successful) return; document.querySelectorAll('.file-checkbox:checked').forEach(cb => cb.closest('tr').remove()); updateBulkDeleteBar();">
     <div class="table-container">
@@ -78,11 +96,11 @@
     {{if gt .filesTotalPages 1}}
     <div style="margin-top:0.75rem; display:flex; align-items:center; gap:0.5rem; font-size:0.9rem;">
       {{if gt .filesPage 1}}
-        <button class="btn-small" hx-get="/files/boox?page={{sub .filesPage 1}}" hx-target="#main-content" hx-push-url="true">◂ Prev</button>
+        <button class="btn-small" hx-get="/files/boox?page={{sub .filesPage 1}}{{if .booxFolderFilter}}&folder={{.booxFolderFilter | urlquery}}{{end}}" hx-target="#main-content" hx-push-url="true">◂ Prev</button>
       {{end}}
       <span>Page {{.filesPage}} of {{.filesTotalPages}}</span>
       {{if lt .filesPage .filesTotalPages}}
-        <button class="btn-small" hx-get="/files/boox?page={{add .filesPage 1}}" hx-target="#main-content" hx-push-url="true">Next ▸</button>
+        <button class="btn-small" hx-get="/files/boox?page={{add .filesPage 1}}{{if .booxFolderFilter}}&folder={{.booxFolderFilter | urlquery}}{{end}}" hx-target="#main-content" hx-push-url="true">Next ▸</button>
       {{end}}
     </div>
     {{end}}

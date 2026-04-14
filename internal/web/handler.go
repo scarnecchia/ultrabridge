@@ -442,6 +442,7 @@ func (h *Handler) handleFilesBoox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sortField, sortOrder := r.URL.Query().Get("sort"), r.URL.Query().Get("order")
+	folder := r.URL.Query().Get("folder")
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
 	if perPage <= 0 {
@@ -451,12 +452,19 @@ func (h *Handler) handleFilesBoox(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 
-	rows, total, err := h.notes.ListBooxNotes(ctx, sortField, sortOrder, page, perPage)
+	rows, total, err := h.notes.ListBooxNotes(ctx, folder, sortField, sortOrder, page, perPage)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	folders, err := h.notes.ListBooxFolders(ctx)
+	if err != nil {
+		// Non-fatal: the folder-filter row is a convenience. Log and continue
+		// so the file list still renders.
+		h.logger.Error("list boox folders", "error", err)
+	}
 	data["booxNotes"], data["filesTotalFiles"] = rows, total
+	data["booxFolders"], data["booxFolderFilter"] = folders, folder
 	data["filesPage"], data["filesPerPage"] = page, perPage
 	data["filesSort"], data["filesOrder"] = sortField, sortOrder
 	data["filesTotalPages"] = (total + perPage - 1) / perPage

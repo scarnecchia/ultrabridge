@@ -50,6 +50,14 @@ type NoteFile struct {
 	LastError  *string   `json:"last_error"`
 }
 
+// BooxFolder is one row in the Boox folder facet — the on-device folder
+// label and how many notes live under it. Passed to the Boox Files tab to
+// build the folder-filter pill row.
+type BooxFolder struct {
+	Folder string `json:"folder"`
+	Count  int    `json:"count"`
+}
+
 // BooxNoteSummary is a Boox-tab-specific view of a Boox note, surfacing the
 // on-device title, folder, device model, note type, and page count that the
 // merged NoteFile shape hides.
@@ -130,7 +138,8 @@ type TaskService interface {
 type NoteService interface {
 	ListFiles(ctx context.Context, path string, sort, order string, page, perPage int) ([]NoteFile, int, error)
 	ListSupernoteFiles(ctx context.Context, path string, sort, order string, page, perPage int) ([]NoteFile, int, error)
-	ListBooxNotes(ctx context.Context, sort, order string, page, perPage int) ([]BooxNoteSummary, int, error)
+	ListBooxNotes(ctx context.Context, folder, sort, order string, page, perPage int) ([]BooxNoteSummary, int, error)
+	ListBooxFolders(ctx context.Context) ([]BooxFolder, error)
 	GetFile(ctx context.Context, path string) (NoteFile, error)
 	GetBooxNote(ctx context.Context, path string) (BooxNoteSummary, error)
 	GetNoteDetails(ctx context.Context, path string) (interface{}, error) // history/job info

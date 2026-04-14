@@ -77,6 +77,17 @@ func (m *mockBooxStore) DeleteNote(ctx context.Context, path string) error    { 
 func (m *mockBooxStore) SkipNote(ctx context.Context, path, reason string) error { return nil }
 func (m *mockBooxStore) UnskipNote(ctx context.Context, path string) error       { return nil }
 func (m *mockBooxStore) GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error) { return booxpipeline.QueueStatus{}, nil }
+func (m *mockBooxStore) ListFolders(ctx context.Context) ([]booxpipeline.FolderCount, error) {
+	counts := map[string]int{}
+	for _, bn := range m.notes {
+		counts[bn.Folder]++
+	}
+	var out []booxpipeline.FolderCount
+	for f, c := range counts {
+		out = append(out, booxpipeline.FolderCount{Folder: f, Count: c})
+	}
+	return out, nil
+}
 
 type mockFileScanner struct {
 	scanned int
@@ -187,7 +198,7 @@ func TestNoteService_ListBooxNotes(t *testing.T) {
 	}
 	svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, nil, "", "", nil)
 
-	rows, total, err := svc.ListBooxNotes(context.Background(), "title", "asc", 1, 10)
+	rows, total, err := svc.ListBooxNotes(context.Background(), "", "title", "asc", 1, 10)
 	if err != nil {
 		t.Fatalf("ListBooxNotes failed: %v", err)
 	}
@@ -209,7 +220,7 @@ func TestNoteService_ListBooxNotes(t *testing.T) {
 	}
 
 	t.Run("sort_by_folder_desc", func(t *testing.T) {
-		rows, _, err := svc.ListBooxNotes(context.Background(), "folder", "desc", 1, 10)
+		rows, _, err := svc.ListBooxNotes(context.Background(), "", "folder", "desc", 1, 10)
 		if err != nil {
 			t.Fatalf("ListBooxNotes failed: %v", err)
 		}
@@ -221,7 +232,7 @@ func TestNoteService_ListBooxNotes(t *testing.T) {
 
 	t.Run("no_store_returns_empty", func(t *testing.T) {
 		noneSvc := NewNoteService(ns, nil, nil, nil, nil, nil, nil, nil, "", "", nil)
-		got, n, err := noneSvc.ListBooxNotes(context.Background(), "", "", 1, 10)
+		got, n, err := noneSvc.ListBooxNotes(context.Background(), "", "", "", 1, 10)
 		if err != nil || n != 0 || len(got) != 0 {
 			t.Errorf("expected empty result when booxStore is nil, got (%v, %d, %v)", got, n, err)
 		}

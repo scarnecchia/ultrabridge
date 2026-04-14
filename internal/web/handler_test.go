@@ -2360,6 +2360,55 @@ func TestHandleFilesBooxRendersBooxColumns(t *testing.T) {
 	}
 }
 
+// TestHandleFilesBoox_FolderFilter verifies that ?folder=X narrows the
+// list to rows whose Folder field exactly matches, and that the folder-
+// filter pill row surfaces every unique folder with its count.
+func TestHandleFilesBoox_FolderFilter(t *testing.T) {
+	h := newTestHandler()
+	h.notes.(*mockNoteService).booxNotes = []service.BooxNoteSummary{
+		{Path: "/boox/p1.note", Title: "P One", Folder: "Personal"},
+		{Path: "/boox/p2.note", Title: "P Two", Folder: "Personal"},
+		{Path: "/boox/m1.note", Title: "M One", Folder: "Moffitt"},
+	}
+
+	t.Run("no_filter_shows_all", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/files/boox", nil)
+		req.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d", w.Code)
+		}
+		body := w.Body.String()
+		for _, want := range []string{"P One", "P Two", "M One"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("unfiltered view missing %q", want)
+			}
+		}
+		// Folder pill row surfaces both folders.
+		if !strings.Contains(body, "Personal") || !strings.Contains(body, "Moffitt") {
+			t.Errorf("folder pills missing; body:\n%s", body)
+		}
+	})
+
+	t.Run("filter_by_folder", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/files/boox?folder=Personal", nil)
+		req.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d", w.Code)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "P One") || !strings.Contains(body, "P Two") {
+			t.Errorf("filtered view missing Personal rows; body:\n%s", body)
+		}
+		if strings.Contains(body, "M One") {
+			t.Errorf("filtered view leaked Moffitt row; body:\n%s", body)
+		}
+	})
+}
+
 // TestHandleFilesSupernoteNoSource verifies the error branch renders an
 // informative empty-state card (not a 500) when no Supernote source is wired.
 func TestHandleFilesSupernoteNoSource(t *testing.T) {

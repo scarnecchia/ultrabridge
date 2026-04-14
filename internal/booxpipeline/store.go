@@ -450,6 +450,35 @@ func (s *Store) ListNotes(ctx context.Context) ([]BooxNoteEntry, error) {
 	return entries, nil
 }
 
+// FolderCount is one row in the Boox folder facet — the on-device folder
+// string and how many notes live in it.
+type FolderCount struct {
+	Folder string
+	Count  int
+}
+
+// ListFolders returns unique Boox folders with note counts, sorted by
+// folder name. Empty-folder rows (catalog entries without a folder) are
+// reported under a zero-length Folder string.
+func (s *Store) ListFolders(ctx context.Context) ([]FolderCount, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT folder, COUNT(*) FROM boox_notes GROUP BY folder ORDER BY folder`)
+	if err != nil {
+		return nil, fmt.Errorf("list folders query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []FolderCount
+	for rows.Next() {
+		var fc FolderCount
+		if err := rows.Scan(&fc.Folder, &fc.Count); err != nil {
+			return nil, fmt.Errorf("scan folder row: %w", err)
+		}
+		out = append(out, fc)
+	}
+	return out, rows.Err()
+}
+
 // GetVersions returns archived versions of a Boox note.
 // Version files live at {notesRoot}/.versions/{relDir}/{nameNoExt}/{timestamp}.note
 func (s *Store) GetVersions(ctx context.Context, path string) ([]BooxVersion, error) {
