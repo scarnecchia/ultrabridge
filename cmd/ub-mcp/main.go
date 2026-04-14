@@ -1,10 +1,13 @@
 package main // FCIS: Imperative Shell
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -133,9 +136,43 @@ func authMiddleware(db *sql.DB, staticToken, basicUser, basicPass string, next h
 
 // get performs a GET request to the UltraBridge API with Basic Auth.
 func (c *apiClient) get(ctx context.Context, path string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
+	return c.request(ctx, "GET", path, nil)
+}
+
+// postJSON performs a POST with a JSON-encoded body. body may be nil to
+// POST without a payload (e.g. side-effect endpoints like purge-completed).
+func (c *apiClient) postJSON(ctx context.Context, path string, body interface{}) (*http.Response, error) {
+	return c.request(ctx, "POST", path, body)
+}
+
+// patchJSON performs a PATCH with a JSON-encoded body. Used for partial
+// task updates.
+func (c *apiClient) patchJSON(ctx context.Context, path string, body interface{}) (*http.Response, error) {
+	return c.request(ctx, "PATCH", path, body)
+}
+
+// deleteRequest performs a DELETE request. No body.
+func (c *apiClient) deleteRequest(ctx context.Context, path string) (*http.Response, error) {
+	return c.request(ctx, "DELETE", path, nil)
+}
+
+// request is the shared path for every method. Marshals body as JSON when
+// non-nil; sets Content-Type for bodied requests.
+func (c *apiClient) request(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("marshal body: %w", err)
+		}
+		reader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	if c.user != "" {
 		req.SetBasicAuth(c.user, c.pass)

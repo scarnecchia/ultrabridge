@@ -37,6 +37,7 @@ func registerTools(server *mcp.Server, client *apiClient) {
 	registerSearchNotes(server, client)
 	registerGetNotePages(server, client)
 	registerGetNoteImage(server, client)
+	registerTaskTools(server, client)
 }
 
 // registerSearchNotes registers the search_notes tool.
