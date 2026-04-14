@@ -151,6 +151,50 @@ func NewHandler(
 		"add":        func(a, b int) int { return a + b },
 		"sub":        func(a, b int) int { return a - b },
 		"trimPrefix": strings.TrimPrefix,
+		// taskDetailHTML renders a task's Detail string as trusted HTML.
+		// Two recognized formats produce a clickable link that navigates
+		// to the note's details modal:
+		//
+		// 1. New format (CreateTasksFromTodos post-2026-04-14):
+		//       "From Boox red ink in <basename>\nOpen: /files/boox?detail=..."
+		//    The second line is rendered as an <a href> link that HTMX-swaps
+		//    the Boox Files tab with the details modal auto-opened.
+		//
+		// 2. Legacy format (CreateTasksFromTodos pre-2026-04-14):
+		//       "From Boox red ink: <absolute path>"
+		//    The whole string is wrapped in a link that navigates to
+		//    /files/boox?detail=<urlquery path>. Lets existing CalDAV-synced
+		//    tasks upgrade to clickable without a DB backfill.
+		//
+		// Any other string renders as-is (escaped).
+		"taskDetailHTML": func(detail string) template.HTML {
+			esc := template.HTMLEscapeString
+			const newPrefix = "From Boox red ink in "
+			const openMarker = "\nOpen: "
+			if strings.HasPrefix(detail, newPrefix) {
+				if openIdx := strings.Index(detail, openMarker); openIdx >= 0 {
+					headerLine := detail[:openIdx]
+					href := detail[openIdx+len(openMarker):]
+					return template.HTML(
+						esc(headerLine) + `<br><a href="` + esc(href) +
+							`" hx-get="` + esc(href) +
+							`" hx-target="#main-content" hx-push-url="true" style="color:#6b7280;">Open note details ⬔</a>`,
+					)
+				}
+			}
+			const legacyPrefix = "From Boox red ink: "
+			if strings.HasPrefix(detail, legacyPrefix) {
+				path := detail[len(legacyPrefix):]
+				href := "/files/boox?detail=" + url.QueryEscape(path)
+				return template.HTML(
+					`<a href="` + esc(href) +
+						`" hx-get="` + esc(href) +
+						`" hx-target="#main-content" hx-push-url="true" style="color:#6b7280;">` +
+						esc(detail) + `</a>`,
+				)
+			}
+			return template.HTML(esc(detail))
+		},
 		"taskLink": func(val interface{}) map[string]interface{} {
 			if val == nil { return nil }
 			var link struct {

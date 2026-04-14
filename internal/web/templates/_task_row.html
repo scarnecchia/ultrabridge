@@ -4,7 +4,7 @@
     <td class="task-title">
         {{.Title}}
         {{if .Detail}}
-        <br><span class="device-info">{{$detail := .Detail}}{{if hasPrefix $detail "From Boox red ink: "}}<a href="#" onclick="showHistory('{{trimPrefix $detail "From Boox red ink: " | js}}'); return false;" style="color:#6b7280;">{{$detail}}</a>{{else}}{{$detail}}{{end}}</span>
+        <br><span class="device-info">{{ taskDetailHTML .Detail }}</span>
         {{end}}
         {{if .Links}}{{with taskLink .Links}}
         <br><span class="device-info"><a href="#" onclick="showHistory('{{.Path | js}}'); return false;" style="color:#6b7280;">⬔ From note, page {{.Page}}</a></span>

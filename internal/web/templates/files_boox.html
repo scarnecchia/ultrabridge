@@ -137,8 +137,13 @@
     document.addEventListener('DOMContentLoaded', function() {
         if (typeof updateBulkDeleteBar === 'function') updateBulkDeleteBar();
         if (typeof updateProcessorStatus === 'function') updateProcessorStatus();
-        {{if .detailPath}}
-        showHistory("{{.detailPath}}");
-        {{end}}
     });
+    {{if .detailPath}}
+    // Fire immediately — not inside DOMContentLoaded — so HTMX swaps
+    // (e.g. clicking a red-ink task's "Open note details" link from the
+    // Tasks tab) auto-open the details modal, not just hard page loads.
+    if (typeof showHistory === 'function') {
+        showHistory("{{.detailPath}}");
+    }
+    {{end}}
 </script>

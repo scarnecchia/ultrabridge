@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/sysop/ultrabridge/internal/taskstore"
@@ -58,9 +59,16 @@ func TestCreateTasksFromTodos_CreatesNew(t *testing.T) {
 	if tc.created[1].Title.String != "Call dentist" {
 		t.Errorf("second task title = %q, want 'Call dentist'", tc.created[1].Title.String)
 	}
-	// Check detail includes source path
-	if tc.created[0].Detail.String != "From Boox red ink: /notes/test.note" {
-		t.Errorf("detail = %q, want source path", tc.created[0].Detail.String)
+	// Detail is two lines: a human-readable "From Boox red ink in <basename>"
+	// plus a relative URL that the web UI parses into a clickable link.
+	got := tc.created[0].Detail.String
+	wantHeader := "From Boox red ink in test.note"
+	wantURL := "Open: /files/boox?detail=%2Fnotes%2Ftest.note"
+	if !strings.Contains(got, wantHeader) {
+		t.Errorf("detail missing header %q; got %q", wantHeader, got)
+	}
+	if !strings.Contains(got, wantURL) {
+		t.Errorf("detail missing URL line %q; got %q", wantURL, got)
 	}
 }
 

@@ -81,8 +81,12 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         if (typeof updateProcessorStatus === 'function') updateProcessorStatus();
-        {{if .detailPath}}
-        showHistory("{{.detailPath}}");
-        {{end}}
     });
+    {{if .detailPath}}
+    // Fire immediately — not inside DOMContentLoaded — so HTMX swaps
+    // auto-open the details modal, not just hard page loads.
+    if (typeof showHistory === 'function') {
+        showHistory("{{.detailPath}}");
+    }
+    {{end}}
 </script>
