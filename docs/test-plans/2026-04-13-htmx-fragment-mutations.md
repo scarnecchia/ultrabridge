@@ -37,9 +37,26 @@ during implementation or by the human operator post-merge):
   a full-page swap (Playwright)
 - **D6** — `/files/scan` via non-HX curl → 303 `/files` (curl)
 - **F3** — processor badge continues updating every ~5s (operator)
+- **End-to-End Scenario 1** — full task lifecycle (create 3, complete
+  1, bulk-complete 2, bulk-delete 1, purge completed). URL stayed at
+  `/` throughout, `history.length` unchanged at 19, console
+  error-free, all swaps fragment-scoped (Playwright, incl. B4/B5 on
+  created tasks)
+- **End-to-End Scenario 2 (partial)** — Skip/Unskip/Scan on a
+  Supernote file under `/files?path=Personal`. URL stayed at
+  `?path=Personal` across every mutation, `history.length` unchanged
+  at 20 — confirms `back=` query preservation through row-swap
+  handlers. Step 3 as-written ("Unskip → badge-unprocessed") is a
+  plan-vs-reality drift: unskip resets the job to `pending`, so the
+  badge lands at `queued`; state machine is fine, plan wording is
+  inaccurate. Step 4 ("Queue on F1") is unreachable from that state
+  for the same reason (Queue button only renders for `""`, `done`,
+  `failed`). Steps 6–8 (bulk delete F1+F2) require Boox notes —
+  `/files/delete-bulk` is Boox-only per internal/web/CLAUDE.md, and
+  Personal is a Supernote folder. Destructive bulk-delete pattern is
+  already covered by Scenario 1 step 6 (task bulk delete).
 
-Outstanding: D1, D3, Import (D5 subset), Migrate Imports (D5 subset),
-destructive items (B4/B5/D1/D3), and both end-to-end scenarios.
+Outstanding: D1, D3, Import (D5 subset), Migrate Imports (D5 subset).
 
 ## Prerequisites
 
