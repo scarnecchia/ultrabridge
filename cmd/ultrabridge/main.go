@@ -444,12 +444,11 @@ func main() {
 		return u, h
 	})
 	// Enable bearer token auth (MCP tokens from Settings UI + internal loopback)
-	authMW.SetTokenValidator(func(token string) error {
+	authMW.SetTokenValidator(func(token string) (string, error) {
 		if token == internalToken {
-			return nil
+			return "internal", nil
 		}
-		_, err := mcpauth.ValidateToken(context.Background(), noteDB, token)
-		return err
+		return mcpauth.ValidateToken(context.Background(), noteDB, token)
 	})
 
 	// Create log broadcaster for web UI

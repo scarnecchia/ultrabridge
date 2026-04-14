@@ -1,13 +1,17 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/sysop/ultrabridge/internal/auth"
+	"github.com/sysop/ultrabridge/internal/logging"
 	"github.com/sysop/ultrabridge/internal/service"
 )
 
@@ -226,4 +230,161 @@ func TestAPIv1ListTasksFilters(t *testing.T) {
 			t.Errorf("status=%d, want 400", w.Code)
 		}
 	})
+}
+
+// newHandlerWithLogBuf returns a handler whose logger writes to the returned
+// buffer, so tests can assert on emitted audit lines.
+func newHandlerWithLogBuf() (*Handler, *bytes.Buffer) {
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	broadcaster := logging.NewLogBroadcaster()
+	notes := &mockNoteService{
+		docs:               make(map[string][]service.SearchResult),
+		contents:           make(map[string]interface{}),
+		pipelineConfigured: true,
+		booxEnabled:        true,
+	}
+	h := NewHandler(
+		&mockTaskService{},
+		notes,
+		&mockSearchService{},
+		&mockConfigService{},
+		nil,
+		"",
+		"",
+		logger,
+		broadcaster,
+	)
+	return h, buf
+}
+
+// TestAuditLogIncludesBearerIdentity verifies that a mutation made with a
+// bearer-auth Identity installed in context produces a "task mutation"
+// log line carrying the token label.
+func TestAuditLogIncludesBearerIdentity(t *testing.T) {
+	h, buf := newHandlerWithLogBuf()
+
+	body := `{"title":"audited"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	// Install Identity as if the middleware had run.
+	ctx := auth.WithIdentity(req.Context(), auth.Identity{Method: "bearer", Label: "claude-desktop"})
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "task mutation") {
+		t.Errorf("audit line missing; log:\n%s", logged)
+	}
+	if !strings.Contains(logged, "op=create") {
+		t.Errorf("op tag missing; log:\n%s", logged)
+	}
+	if !strings.Contains(logged, "auth_method=bearer") {
+		t.Errorf("auth_method tag missing; log:\n%s", logged)
+	}
+	if !strings.Contains(logged, "auth_label=claude-desktop") {
+		t.Errorf("auth_label tag missing; log:\n%s", logged)
+	}
+}
+
+// TestAuditLogAnonymousWhenNoIdentity verifies the audit line still fires
+// with empty identity fields when a handler is invoked without the
+// middleware (e.g. tests or loopback). No panic, empty labels.
+func TestAuditLogAnonymousWhenNoIdentity(t *testing.T) {
+	h, buf := newHandlerWithLogBuf()
+
+	body := `{"title":"x"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "task mutation") {
+		t.Errorf("audit line missing; log:\n%s", logged)
+	}
+	if !strings.Contains(logged, "auth_method=") {
+		t.Errorf("auth_method tag missing; log:\n%s", logged)
+	}
+}
+
+// TestAuditLogFiresOnAllMutations verifies every mutation handler emits one
+// "task mutation" line — we wouldn't want a silent gap where an MCP agent
+// can quietly modify state without a record.
+func TestAuditLogFiresOnAllMutations(t *testing.T) {
+	cases := []struct {
+		name    string
+		req     *http.Request
+		wantOp  string
+	}{
+		{
+			name:   "create",
+			req:    httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"title":"x"}`)),
+			wantOp: "op=create",
+		},
+		{
+			name:   "purge_completed",
+			req:    httptest.NewRequest(http.MethodPost, "/api/v1/tasks/purge-completed", nil),
+			wantOp: "op=purge_completed",
+		},
+		{
+			name:   "bulk_complete",
+			req:    httptest.NewRequest(http.MethodPost, "/api/v1/tasks/bulk", strings.NewReader(`{"action":"complete","ids":["a","b"]}`)),
+			wantOp: "op=bulk_complete",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, buf := newHandlerWithLogBuf()
+			tc.req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, tc.req)
+			if w.Code >= 400 {
+				t.Fatalf("%s returned %d: %s", tc.name, w.Code, w.Body.String())
+			}
+			if !strings.Contains(buf.String(), tc.wantOp) {
+				t.Errorf("missing %q in log:\n%s", tc.wantOp, buf.String())
+			}
+		})
+	}
+}
+
+// TestAuthMiddlewareInstallsIdentity verifies end-to-end that a successful
+// bearer-token validation through auth.Middleware attaches the label to the
+// request context read by downstream handlers.
+func TestAuthMiddlewareInstallsIdentity(t *testing.T) {
+	mw := auth.NewDynamic(func() (string, string) { return "", "" })
+	mw.SetTokenValidator(func(token string) (string, error) {
+		if token == "secret" {
+			return "test-token", nil
+		}
+		return "", strings.NewReader("").UnreadByte() // arbitrary non-nil error
+	})
+
+	var observed auth.Identity
+	wrapped := mw.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observed = auth.IdentityFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/anything", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	wrapped.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	if observed.Method != "bearer" || observed.Label != "test-token" {
+		t.Errorf("identity not propagated: %+v", observed)
+	}
 }

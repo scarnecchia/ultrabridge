@@ -7,9 +7,25 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/sysop/ultrabridge/internal/auth"
 	"github.com/sysop/ultrabridge/internal/service"
 	"github.com/sysop/ultrabridge/internal/taskstore"
 )
+
+// auditMutation logs a task-mutation event with the caller's identity, so
+// "why did that task disappear" is answerable post-hoc without replaying
+// HTTP logs. Bearer-token requests include the token label; Basic Auth
+// requests include the username. Extra kv pairs are appended as slog
+// attributes.
+func (h *Handler) auditMutation(r *http.Request, op string, extra ...any) {
+	if h.logger == nil {
+		return
+	}
+	id := auth.IdentityFromContext(r.Context())
+	args := []any{"op", op, "auth_method", id.Method, "auth_label", id.Label}
+	args = append(args, extra...)
+	h.logger.Info("task mutation", args...)
+}
 
 // isTaskNotFound returns true when the underlying task store reports a
 // missing id. The real taskdb returns taskstore.ErrNotFound; the in-memory
@@ -166,6 +182,7 @@ func (h *Handler) handleV1UpdateTask(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.auditMutation(r, "update", "task_id", id)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(updated)
 }
@@ -177,6 +194,7 @@ func (h *Handler) handleV1PurgeCompleted(w http.ResponseWriter, r *http.Request)
 		apiError(w, http.StatusInternalServerError, "failed to purge completed tasks")
 		return
 	}
+	h.auditMutation(r, "purge_completed")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -199,6 +217,7 @@ func (h *Handler) handleV1CreateTask(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusInternalServerError, "failed to create task")
 		return
 	}
+	h.auditMutation(r, "create", "task_id", task.ID, "title", task.Title)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(task)
@@ -214,6 +233,7 @@ func (h *Handler) handleV1CompleteTask(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusInternalServerError, "failed to complete task")
 		return
 	}
+	h.auditMutation(r, "complete", "task_id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -227,6 +247,7 @@ func (h *Handler) handleV1DeleteTask(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusInternalServerError, "failed to delete task")
 		return
 	}
+	h.auditMutation(r, "delete", "task_id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -255,6 +276,7 @@ func (h *Handler) handleV1BulkTasks(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusInternalServerError, "bulk operation failed")
 		return
 	}
+	h.auditMutation(r, "bulk_"+req.Action, "count", len(req.IDs))
 	w.WriteHeader(http.StatusNoContent)
 }
 
