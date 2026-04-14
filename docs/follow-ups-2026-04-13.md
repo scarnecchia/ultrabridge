@@ -27,10 +27,8 @@ doc can be triaged as a punch list.
 - **Severity:** Low — paired with item 2.
 - **Fix shape:** Add a one-line entry under "Core Components" or a new "Service Layer" section. Land in the same PR as item 2.
 
-### 4. `internal/web/CLAUDE.md` handler-signature section is stale
-- **Source:** Phase 6 scoped note; flagged by librarian.
-- **Severity:** Low — misleading to new readers. Line 9 lists the pre-decoupling direct-dependency wiring (`NewHandler(store, notifier, noteStore, …)`) not the current service-interface form (`NewHandler(tasks, notes, search, config, noteDB, …)`).
-- **Fix shape:** Rewrite the Handler contract section to match `internal/web/handler.go` reality.
+### 4. ~~`internal/web/CLAUDE.md` handler-signature section is stale~~ (FIXED 2026-04-14)
+- **Resolution:** Rewritten during Files-tab split cleanup (step 5). The Handler contract section now matches `NewHandler` in `internal/web/handler.go`: 9 args (tasks, notes, search, config, noteDB, notesPathPrefix, booxNotesPath, logger, broadcaster). Items 2 and 3 (service/ domain CLAUDE.md and root Project Structure mention) remain open.
 
 ## Follow-ups surfaced by HTMX branch reviewers (deliberately deferred)
 

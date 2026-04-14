@@ -1,27 +1,26 @@
 # internal/web
 
-Last verified: 2026-04-13 (fragment-rendering sections only; other sections may predate the decoupled-architecture refactor)
+Last verified: 2026-04-14 (routes, fragment rendering, source-split Files tabs, Boox processor controls)
 
 HTTP handler and HTML templates for the UltraBridge web UI.
 
 ## Handler contract
 
-`NewHandler(store, notifier, noteStore, searchIndex, proc, scanner, syncProvider, booxStore, booxImporter, booxNotesPath, notesPathPrefix, noteDB, logger, broadcaster, embedder, embedStore, embedModel, retriever, chatHandler, chatStore, ragDisplay, runningConfig) *Handler`
+`NewHandler(tasks, notes, search, config, noteDB, notesPathPrefix, booxNotesPath, logger, broadcaster) *Handler`
 
-- All domain dependencies (`noteStore`, `searchIndex`, `proc`, `scanner`, `notifier`, `syncProvider`) are **nil-safe** — passing nil disables the corresponding feature gracefully (no crash, renders an informative state).
-- `booxStore` is **nil-safe** — when nil, Boox-specific routes return empty lists and the UI shows only Supernote notes.
-- `booxImporter` is **nil-safe** — when nil, bulk import routes return an error response.
-- `booxNotesPath` is a string path (may be empty if Boox is disabled).
-- `notesPathPrefix` is the device file path prefix for rendering note page images in the API.
-- `noteDB` is the shared SQLite DB for settings and notes (may be nil; when nil, config/sources API and MCP token routes are disabled).
-- `embedder` is the RAG embedder implementation (nil-safe, feature disabled when nil).
-- `embedStore` is the embedding store for backfill and vector search (nil-safe).
-- `embedModel` is the embedding model name.
-- `retriever` is the hybrid search retriever interface (nil-safe; when nil, JSON API endpoints are disabled).
-- `chatHandler` / `chatStore` are chat subsystem dependencies (nil-safe; when nil, chat routes are disabled).
-- `ragDisplay` is a `RAGDisplayConfig` struct with display URLs/models for the settings UI.
-- `runningConfig` is the `*appconfig.Config` loaded at startup; used for drift detection (restart banner).
+Post-decoupling the Handler takes four service interfaces instead of individual domain stores; the RAG/chat/sync dependencies are now encapsulated inside those services rather than being constructor arguments.
+
+- `tasks service.TaskService` — required.
+- `notes service.NoteService` — required. Nil-safe downstream: if the service is constructed with no Supernote store and no Boox store, the Files tabs render informative empty states rather than crashing.
+- `search service.SearchService` — required. When embedding / chat infrastructure isn't wired, `SearchService.HasEmbeddingPipeline()` returns false and the chat tab hides accordingly.
+- `config service.ConfigService` — required; surfaces the sync-status provider and the running-config drift flag.
+- `noteDB *sql.DB` — nil-safe; when nil, config/sources API and MCP token routes are not registered.
+- `notesPathPrefix string` — device file path prefix for rendering note page images in the API.
+- `booxNotesPath string` — root of the Boox catalog on disk; used by `respondFileRowOrRedirect` to dispatch fragment + redirect target by path prefix, and by the `BooxNotesPath` template key.
+- `logger *slog.Logger`, `broadcaster *logging.LogBroadcaster` — required.
 - `Handler` implements `http.Handler` via an internal `*http.ServeMux`.
+
+For tests, `LegacyNewHandler` in `handler_test.go` bridges the old 22-argument signature to the new one by constructing each service internally.
 
 ## Routes
 
@@ -37,23 +36,27 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 | GET | `/logs` | `handleLogs` (SSE) | Log stream |
 | GET | `/settings` | `handleSettings` | Settings page (config + MCP tokens) |
 | POST | `/settings/save` | `handleSettingsSave` | Save config changes |
-| GET | `/files` | `handleFiles` | File browser; path traversal guarded |
-| POST | `/files/queue` | `handleFilesQueue` | Enqueue file for OCR |
-| POST | `/files/skip` | `handleFilesSkip` | Mark skipped (manual) |
-| POST | `/files/unskip` | `handleFilesUnskip` | Remove manual skip |
-| POST | `/files/force` | `handleFilesForce` | Unskip + enqueue (overrides size_limit) |
+| GET | `/files` | `handleFiles` | Legacy entry point; 303-redirects to `/files/supernote` or `/files/boox` based on configured sources. Renders an empty-state placeholder when neither is configured. |
+| GET | `/files/supernote` | `handleFilesSupernote` | Supernote file browser (directory tree, breadcrumbs, sort, pagination). Path traversal guarded. |
+| GET | `/files/boox` | `handleFilesBoox` | Boox catalog listing (flat, Title/Folder/Device/NoteType/Pages columns, sort, pagination). |
+| POST | `/files/queue` | `handleFilesQueue` | Enqueue file for OCR. Row fragment dispatches by path prefix. |
+| POST | `/files/skip` | `handleFilesSkip` | Mark skipped (manual). |
+| POST | `/files/unskip` | `handleFilesUnskip` | Remove manual skip. |
+| POST | `/files/force` | `handleFilesForce` | Unskip + enqueue (overrides size_limit). |
 | GET | `/files/status` | `handleFilesStatus` | JSON: ProcessorStatus |
 | GET | `/files/history` | `handleFilesHistory` | JSON: Job record for a path |
 | GET | `/files/boox/render` | `handleBooxRender` | JPEG page image for Boox note |
 | GET | `/files/boox/versions` | `handleBooxVersions` | JSON: []BooxVersion for archived versions |
-| POST | `/files/import` | `handleFilesImport` | Bulk import from configured import path |
-| POST | `/files/retry-failed` | `handleFilesRetryFailed` | Reset all failed Boox jobs to pending |
-| POST | `/files/delete-note` | `handleFilesDeleteNote` | Delete single Boox note + jobs + content + cache |
-| POST | `/files/delete-bulk` | `handleFilesDeleteBulk` | Delete multiple Boox notes |
-| POST | `/files/migrate-imports` | `handleFilesMigrateImports` | Copy imported files to Boox notes directory |
-| POST | `/files/scan` | `handleFilesScan` | Trigger immediate filesystem scan |
-| POST | `/processor/start` | `handleProcessorStart` | |
-| POST | `/processor/stop` | `handleProcessorStop` | |
+| POST | `/files/import` | `handleFilesImport` | Bulk import from configured import path (Boox). Non-HX lands on `/files/boox`. |
+| POST | `/files/retry-failed` | `handleFilesRetryFailed` | Reset all failed Boox jobs to pending. (SN-side retry is a gap — see follow-up #17.) |
+| POST | `/files/delete-note` | `handleFilesDeleteNote` | Delete single Boox note + jobs + content + cache (Boox-only). |
+| POST | `/files/delete-bulk` | `handleFilesDeleteBulk` | Delete multiple Boox notes. |
+| POST | `/files/migrate-imports` | `handleFilesMigrateImports` | Copy imported files to Boox notes directory. |
+| POST | `/files/scan` | `handleFilesScan` | Trigger immediate filesystem scan (Supernote). Non-HX lands on `/files/supernote`. |
+| POST | `/processor/supernote/start` | `handleProcessorStart` | Start the Supernote processor worker. |
+| POST | `/processor/supernote/stop` | `handleProcessorStop` | Stop the Supernote processor worker. |
+| POST | `/processor/boox/start` | `handleBooxProcessorStart` | Start the Boox pipeline worker. |
+| POST | `/processor/boox/stop` | `handleBooxProcessorStop` | Stop the Boox pipeline worker. |
 | GET | `/search` | `handleSearch` | FTS5 keyword search |
 | GET | `/sync/status` | `handleSyncStatus` | JSON: SyncStatus (adapter state, timestamps) |
 | POST | `/sync/trigger` | `handleSyncTrigger` | Trigger immediate sync cycle |
@@ -70,9 +73,19 @@ HTTP handler and HTML templates for the UltraBridge web UI.
 type BooxImporter interface {
     ScanAndEnqueue(ctx context.Context, cfg ImportConfig, logger *slog.Logger) ImportResult
     MigrateImportedFiles(ctx context.Context, importPath, notesPath string, logger *slog.Logger) MigrateResult
+    Enqueue(ctx context.Context, notePath string) error
 }
 ```
-Implemented by `booxpipeline.Importer`. Handles bulk import of .note and .pdf files from a configured import path.
+Implemented by `booxpipeline.Importer`. Handles bulk import of .note and .pdf files from a configured import path, plus the WebDAV upload enqueue callback.
+
+### BooxProcessor
+```go
+type BooxProcessor interface {
+    Start(ctx context.Context) error
+    Stop()
+}
+```
+Narrow handle wrapping `*booxpipeline.Processor`. Plumbed into `NewNoteService` so the `/processor/boox/start|stop` routes can start and stop the Boox pipeline worker on demand, symmetric to the Supernote processor controls.
 
 ### BooxStore (extended)
 In addition to previously documented methods, `BooxStore` now includes:
@@ -121,8 +134,8 @@ Custom `template.FuncMap` functions registered in `NewHandler`:
 - `formatTimestamp(ms int64) string` — formats millisecond UTC unix timestamp to "2006-01-02 15:04"; returns "Never" if 0
 - `fileTypeStr(ft notestore.FileType) string` — converts FileType to its string value for template conditionals
 - `noteSource(path string) string` — returns "Boox" if path starts with booxNotesPath, else "Supernote"
-- `fileRowID(path string) string` — returns `"file-" + hex(sha1(path))[:12]`. Deterministic path→DOM-id mapping used by `_file_row.html` (file paths contain characters invalid in HTML `id` attributes). Stable across restarts.
-- `makeFileRowCtx(f service.NoteFile, relPath string) fileRowCtx` — constructs the context shape passed into `_file_row`, pairing a file with the containing directory's relPath so per-row buttons can emit `back=` query strings.
+- `fileRowID(path string) string` — returns `"file-" + hex(sha1(path))[:12]`. Deterministic path→DOM-id mapping used by both `_sn_file_row.html` and `_boox_file_row.html` (file paths contain characters invalid in HTML `id` attributes). Stable across restarts; shared formula keeps row-id identity across a cross-tab mutation response.
+- `makeFileRowCtx(f service.NoteFile, relPath string) fileRowCtx` — constructs the context shape passed into `_sn_file_row`, pairing a Supernote file with the containing directory's relPath so per-row buttons can emit `back=` query strings. Boox rows use `BooxNoteSummary` directly (no RelPath needed; Boox catalog is flat).
 - `hasPrefix`, `trimPrefix` — aliases of `strings.HasPrefix` / `strings.TrimPrefix`.
 - `add`, `sub` — integer arithmetic helpers for pagination templates.
 - `taskLink` — normalizes a task's Links payload (map or struct) into template-friendly map with Path+Page. Used by `_task_row.html` for the "from note" link.
@@ -170,25 +183,35 @@ Fragment templates live in `internal/web/templates/` and follow this shape:
 ### Current fragments
 
 - `_task_row.html` — a single task row. Data: `service.Task`.
-- `_file_row.html` — a single file row (directory or file). Data:
-  `fileRowCtx{File service.NoteFile; RelPath string}` (unexported type
-  in handler.go; templates access its exported fields via reflection).
+- `_sn_file_row.html` — a single Supernote row (directory or file). Data:
+  `fileRowCtx{File service.NoteFile; RelPath string}` (unexported type in
+  handler.go; templates access its exported fields via reflection).
+- `_boox_file_row.html` — a single Boox-catalog row. Data:
+  `service.BooxNoteSummary` directly (Title, Folder, DeviceModel,
+  NoteType, PageCount, SizeBytes, CreatedAt, ModifiedAt, JobStatus).
 
 ### Mutation handler contract
 
 On `HX-Request: true`, task/file mutation handlers emit either:
 
-- A single `_task_row` or `_file_row` fragment (queue, skip, unskip, force,
-  complete, create — the row swaps in place via `hx-target="closest tr"
-  hx-swap="outerHTML"` on the originating button, or `hx-target="#task-table
-  tbody" hx-swap="afterbegin"` on the create form).
+- A single `_task_row`, `_sn_file_row`, or `_boox_file_row` fragment (queue,
+  skip, unskip, force, complete, create — the row swaps in place via
+  `hx-target="closest tr" hx-swap="outerHTML"` on the originating button,
+  or `hx-target="#task-table tbody" hx-swap="afterbegin"` on the create
+  form). File-row mutations dispatch fragment + non-HX redirect target by
+  path prefix: paths under `h.booxNotesPath` use `_boox_file_row` and
+  redirect to `/files/boox`; everything else uses `_sn_file_row` and
+  redirects to `/files/supernote?path=<back>`.
 - A concatenation of row fragments (bulk complete — client-side JS parses
   the response as `<table><tbody>` + body + `</tbody></table>` and
   replaces matching rows by id).
 - An empty 200 body (bulk delete, purge, single-row delete, and the "broad"
   mutations: scan, import, retry-failed, migrate-imports, processor
   start/stop). The originating form's `hx-on:htmx:after-request` handler
-  sweeps the DOM or nudges a poller.
+  sweeps the DOM or nudges a poller. Each broad-mutation handler supplies
+  its own non-HX redirect target to `respondEmptyOrRedirect` — scan lands
+  on `/files/supernote`; import/migrate/retry/delete lands on
+  `/files/boox`; `/processor/<source>/*` lands on the matching tab.
 
 Non-HX paths continue to redirect (303) to the relevant tab with query
 strings preserved where applicable.
