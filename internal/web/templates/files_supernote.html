@@ -83,10 +83,13 @@
         if (typeof updateProcessorStatus === 'function') updateProcessorStatus();
     });
     {{if .detailPath}}
-    // Fire immediately — not inside DOMContentLoaded — so HTMX swaps
-    // auto-open the details modal, not just hard page loads.
+    // See files_boox.html for the rationale; this two-path dance covers
+    // both HTMX swaps (showHistory already defined) and hard browser
+    // loads (script runs before layout.html defines showHistory).
+    window.__ubPendingDetail = "{{.detailPath}}";
     if (typeof showHistory === 'function') {
-        showHistory("{{.detailPath}}");
+        showHistory(window.__ubPendingDetail);
+        window.__ubPendingDetail = null;
     }
     {{end}}
 </script>

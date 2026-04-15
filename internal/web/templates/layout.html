@@ -941,6 +941,16 @@
             });
         }
 
+        // Hard-load case for ?detail=<path> on /files/{boox,supernote}:
+        // the inline script in files_boox.html / files_supernote.html runs
+        // before this script is parsed, so it stashes the path in
+        // window.__ubPendingDetail. Now that showHistory is defined, fire
+        // the call here.
+        if (typeof window.__ubPendingDetail === 'string' && window.__ubPendingDetail) {
+            showHistory(window.__ubPendingDetail);
+            window.__ubPendingDetail = null;
+        }
+
         // Chat functions
         var currentSessionId = 0;
         var searchResults = [];

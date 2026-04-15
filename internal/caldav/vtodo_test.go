@@ -224,6 +224,36 @@ func TestVTODOToTask(t *testing.T) {
 			expectErr:   true,
 		},
 		{
+			name: "RFC5545 escapes are unescaped",
+			// Set Prop.Value directly to bypass go-ical's SetText escaping —
+			// we want to verify the READ path un-escapes wire-format
+			// DESCRIPTION / SUMMARY values that already contain literal
+			// "\n" (backslash + n) and "\\" sequences. Using .Value
+			// instead of .Text() in vtodo.go let those escapes accumulate
+			// across PUT cycles.
+			cal: func() *ical.Calendar {
+				cal := ical.NewCalendar()
+				todo := ical.NewComponent("VTODO")
+				todo.Props.Set(&ical.Prop{Name: "UID", Value: "esc-id"})
+				todo.Props.Set(&ical.Prop{Name: "STATUS", Value: "NEEDS-ACTION"})
+				todo.Props.Set(&ical.Prop{Name: "SUMMARY", Value: `Title with \, comma`})
+				todo.Props.Set(&ical.Prop{Name: "DESCRIPTION", Value: `Line one\nLine two\\with backslash`})
+				cal.Children = append(cal.Children, todo)
+				return cal
+			}(),
+			dueTimeMode: "preserve",
+			verify: func(t *testing.T, task *taskstore.Task) {
+				wantTitle := "Title with , comma"
+				if got := taskstore.NullStr(task.Title); got != wantTitle {
+					t.Errorf("Title escapes not unwound: got %q want %q", got, wantTitle)
+				}
+				wantDetail := "Line one\nLine two\\with backslash"
+				if got := taskstore.NullStr(task.Detail); got != wantDetail {
+					t.Errorf("Detail escapes not unwound: got %q want %q", got, wantDetail)
+				}
+			},
+		},
+		{
 			name: "COMPLETED status",
 			cal: createTestCalendar(map[string]string{
 				"UID":     "test-id",

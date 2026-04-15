@@ -164,7 +164,17 @@ func VTODOToTask(cal *ical.Calendar, dueTimeMode string) (*taskstore.Task, error
 		t.TaskID = uid.Value
 	}
 	if summary := todo.Props.Get("SUMMARY"); summary != nil {
-		t.Title = taskstore.SqlStr(summary.Value)
+		// .Text() un-escapes per RFC 5545 (\\ → \, \n → real newline,
+		// \, → comma, \; → semicolon). Reading .Value raw preserves the
+		// backslash escapes, which compounded across PUT/pull cycles
+		// (each round doubled backslashes and turned newlines into
+		// literal "\n"). Falling back to .Value on parse error keeps
+		// behavior safe for malformed input.
+		if v, err := summary.Text(); err == nil {
+			t.Title = taskstore.SqlStr(v)
+		} else {
+			t.Title = taskstore.SqlStr(summary.Value)
+		}
 	}
 	if status := todo.Props.Get("STATUS"); status != nil {
 		t.Status = taskstore.SqlStr(taskstore.SupernoteStatus(status.Value))
@@ -181,7 +191,12 @@ func VTODOToTask(cal *ical.Calendar, dueTimeMode string) (*taskstore.Task, error
 		}
 	}
 	if desc := todo.Props.Get("DESCRIPTION"); desc != nil {
-		t.Detail = taskstore.SqlStr(desc.Value)
+		// Same RFC 5545 un-escape rationale as SUMMARY above.
+		if v, err := desc.Text(); err == nil {
+			t.Detail = taskstore.SqlStr(v)
+		} else {
+			t.Detail = taskstore.SqlStr(desc.Value)
+		}
 	}
 	if prio := todo.Props.Get("PRIORITY"); prio != nil {
 		t.Importance = taskstore.SqlStr(prio.Value)
