@@ -779,10 +779,10 @@ func paginateNoteFiles(files []NoteFile, page, perPage int) ([]NoteFile, int, er
 // "folder", "pages", "size", "created", "modified". Default "title" asc.
 func sortBooxNotes(rows []BooxNoteSummary, sortField, order string) {
 	if sortField == "" {
-		sortField = "title"
+		sortField = "created"
 	}
 	if order == "" {
-		order = "asc"
+		order = "desc"
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		var cmp int
