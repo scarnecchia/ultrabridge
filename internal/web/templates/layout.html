@@ -203,6 +203,26 @@
             min-height: 32px;
         }
 
+        .pill {
+            display: inline-block;
+            padding: 0.25rem 0.65rem;
+            font-size: 0.8rem;
+            border-radius: 999px;
+            border: 1px solid var(--border-color);
+            background: var(--surface-color);
+            color: var(--text-primary);
+            text-decoration: none;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .pill:hover { border-color: var(--brand-color); color: var(--brand-color); }
+        .pill.active {
+            background: var(--brand-color);
+            border-color: var(--brand-color);
+            color: white;
+        }
+        .pill .text-small { color: inherit; }
+
         /* Tables */
         .table-container {
             overflow-x: auto;

@@ -41,45 +41,33 @@
     </div>
 
     {{if .booxDevices}}
-    <div class="toolbar" style="flex-wrap: wrap; gap: 0.25rem;">
-      <span class="text-small" style="margin-right:0.5rem;">Devices:</span>
+    <div class="toolbar" style="flex-wrap: wrap; gap: 0.35rem;">
+      <span class="text-small" style="margin-right:0.25rem;">Devices:</span>
       <a href="/files/boox{{if .booxFolderFilter}}?folder={{.booxFolderFilter | urlquery}}{{end}}"
          hx-get="/files/boox{{if .booxFolderFilter}}?folder={{.booxFolderFilter | urlquery}}{{end}}"
          hx-target="#main-content" hx-push-url="true"
-         class="btn-small"
-         {{if not .booxDeviceFilter}}style="background: var(--brand-color); color: white;"{{end}}>
-        All
-      </a>
+         class="pill{{if not .booxDeviceFilter}} active{{end}}">All</a>
       {{range .booxDevices}}
       <a href="/files/boox?device={{.DeviceModel | urlquery}}{{if $.booxFolderFilter}}&folder={{$.booxFolderFilter | urlquery}}{{end}}"
          hx-get="/files/boox?device={{.DeviceModel | urlquery}}{{if $.booxFolderFilter}}&folder={{$.booxFolderFilter | urlquery}}{{end}}"
          hx-target="#main-content" hx-push-url="true"
-         class="btn-small"
-         {{if eq $.booxDeviceFilter .DeviceModel}}style="background: var(--brand-color); color: white;"{{end}}>
-        {{if .DeviceModel}}{{.DeviceModel}}{{else}}(no device){{end}} <span class="text-small">({{.Count}})</span>
-      </a>
+         class="pill{{if eq $.booxDeviceFilter .DeviceModel}} active{{end}}">{{if .DeviceModel}}{{.DeviceModel}}{{else}}(no device){{end}} <span class="text-small">({{.Count}})</span></a>
       {{end}}
     </div>
     {{end}}
 
     {{if .booxFolders}}
-    <div class="toolbar" style="flex-wrap: wrap; gap: 0.25rem;">
-      <span class="text-small" style="margin-right:0.5rem;">Folders:</span>
+    <div class="toolbar" style="flex-wrap: wrap; gap: 0.35rem;">
+      <span class="text-small" style="margin-right:0.25rem;">Folders:</span>
       <a href="/files/boox{{if .booxDeviceFilter}}?device={{.booxDeviceFilter | urlquery}}{{end}}"
          hx-get="/files/boox{{if .booxDeviceFilter}}?device={{.booxDeviceFilter | urlquery}}{{end}}"
          hx-target="#main-content" hx-push-url="true"
-         class="btn-small"
-         {{if not .booxFolderFilter}}style="background: var(--brand-color); color: white;"{{end}}>
-        All
-      </a>
+         class="pill{{if not .booxFolderFilter}} active{{end}}">All</a>
       {{range .booxFolders}}
       <a href="/files/boox?folder={{.Folder | urlquery}}{{if $.booxDeviceFilter}}&device={{$.booxDeviceFilter | urlquery}}{{end}}"
          hx-get="/files/boox?folder={{.Folder | urlquery}}{{if $.booxDeviceFilter}}&device={{$.booxDeviceFilter | urlquery}}{{end}}"
          hx-target="#main-content" hx-push-url="true"
-         class="btn-small"
-         {{if eq $.booxFolderFilter .Folder}}style="background: var(--brand-color); color: white;"{{end}}>
-        {{if .Folder}}{{.Folder}}{{else}}(unfiled){{end}} <span class="text-small">({{.Count}})</span>
-      </a>
+         class="pill{{if eq $.booxFolderFilter .Folder}} active{{end}}">{{if .Folder}}{{.Folder}}{{else}}(unfiled){{end}} <span class="text-small">({{.Count}})</span></a>
       {{end}}
     </div>
     {{end}}
