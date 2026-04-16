@@ -149,5 +149,10 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		}
 	}
 
+	// Backfill notes.created_at: older rows stored scan-time (wall clock)
+	// instead of file mtime. Fix by setting created_at = mtime * 1000
+	// where created_at is clearly later than the file's modification time.
+	_, _ = db.ExecContext(ctx, `UPDATE notes SET created_at = mtime * 1000 WHERE created_at > mtime * 1000`)
+
 	return nil
 }

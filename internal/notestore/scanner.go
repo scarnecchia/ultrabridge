@@ -53,11 +53,13 @@ func (s *Store) Scan(ctx context.Context) ([]string, error) {
 		if err != nil {
 			// Check if this is a "not found" error (new file) or a real DB error
 			if errors.Is(err, sql.ErrNoRows) {
-				// New file — insert
+				// New file — insert. Use mtime as created_at (best proxy
+				// for file creation since scan time is always later).
+				mtimeMs := mtimeUnix * 1000
 				_, insertErr := s.db.ExecContext(ctx, `
 					INSERT INTO notes (path, rel_path, file_type, size_bytes, mtime, created_at, updated_at)
 					VALUES (?, ?, ?, ?, ?, ?, ?)`,
-					path, relPath, string(ft), sizeBytes, mtimeUnix, now, now)
+					path, relPath, string(ft), sizeBytes, mtimeUnix, mtimeMs, now)
 				if insertErr != nil {
 					return fmt.Errorf("insert note %s: %w", path, insertErr)
 				}
@@ -137,12 +139,14 @@ func (s *Store) UpsertFile(ctx context.Context, path string) error {
 		return fmt.Errorf("UpsertFile rel: %w", err)
 	}
 	ft := ClassifyFileType(filepath.Ext(path))
+	mtimeUnix := info.ModTime().Unix()
+	mtimeMs := mtimeUnix * 1000
 	now := time.Now().UnixMilli()
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO notes (path, rel_path, file_type, size_bytes, mtime, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET size_bytes=excluded.size_bytes, mtime=excluded.mtime, updated_at=excluded.updated_at`,
-		path, relPath, string(ft), info.Size(), info.ModTime().Unix(), now, now,
+		path, relPath, string(ft), info.Size(), mtimeUnix, mtimeMs, now,
 	)
 	return err
 }
