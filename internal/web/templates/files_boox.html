@@ -47,7 +47,7 @@
          hx-get="/files/boox{{if .booxFolderFilter}}?folder={{.booxFolderFilter | urlquery}}{{end}}"
          hx-target="#main-content" hx-push-url="true"
          class="btn-small"
-         {{if not .booxDeviceFilter}}style="background: var(--accent-color); color: var(--bg-color);"{{end}}>
+         {{if not .booxDeviceFilter}}style="background: var(--brand-color); color: white;"{{end}}>
         All
       </a>
       {{range .booxDevices}}
@@ -55,7 +55,7 @@
          hx-get="/files/boox?device={{.DeviceModel | urlquery}}{{if $.booxFolderFilter}}&folder={{$.booxFolderFilter | urlquery}}{{end}}"
          hx-target="#main-content" hx-push-url="true"
          class="btn-small"
-         {{if eq $.booxDeviceFilter .DeviceModel}}style="background: var(--accent-color); color: var(--bg-color);"{{end}}>
+         {{if eq $.booxDeviceFilter .DeviceModel}}style="background: var(--brand-color); color: white;"{{end}}>
         {{if .DeviceModel}}{{.DeviceModel}}{{else}}(no device){{end}} <span class="text-small">({{.Count}})</span>
       </a>
       {{end}}
@@ -69,7 +69,7 @@
          hx-get="/files/boox{{if .booxDeviceFilter}}?device={{.booxDeviceFilter | urlquery}}{{end}}"
          hx-target="#main-content" hx-push-url="true"
          class="btn-small"
-         {{if not .booxFolderFilter}}style="background: var(--accent-color); color: var(--bg-color);"{{end}}>
+         {{if not .booxFolderFilter}}style="background: var(--brand-color); color: white;"{{end}}>
         All
       </a>
       {{range .booxFolders}}
@@ -77,7 +77,7 @@
          hx-get="/files/boox?folder={{.Folder | urlquery}}{{if $.booxDeviceFilter}}&device={{$.booxDeviceFilter | urlquery}}{{end}}"
          hx-target="#main-content" hx-push-url="true"
          class="btn-small"
-         {{if eq $.booxFolderFilter .Folder}}style="background: var(--accent-color); color: var(--bg-color);"{{end}}>
+         {{if eq $.booxFolderFilter .Folder}}style="background: var(--brand-color); color: white;"{{end}}>
         {{if .Folder}}{{.Folder}}{{else}}(unfiled){{end}} <span class="text-small">({{.Count}})</span>
       </a>
       {{end}}
