@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
 	"database/sql"
 	"embed"
@@ -19,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sysop/ultrabridge/internal/appconfig"
@@ -58,6 +60,9 @@ type Handler struct {
 	mux             *http.ServeMux
 	logger          *slog.Logger
 	broadcaster     *logging.LogBroadcaster
+
+	oauthCodesMu sync.Mutex
+	oauthCodes   map[string]time.Time // code -> expiry
 }
 
 func formatDueTime(val interface{}) string {
@@ -903,8 +908,13 @@ func (h *Handler) handleFilesForce(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleBooxRender(w http.ResponseWriter, r *http.Request) {
+	notePath := r.URL.Query().Get("path")
+	if !h.validNotePath(notePath) {
+		http.Error(w, "path outside notes directory", http.StatusForbidden)
+		return
+	}
 	p, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	stream, ct, err := h.notes.RenderPage(r.Context(), r.URL.Query().Get("path"), p)
+	stream, ct, err := h.notes.RenderPage(r.Context(), notePath, p)
 	if err != nil { http.Error(w, "not found", http.StatusNotFound); return }
 	defer stream.Close()
 	w.Header().Set("Content-Type", ct)
@@ -980,6 +990,10 @@ func (h *Handler) handleFilesHistory(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("null"))
 		return
 	}
+	if !h.validNotePath(path) {
+		w.Write([]byte("null"))
+		return
+	}
 	details, err := h.notes.GetNoteDetails(r.Context(), path)
 	if err != nil {
 		h.logger.Error("failed to get note details", "path", path, "error", err)
@@ -993,6 +1007,10 @@ func (h *Handler) handleFilesContent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	path := r.URL.Query().Get("path")
 	if path == "" {
+		w.Write([]byte("[]"))
+		return
+	}
+	if !h.validNotePath(path) {
 		w.Write([]byte("[]"))
 		return
 	}
@@ -1010,6 +1028,10 @@ func (h *Handler) handleFilesRender(w http.ResponseWriter, r *http.Request) {
 	pageStr := r.URL.Query().Get("page")
 	if path == "" {
 		http.Error(w, "missing path", http.StatusBadRequest)
+		return
+	}
+	if !h.validNotePath(path) {
+		http.Error(w, "path outside notes directory", http.StatusForbidden)
 		return
 	}
 	pageIdx, err := strconv.Atoi(pageStr)
@@ -1057,9 +1079,16 @@ func (h *Handler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
 		return
 	}
+	isLocalhost := target.Hostname() == "localhost" || target.Hostname() == "127.0.0.1" || target.Hostname() == "::1"
+	if target.Scheme != "https" && !isLocalhost {
+		http.Error(w, "redirect_uri must use HTTPS", http.StatusBadRequest)
+		return
+	}
+
+	code := h.generateOAuthCode()
 
 	q := target.Query()
-	q.Set("code", "mcp-fixed-flow-code")
+	q.Set("code", code)
 	if state != "" {
 		q.Set("state", state)
 	}
@@ -1069,10 +1098,49 @@ func (h *Handler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, target.String(), http.StatusFound)
 }
 
+func (h *Handler) generateOAuthCode() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	code := base64.RawURLEncoding.EncodeToString(b)
+
+	h.oauthCodesMu.Lock()
+	defer h.oauthCodesMu.Unlock()
+	if h.oauthCodes == nil {
+		h.oauthCodes = make(map[string]time.Time)
+	}
+	// Purge expired codes while we hold the lock.
+	now := time.Now()
+	for k, exp := range h.oauthCodes {
+		if now.After(exp) {
+			delete(h.oauthCodes, k)
+		}
+	}
+	h.oauthCodes[code] = now.Add(5 * time.Minute)
+	return code
+}
+
+func (h *Handler) consumeOAuthCode(code string) bool {
+	h.oauthCodesMu.Lock()
+	defer h.oauthCodesMu.Unlock()
+	exp, ok := h.oauthCodes[code]
+	if !ok {
+		return false
+	}
+	delete(h.oauthCodes, code)
+	return time.Now().Before(exp)
+}
+
 // HandleOAuthToken handles the token exchange leg of Claude's OAuth flow.
 func (h *Handler) HandleOAuthToken(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	code := r.FormValue("code")
+	if !h.consumeOAuthCode(code) {
+		h.logger.Warn("OAuth token: invalid or expired code", "remote_ip", r.RemoteAddr)
+		http.Error(w, "invalid_grant", http.StatusBadRequest)
 		return
 	}
 
@@ -1132,4 +1200,17 @@ func safeRelPath(p string) (string, bool) {
 	c := filepath.Clean(p)
 	if filepath.IsAbs(c) || strings.HasPrefix(c, "..") { return "", false }
 	return c, true
+}
+
+// validNotePath returns true if path falls under one of the configured notes
+// directories. Prevents arbitrary filesystem reads through path query params.
+func (h *Handler) validNotePath(path string) bool {
+	cleaned := filepath.Clean(path)
+	if h.notesPathPrefix != "" && strings.HasPrefix(cleaned, h.notesPathPrefix) {
+		return true
+	}
+	if h.booxNotesPath != "" && strings.HasPrefix(cleaned, h.booxNotesPath) {
+		return true
+	}
+	return false
 }

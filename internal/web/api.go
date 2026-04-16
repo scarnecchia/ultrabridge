@@ -43,6 +43,10 @@ func (h *Handler) handleAPIGetPages(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "missing required parameter: path")
 		return
 	}
+	if !h.validNotePath(notePath) {
+		apiError(w, http.StatusForbidden, "path outside notes directory")
+		return
+	}
 
 	docs, err := h.notes.GetContent(r.Context(), notePath)
 	if err != nil {
@@ -60,6 +64,10 @@ func (h *Handler) handleAPIGetImage(w http.ResponseWriter, r *http.Request) {
 	notePath := r.URL.Query().Get("path")
 	if notePath == "" {
 		apiError(w, http.StatusBadRequest, "missing required parameter: path")
+		return
+	}
+	if !h.validNotePath(notePath) {
+		apiError(w, http.StatusForbidden, "path outside notes directory")
 		return
 	}
 	pageStr := r.URL.Query().Get("page")

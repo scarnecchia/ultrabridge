@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"path/filepath"
 	"testing"
 
 	"github.com/sysop/ultrabridge/internal/logging"
@@ -71,9 +73,11 @@ func TestAPISearchMissingQ(t *testing.T) {
 
 // TestAPIGetPagesSuccess verifies AC3.2: GET /api/notes/pages?path=... returns JSON array
 func TestAPIGetPagesSuccess(t *testing.T) {
+	notesDir := t.TempDir()
+	notePath := filepath.Join(notesDir, "test.note")
 	noteSvc := &mockNoteService{
 		contents: map[string]interface{}{
-			"/home/user/test.note": []map[string]interface{}{
+			notePath: []map[string]interface{}{
 				{
 					"page":       0,
 					"title_text": "Page 1 Title",
@@ -85,9 +89,9 @@ func TestAPIGetPagesSuccess(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	broadcaster := logging.NewLogBroadcaster()
-	handler := NewHandler(nil, noteSvc, nil, nil, nil, "", "", logger, broadcaster)
+	handler := NewHandler(nil, noteSvc, nil, nil, nil, notesDir, "", logger, broadcaster)
 
-	req := httptest.NewRequest("GET", "/api/notes/pages?path=/home/user/test.note", nil)
+	req := httptest.NewRequest("GET", "/api/notes/pages?path="+url.QueryEscape(notePath), nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -133,9 +137,16 @@ func TestAPIGetImageMissingPath(t *testing.T) {
 
 // TestAPIGetImageMissingPage verifies missing page parameter returns 400
 func TestAPIGetImageMissingPage(t *testing.T) {
-	handler := newTestHandler()
+	notesDir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	broadcaster := logging.NewLogBroadcaster()
+	handler := NewHandler(nil, &mockNoteService{
+		docs: make(map[string][]service.SearchResult),
+		contents: make(map[string]interface{}),
+	}, nil, nil, nil, notesDir, "", logger, broadcaster)
 
-	req := httptest.NewRequest("GET", "/api/notes/pages/image?path=/home/user/test.note", nil)
+	notePath := filepath.Join(notesDir, "test.note")
+	req := httptest.NewRequest("GET", "/api/notes/pages/image?path="+url.QueryEscape(notePath), nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 

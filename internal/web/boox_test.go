@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,7 +205,7 @@ func TestFilesPage_ShowsBothSources(t *testing.T) {
 // TestBooxRender_ServesCache verifies AC5.2: GET /files/boox/render serves cached JPEG page images
 func TestBooxRender_ServesCache(t *testing.T) {
 	tmpDir := t.TempDir()
-	notePath := "/boox/notes/test.note"
+	notePath := filepath.Join(tmpDir, "test.note")
 	noteID := "test-note-id"
 	cacheDir := filepath.Join(tmpDir, ".cache", noteID)
 
@@ -227,7 +228,7 @@ func TestBooxRender_ServesCache(t *testing.T) {
 	broadcaster := logging.NewLogBroadcaster()
 	handler := LegacyNewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, nil, tmpDir, "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
-	req := httptest.NewRequest("GET", "/files/boox/render?path=%2Fboox%2Fnotes%2Ftest.note&page=0", nil)
+	req := httptest.NewRequest("GET", "/files/boox/render?path="+url.QueryEscape(notePath)+"&page=0", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -260,7 +261,7 @@ func TestBooxRender_MissingNote(t *testing.T) {
 	broadcaster := logging.NewLogBroadcaster()
 	handler := LegacyNewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, nil, tmpDir, "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
-	req := httptest.NewRequest("GET", "/files/boox/render?path=%2Fboox%2Fnotes%2Ftest.note&page=0", nil)
+	req := httptest.NewRequest("GET", "/files/boox/render?path="+url.QueryEscape(filepath.Join(tmpDir, "test.note"))+"&page=0", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -272,7 +273,7 @@ func TestBooxRender_MissingNote(t *testing.T) {
 // TestBooxRender_MissingPage verifies 404 when page not rendered yet
 func TestBooxRender_MissingPage(t *testing.T) {
 	tmpDir := t.TempDir()
-	notePath := "/boox/notes/test.note"
+	notePath := filepath.Join(tmpDir, "test.note")
 	noteID := "test-note-id"
 	cacheDir := filepath.Join(tmpDir, ".cache", noteID)
 
@@ -289,7 +290,7 @@ func TestBooxRender_MissingPage(t *testing.T) {
 	broadcaster := logging.NewLogBroadcaster()
 	handler := LegacyNewHandler(newMockTaskStore(), nil, nil, nil, nil, nil, nil, booxStore, nil, tmpDir, "", nil, logger, broadcaster, nil, nil, "", nil, nil, nil, RAGDisplayConfig{}, &appconfig.Config{})
 
-	req := httptest.NewRequest("GET", "/files/boox/render?path=%2Fboox%2Fnotes%2Ftest.note&page=0", nil)
+	req := httptest.NewRequest("GET", "/files/boox/render?path="+url.QueryEscape(notePath)+"&page=0", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
