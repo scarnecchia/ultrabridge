@@ -80,8 +80,12 @@ type BooxVersion struct {
 }
 
 // UpsertNote inserts or updates a boox_notes row, incrementing version on conflict.
-func (s *Store) UpsertNote(ctx context.Context, path, noteID, title, deviceModel, noteType, folder string, pageCount int, fileHash string) error {
+// createdAt is only used for the initial INSERT; updates preserve the existing value.
+func (s *Store) UpsertNote(ctx context.Context, path, noteID, title, deviceModel, noteType, folder string, pageCount int, fileHash string, createdAt int64) error {
 	now := time.Now().UnixMilli()
+	if createdAt <= 0 {
+		createdAt = now
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO boox_notes (path, note_id, title, device_model, note_type, folder, page_count, file_hash, version, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
@@ -95,9 +99,34 @@ func (s *Store) UpsertNote(ctx context.Context, path, noteID, title, deviceModel
 			file_hash = excluded.file_hash,
 			version = version + 1,
 			updated_at = excluded.updated_at`,
-		path, noteID, title, deviceModel, noteType, folder, pageCount, fileHash, now, now,
+		path, noteID, title, deviceModel, noteType, folder, pageCount, fileHash, createdAt, now,
 	)
 	return err
+}
+
+// NoteCreatedAt extracts a creation timestamp (millis) from the title's
+// YYYYMMDD prefix, falling back to the file's mtime on disk.
+func NoteCreatedAt(title, filePath string) int64 {
+	if t, ok := ParseTitleDate(title); ok {
+		return t.UnixMilli()
+	}
+	if info, err := os.Stat(filePath); err == nil {
+		return info.ModTime().UnixMilli()
+	}
+	return 0
+}
+
+// ParseTitleDate extracts a date from a YYYYMMDD prefix in the title.
+func ParseTitleDate(title string) (time.Time, bool) {
+	s := strings.TrimSpace(title)
+	if len(s) < 8 {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("20060102", s[:8])
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 // EnqueueJob adds a job to the queue, first ensuring a boox_notes row exists with minimal defaults.
@@ -105,11 +134,16 @@ func (s *Store) EnqueueJob(ctx context.Context, notePath string) error {
 	// First ensure a boox_notes row exists (INSERT OR IGNORE with minimal defaults).
 	// This satisfies the FK constraint for the WebDAV callback before the worker
 	// has parsed the note metadata.
+	title := strings.TrimSuffix(filepath.Base(notePath), filepath.Ext(notePath))
+	createdAt := NoteCreatedAt(title, notePath)
 	now := time.Now().UnixMilli()
+	if createdAt <= 0 {
+		createdAt = now
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO boox_notes (path, note_id, title, device_model, note_type, folder, page_count, file_hash, version, created_at, updated_at)
 		VALUES (?, '', '', '', '', '', 0, '', 1, ?, ?)`,
-		notePath, now, now,
+		notePath, createdAt, now,
 	)
 	if err != nil {
 		return fmt.Errorf("ensure note row: %w", err)

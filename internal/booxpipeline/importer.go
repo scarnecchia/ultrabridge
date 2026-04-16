@@ -114,7 +114,7 @@ func (p *Processor) ScanAndEnqueue(ctx context.Context, cfg ImportConfig, logger
 		if ext == ".pdf" {
 			noteID = title
 		}
-		if err := p.store.UpsertNote(ctx, path, noteID, title, model, nType, fldr, 0, ""); err != nil {
+		if err := p.store.UpsertNote(ctx, path, noteID, title, model, nType, fldr, 0, "", NoteCreatedAt(title, path)); err != nil {
 			logger.Error("import: upsert note", "path", path, "error", err)
 			result.Errors++
 			continue

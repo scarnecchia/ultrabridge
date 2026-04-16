@@ -124,7 +124,7 @@ func TestUpsertNote_VersionIncrement(t *testing.T) {
 	path := "/tmp/test.note"
 
 	// First upsert
-	err := s.UpsertNote(context.Background(), path, "note-1", "Test Title", "device1", "Notebooks", "folder1", 5, "hash1")
+	err := s.UpsertNote(context.Background(), path, "note-1", "Test Title", "device1", "Notebooks", "folder1", 5, "hash1", 0)
 	if err != nil {
 		t.Fatalf("first UpsertNote: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestUpsertNote_VersionIncrement(t *testing.T) {
 	}
 
 	// Second upsert (same path)
-	err = s.UpsertNote(context.Background(), path, "note-1", "Updated Title", "device2", "Reading Notes", "folder2", 10, "hash2")
+	err = s.UpsertNote(context.Background(), path, "note-1", "Updated Title", "device2", "Reading Notes", "folder2", 10, "hash2", 0)
 	if err != nil {
 		t.Fatalf("second UpsertNote: %v", err)
 	}
@@ -587,7 +587,7 @@ func TestGetQueueStatus_ActiveDetails(t *testing.T) {
 
 	notePath := "/tmp/active.note"
 	// Upsert a note with known metadata so the JOIN can find title/page_count.
-	if err := s.UpsertNote(ctx, notePath, "note-active", "My Active Note", "Tab X", "Notebooks", "folder", 7, "hash"); err != nil {
+	if err := s.UpsertNote(ctx, notePath, "note-active", "My Active Note", "Tab X", "Notebooks", "folder", 7, "hash", 0); err != nil {
 		t.Fatalf("UpsertNote: %v", err)
 	}
 	if err := s.EnqueueJob(ctx, notePath); err != nil {

@@ -95,7 +95,7 @@ func (p *Processor) executeNoteJob(ctx context.Context, job *BooxJob) error {
 	deviceModel, noteType, folder := p.resolveMetadata(ctx, notePath)
 
 	// 4. Update boox_notes row (note.NoteID is the top-level directory name from the ZIP).
-	if err := p.store.UpsertNote(ctx, notePath, note.NoteID, note.Title, deviceModel, noteType, folder, len(note.Pages), fileHash); err != nil {
+	if err := p.store.UpsertNote(ctx, notePath, note.NoteID, note.Title, deviceModel, noteType, folder, len(note.Pages), fileHash, NoteCreatedAt(note.Title, notePath)); err != nil {
 		return fmt.Errorf("upsert note: %w", err)
 	}
 
@@ -189,7 +189,7 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 	noteID := title
 
 	// 5. Upsert note record.
-	if err := p.store.UpsertNote(ctx, pdfPath, noteID, title, deviceModel, noteType, folder, pageCount, fileHash); err != nil {
+	if err := p.store.UpsertNote(ctx, pdfPath, noteID, title, deviceModel, noteType, folder, pageCount, fileHash, NoteCreatedAt(title, pdfPath)); err != nil {
 		return fmt.Errorf("upsert note: %w", err)
 	}
 
