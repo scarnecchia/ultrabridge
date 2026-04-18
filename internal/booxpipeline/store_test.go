@@ -654,3 +654,47 @@ func TestReclaimStuckJobs(t *testing.T) {
 		t.Errorf("status = %q, want pending", status)
 	}
 }
+
+// TestHasDoneJobWithHash verifies the dedup check used by the worker to
+// short-circuit re-uploads of unchanged Boox notes.
+func TestHasDoneJobWithHash(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	notePath := "/tmp/dedup.note"
+	hash := "abc123"
+
+	// Empty hash always returns false.
+	if got, _ := s.HasDoneJobWithHash(ctx, notePath, ""); got {
+		t.Error("empty hash should return false")
+	}
+
+	// No row yet — should be false.
+	if got, _ := s.HasDoneJobWithHash(ctx, notePath, hash); got {
+		t.Error("missing row should return false")
+	}
+
+	// Row exists with matching hash but only a pending job — should be false.
+	if err := s.UpsertNote(ctx, notePath, "nid", "Title", "dev", "Notebooks", "f", 1, hash, 0); err != nil {
+		t.Fatalf("UpsertNote: %v", err)
+	}
+	if err := s.EnqueueJob(ctx, notePath); err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	if got, _ := s.HasDoneJobWithHash(ctx, notePath, hash); got {
+		t.Error("pending job should not count as done")
+	}
+
+	// Mark job done — should now return true.
+	job, _ := s.ClaimNextJob(ctx)
+	if err := s.CompleteJob(ctx, job.ID, "api", "test-model"); err != nil {
+		t.Fatalf("CompleteJob: %v", err)
+	}
+	if got, _ := s.HasDoneJobWithHash(ctx, notePath, hash); !got {
+		t.Error("done job with matching hash should return true")
+	}
+
+	// Different hash should not match.
+	if got, _ := s.HasDoneJobWithHash(ctx, notePath, "different"); got {
+		t.Error("non-matching hash should return false")
+	}
+}

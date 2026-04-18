@@ -238,6 +238,29 @@ func (s *Store) GetLatestJob(ctx context.Context, notePath string) (*BooxJob, er
 	return &job, nil
 }
 
+// HasDoneJobWithHash returns true if the boox_notes row at path already has
+// the given file_hash AND at least one done job. Used by the worker to skip
+// re-processing when a WebDAV re-upload delivers identical content.
+func (s *Store) HasDoneJobWithHash(ctx context.Context, path, fileHash string) (bool, error) {
+	if fileHash == "" {
+		return false, nil
+	}
+	var exists int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM boox_notes bn
+			JOIN boox_jobs bj ON bj.note_path = bn.path
+			WHERE bn.path = ? AND bn.file_hash = ? AND bj.status = 'done'
+		)`,
+		path, fileHash,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("has done job with hash: %w", err)
+	}
+	return exists == 1, nil
+}
+
 // GetNote retrieves a boox_notes row by path.
 func (s *Store) GetNote(ctx context.Context, path string) (*BooxNote, error) {
 	var note BooxNote

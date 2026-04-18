@@ -68,7 +68,7 @@ func (p *Processor) executeJob(ctx context.Context, job *BooxJob) error {
 func (p *Processor) executeNoteJob(ctx context.Context, job *BooxJob) error {
 	notePath := job.NotePath
 
-	// 1. Open and parse the .note file.
+	// 1. Open and compute file hash for dedup.
 	f, err := os.Open(notePath)
 	if err != nil {
 		return fmt.Errorf("open note: %w", err)
@@ -80,16 +80,24 @@ func (p *Processor) executeNoteJob(ctx context.Context, job *BooxJob) error {
 		return fmt.Errorf("stat note: %w", err)
 	}
 
+	h := sha256.New()
+	io.Copy(h, f)
+	fileHash := hex.EncodeToString(h.Sum(nil))
+
+	// Early exit: if we've already processed this exact content at this
+	// path, skip re-parsing, re-rendering, re-OCRing. Covers WebDAV
+	// re-uploads of unchanged notes (common when a Boox device re-syncs).
+	if done, _ := p.store.HasDoneJobWithHash(ctx, notePath, fileHash); done {
+		p.logger.Info("boox: skipping re-process, hash unchanged", "path", notePath)
+		return nil
+	}
+
+	// 2. Parse the .note file.
+	f.Seek(0, io.SeekStart)
 	note, err := booxnote.Open(f, info.Size())
 	if err != nil {
 		return fmt.Errorf("parse note: %w", err)
 	}
-
-	// 2. Compute file hash for dedup.
-	f.Seek(0, io.SeekStart)
-	h := sha256.New()
-	io.Copy(h, f)
-	fileHash := hex.EncodeToString(h.Sum(nil))
 
 	// 3. Extract path metadata. Preserve existing metadata (from importer) if present.
 	deviceModel, noteType, folder := p.resolveMetadata(ctx, notePath)
@@ -174,6 +182,12 @@ func (p *Processor) executePDFJob(ctx context.Context, job *BooxJob) error {
 	io.Copy(h, f)
 	f.Close()
 	fileHash := hex.EncodeToString(h.Sum(nil))
+
+	// Early exit: skip re-processing if content unchanged since last done job.
+	if done, _ := p.store.HasDoneJobWithHash(ctx, pdfPath, fileHash); done {
+		p.logger.Info("boox: skipping re-process, hash unchanged", "path", pdfPath)
+		return nil
+	}
 
 	// 2. Get page count.
 	pageCount, err := pdfrender.PageCount(pdfPath)
