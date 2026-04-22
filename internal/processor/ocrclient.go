@@ -128,7 +128,7 @@ func (c *OCRClient) recognizeAnthropic(ctx context.Context, jpegData []byte, pro
 		return "", fmt.Errorf("ocrclient request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("x-api-key", c.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := c.client.Do(req)
