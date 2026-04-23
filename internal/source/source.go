@@ -40,11 +40,11 @@ type SharedDeps struct {
 
 // SourceRow represents a row from the sources table.
 type SourceRow struct {
-	ID         int64
-	Type       string
-	Name       string
-	Enabled    bool
-	ConfigJSON string
-	CreatedAt  int64
-	UpdatedAt  int64
+	ID         int64  `json:"id"`
+	Type       string `json:"type"`
+	Name       string `json:"name"`
+	Enabled    bool   `json:"enabled"`
+	ConfigJSON string `json:"config_json"`
+	CreatedAt  int64  `json:"created_at"`
+	UpdatedAt  int64  `json:"updated_at"`
 }
