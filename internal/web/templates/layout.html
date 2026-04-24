@@ -1223,7 +1223,7 @@
           fetch('/api/sources')
           .then(r => r.json())
           .then(sources => {
-            var src = sources.find(s => s.ID === sourceId);
+            var src = sources.find(s => s.id === sourceId);
             if (!src) throw new Error('Source not found');
             src.enabled = enabled;
             return fetch('/api/sources/' + sourceId, {
@@ -1269,18 +1269,18 @@
           fetch('/api/sources')
           .then(r => r.json())
           .then(sources => {
-            var src = sources.find(s => s.ID === sourceId);
+            var src = sources.find(s => s.id === sourceId);
             if (!src) throw new Error('Source not found');
             statusEl.textContent = '';
             document.getElementById('source-form').style.display = 'block';
             document.getElementById('source-form-title').textContent = 'Edit Source';
-            document.getElementById('source-form-id').value = src.ID;
-            document.getElementById('source-type').value = src.Type;
+            document.getElementById('source-form-id').value = src.id;
+            document.getElementById('source-type').value = src.type;
             document.getElementById('source-type').disabled = true;
-            document.getElementById('source-name').value = src.Name;
-            document.getElementById('source-enabled').checked = src.Enabled;
+            document.getElementById('source-name').value = src.name;
+            document.getElementById('source-enabled').checked = src.enabled;
             var cfg = {};
-            try { cfg = JSON.parse(src.ConfigJSON || '{}'); } catch(e) {}
+            try { cfg = JSON.parse(src.config_json || '{}'); } catch(e) {}
             document.getElementById('source-notes-path').value = cfg.notes_path || '';
             document.getElementById('source-backup-path').value = cfg.backup_path || '';
             updateSourceConfigFields();
