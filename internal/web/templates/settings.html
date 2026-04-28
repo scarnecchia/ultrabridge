@@ -310,6 +310,53 @@
     {{end}}
   </div>
 
+  {{if .MCPEnabled}}
+  <div class="card" id="mcp-connection">
+    <h2>MCP Connection</h2>
+    <p class="text-small" style="margin-bottom: 1rem;">
+      The <code>ub-mcp</code> server exposes note-search tools to AI agents over
+      two transports. Create a bearer token in the MCP Tokens card below and
+      paste it into your client config.
+    </p>
+
+    <div class="form-group">
+      <label>HTTP SSE URL</label>
+      <code style="display:block; background:var(--surface-color); padding:0.75rem; border:1px solid var(--border-color); border-radius:4px; word-break:break-all; user-select:all;">{{.MCPHTTPURL}}</code>
+      <p class="text-small">Use this for network-accessible clients. Send the bearer token in an <code>Authorization: Bearer &lt;token&gt;</code> header.</p>
+    </div>
+
+    <div class="form-group">
+      <label>Stdio command</label>
+      <code style="display:block; background:var(--surface-color); padding:0.75rem; border:1px solid var(--border-color); border-radius:4px; word-break:break-all; user-select:all;">{{.MCPStdioCommand}}</code>
+      <p class="text-small">The MCP client spawns this per session. Requires <code>docker</code> on the client host, or an <code>ssh</code> wrapper for remote clients.</p>
+    </div>
+
+    <div class="form-group">
+      <label>Claude Desktop / Gemini CLI (stdio)</label>
+      <pre style="background:var(--surface-color); padding:0.75rem; border:1px solid var(--border-color); border-radius:4px; overflow-x:auto; user-select:all;"><code>{
+  "mcpServers": {
+    "ultrabridge": {
+      "command": "docker",
+      "args": ["exec", "-i", "ub-mcp", "ub-mcp"]
+    }
+  }
+}</code></pre>
+    </div>
+
+    <div class="form-group">
+      <label>HTTP SSE client (with bearer token)</label>
+      <pre style="background:var(--surface-color); padding:0.75rem; border:1px solid var(--border-color); border-radius:4px; overflow-x:auto; user-select:all;"><code>{
+  "mcpServers": {
+    "ultrabridge": {
+      "url": "{{.MCPHTTPURL}}",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN_HERE" }
+    }
+  }
+}</code></pre>
+    </div>
+  </div>
+  {{end}}
+
   <div class="card" id="mcp-tokens">
     <h2>MCP Tokens</h2>
     {{if not .MCPTokensEnabled}}

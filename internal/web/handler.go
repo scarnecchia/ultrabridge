@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -578,6 +579,19 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 		data["BooxExternalBaseURL"] = extBaseURL
 	}
 	if nt := r.URL.Query().Get("new_token"); nt != "" { data["NewMCPToken"] = nt }
+	if mcpPort := os.Getenv("UB_MCP_PORT"); mcpPort != "" {
+		host := r.Host
+		if colon := strings.LastIndex(host, ":"); colon >= 0 && !strings.Contains(host[colon:], "]") {
+			host = host[:colon]
+		}
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		data["MCPEnabled"] = true
+		data["MCPHTTPURL"] = fmt.Sprintf("%s://%s:%s/sse", scheme, host, mcpPort)
+		data["MCPStdioCommand"] = "docker exec -i ub-mcp ub-mcp"
+	}
 	h.renderTemplate(w, r, "settings", data)
 }
 
