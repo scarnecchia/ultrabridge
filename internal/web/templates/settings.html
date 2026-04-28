@@ -114,6 +114,20 @@
       </div>
     </div>
 
+    <hr>
+
+    <div style="margin-bottom: 2rem;">
+      <h3 style="margin-bottom: 1rem;">MCP Server</h3>
+      <div class="form-group">
+        <label for="config-mcp-port">ub-mcp container port</label>
+        <p class="device-info" style="margin-bottom: 0.5rem;">
+          Host port the sibling <code>ub-mcp</code> container is exposed on. Used to render
+          copy-pasteable client configs in the MCP Connection card below. Set to 0 to hide that card.
+        </p>
+        <input id="config-mcp-port" type="number" min="0" max="65535" value="{{.Config.MCPPort}}">
+      </div>
+    </div>
+
     <div class="toolbar">
         <button type="button" onclick="saveConfig()">Save Configuration</button>
         <span id="config-status" class="text-small"></span>

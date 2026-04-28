@@ -1186,7 +1186,8 @@
             sn_sync_interval: parseInt(document.getElementById('config-sn-sync-interval').value) || 300,
             sn_api_url: document.getElementById('config-sn-api-url').value,
             sn_account: document.getElementById('config-sn-account').value,
-            sn_password: document.getElementById('config-sn-password').value
+            sn_password: document.getElementById('config-sn-password').value,
+            mcp_port: parseInt(document.getElementById('config-mcp-port').value) || 0
           };
 
           fetch('/api/config', {
