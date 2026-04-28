@@ -333,7 +333,18 @@ func (e *SyncEngine) processRemoteTask(ctx context.Context, adapterID string, rt
 
 	// Existing task — check if remote changed
 	if entry.RemoteETag == rt.ETag {
-		return nil // No remote change
+		// Remote unchanged, but seeing it in Pull is proof of life:
+		// bump LastPulled so the next cycle's hard-delete detector
+		// doesn't ignore this entry as "never pulled".
+		now := time.Now().UnixMilli()
+		return e.syncMap.Upsert(ctx, &SyncMapEntry{
+			TaskID:     entry.TaskID,
+			AdapterID:  adapterID,
+			RemoteID:   rt.RemoteID,
+			RemoteETag: rt.ETag,
+			LastPushed: entry.LastPushed,
+			LastPulled: now,
+		})
 	}
 
 	// Remote changed — check if local also changed (conflict)
