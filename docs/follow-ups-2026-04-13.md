@@ -14,15 +14,11 @@ doc can be triaged as a punch list.
 
 ## Documentation drift from the prior decoupled-architecture refactor
 
-### 2. `internal/service/` has no domain CLAUDE.md
-- **Source:** Librarian pass during HTMX branch.
-- **Severity:** Medium — entire service layer (`TaskService`, `NoteService`, `SearchService`, `ConfigService`) has no domain docs. The HTMX branch's `Get`/`GetFile` additions made the gap slightly more visible.
-- **Fix shape:** Create `internal/service/CLAUDE.md` documenting the four interfaces, their concrete implementations, the Store interfaces (`TaskStore`, `BooxStore`, etc.), and testing conventions.
+### 2. ~~`internal/service/` has no domain CLAUDE.md~~ (FIXED 2026-04-28)
+- **Resolution:** Wrote `internal/service/CLAUDE.md` (90 lines) covering the four service interfaces, the Store/pipeline interfaces they depend on, key decisions (`interface{}` cross-domain returns, `TaskPatch` semantics), and current invariants. Includes a gotcha pointing at follow-up #17 (Supernote-side RetryFailed gap).
 
-### 3. Root `CLAUDE.md` Project Structure omits `internal/service/`
-- **Source:** Librarian pass.
-- **Severity:** Low — paired with item 2.
-- **Fix shape:** Add a one-line entry under "Core Components" or a new "Service Layer" section. Land in the same PR as item 2.
+### 3. ~~Root `CLAUDE.md` Project Structure omits `internal/service/`~~ (FIXED 2026-04-28)
+- **Resolution:** Added a new "Service Layer" section to the Project Structure listing, between "RAG & Chat" and "Web UI & API". Bumped the file's "Last verified" date to 2026-04-28.
 
 ### 4. ~~`internal/web/CLAUDE.md` handler-signature section is stale~~ (FIXED 2026-04-14)
 - **Resolution:** Rewritten during Files-tab split cleanup (step 5). The Handler contract section now matches `NewHandler` in `internal/web/handler.go`: 9 args (tasks, notes, search, config, noteDB, notesPathPrefix, booxNotesPath, logger, broadcaster). Items 2 and 3 (service/ domain CLAUDE.md and root Project Structure mention) remain open.
