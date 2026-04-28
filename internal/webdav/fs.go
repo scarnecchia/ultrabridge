@@ -11,7 +11,7 @@ import (
 	"golang.org/x/net/webdav"
 )
 
-// OnNoteUpload is called after a .note file is successfully uploaded.
+// OnNoteUpload is called after a supported file (.note or .pdf) is uploaded.
 // absPath is the absolute filesystem path to the written file.
 type OnNoteUpload func(absPath string)
 
@@ -72,15 +72,16 @@ func (fs *FS) OpenFile(ctx context.Context, name string, flag int, perm os.FileM
 		return nil, err
 	}
 
-	// Wrap with hook for .note file upload detection.
+	// Wrap with hook for supported file upload detection (.note and .pdf).
 	isWrite := flag&(os.O_WRONLY|os.O_RDWR) != 0
-	isNote := strings.HasSuffix(strings.ToLower(name), ".note")
+	lower := strings.ToLower(name)
+	isSupported := strings.HasSuffix(lower, ".note") || strings.HasSuffix(lower, ".pdf")
 
 	return &hookFile{
-		File:       f,
-		absPath:    absPath,
-		triggerHook: isWrite && isNote,
-		onClose:    fs.onNoteUpload,
+		File:        f,
+		absPath:     absPath,
+		triggerHook: isWrite && isSupported,
+		onClose:     fs.onNoteUpload,
 	}, nil
 }
 
