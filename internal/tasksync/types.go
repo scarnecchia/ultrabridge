@@ -55,7 +55,9 @@ type DeviceAdapter interface {
 	// ID returns a unique identifier for this adapter (e.g., "supernote").
 	ID() string
 
-	// Start initializes the adapter (e.g., authenticates). Called once at registration.
+	// Start initializes the adapter (e.g., authenticates). Called at
+	// engine start, and retried at the top of each cycle if it fails, so
+	// implementations must be safe to call more than once.
 	Start(ctx context.Context) error
 
 	// Stop cleanly shuts down the adapter.
