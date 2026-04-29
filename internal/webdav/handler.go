@@ -17,21 +17,31 @@ type PathMetadata struct {
 }
 
 // ExtractPathMetadata parses Boox device path convention from a relative path.
+// Two layouts are supported:
+//   - Modern WebDAV: onyx/{model}/{type}/{folder}/{name}.note
+//   - Legacy/imported: {model}/{type}/{folder}/{name}.note (no onyx/ prefix)
+//
+// The legacy layout is what bulk-imported trees produced before the WebDAV
+// convention added the onyx/ root. Treating both the same prevents filename-as-
+// folder pollution when legacy files get re-ingested via the maintenance
+// scan-untracked path.
 func ExtractPathMetadata(relPath string) PathMetadata {
-	// Expected: onyx/{model}/{type}/{folder}/{name}.note
 	parts := strings.Split(strings.TrimPrefix(relPath, "/"), "/")
-	var pm PathMetadata
-	// parts[0] = "onyx", parts[1] = model, parts[2] = type, parts[3] = folder, parts[4] = name.note
-	if len(parts) >= 2 {
-		pm.DeviceModel = parts[1]
+	if len(parts) > 0 && parts[0] == "onyx" {
+		parts = parts[1:]
 	}
+	var pm PathMetadata
+	// Need at least model + filename (2 parts) to extract any metadata.
+	// A bare filename like "short.note" yields nothing.
+	if len(parts) < 2 {
+		return pm
+	}
+	pm.DeviceModel = parts[0]
 	if len(parts) >= 3 {
-		pm.NoteType = parts[2]
+		pm.NoteType = parts[1]
 	}
 	if len(parts) >= 4 {
-		pm.Folder = parts[3]
-	}
-	if len(parts) >= 5 {
+		pm.Folder = parts[2]
 		name := parts[len(parts)-1]
 		if idx := strings.LastIndex(name, "."); idx > 0 {
 			pm.NoteName = name[:idx]

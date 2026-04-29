@@ -109,6 +109,18 @@ func (m *mockBooxStore) CountNotesWithPrefix(ctx context.Context, prefix string)
 	return 0, nil
 }
 
+func (m *mockBooxStore) ReconcileCreatedAtFromFilename(ctx context.Context) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockBooxStore) ListAutoNamedNotebooks(ctx context.Context) ([]booxpipeline.BooxNote, error) {
+	return nil, nil
+}
+
+func (m *mockBooxStore) MoveNote(ctx context.Context, oldPath, newPath, newFolder string) error {
+	return nil
+}
+
 // TestFilesPage_ShowsBothSources verifies AC5.1: Files list shows both Supernote and Boox notes
 func TestFilesPage_ShowsBothSources(t *testing.T) {
 	// Create mock stores

@@ -275,7 +275,12 @@ func NewHandler(
 	h.mux.HandleFunc("POST /files/delete-note", h.handleFilesDeleteNote)
 	h.mux.HandleFunc("POST /files/delete-bulk", h.handleFilesDeleteBulk)
 	h.mux.HandleFunc("POST /files/migrate-imports", h.handleFilesMigrateImports)
-	
+	h.mux.HandleFunc("POST /files/move", h.handleFilesMove)
+	h.mux.HandleFunc("POST /files/move-bulk", h.handleFilesMoveBulk)
+	h.mux.HandleFunc("POST /maintenance/boox/reconcile-dates", h.handleMaintenanceBooxReconcileDates)
+	h.mux.HandleFunc("POST /maintenance/boox/delete-untitled", h.handleMaintenanceBooxDeleteUntitled)
+	h.mux.HandleFunc("POST /maintenance/boox/scan-untracked", h.handleMaintenanceBooxScanUntracked)
+
 	h.mux.HandleFunc("GET /sync/status", func(w http.ResponseWriter, r *http.Request) {
 		if h.config == nil {
 			w.Header().Set("Content-Type", "application/json")
@@ -519,6 +524,7 @@ func (h *Handler) handleFilesBoox(w http.ResponseWriter, r *http.Request) {
 	}
 	data["booxNotes"], data["filesTotalFiles"] = rows, total
 	data["booxFolders"], data["booxFolderFilter"] = folders, folder
+	data["unfiledFolderSentinel"] = service.FolderFilterUnfiled
 	data["booxDevices"], data["booxDeviceFilter"] = devices, device
 	data["filesPage"], data["filesPerPage"] = page, perPage
 	data["filesSort"], data["filesOrder"] = sortField, sortOrder
@@ -561,6 +567,7 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// they're stored in the settings table but not in the Config
 		// struct — read them on demand so the form fields render with
 		// current values.
+		data["SNPipelineActive"] = h.notes != nil && h.notes.HasSupernoteSource()
 		data["BooxActive"] = h.notes != nil && h.notes.HasBooxSource()
 		ocrPrompt, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxOCRPrompt)
 		todoEnabled, _ := notedb.GetSetting(ctx, h.noteDB, appconfig.KeyBooxTodoEnabled)
@@ -835,6 +842,93 @@ func (h *Handler) handleFilesDeleteBulk(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) handleFilesMigrateImports(w http.ResponseWriter, r *http.Request) {
 	h.notes.MigrateImports(r.Context())
 	h.respondEmptyOrRedirect(w, r, "/files/boox")
+}
+
+func (h *Handler) handleFilesMove(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	path := r.FormValue("path")
+	folder := r.FormValue("folder")
+	if path == "" {
+		http.Error(w, "missing path", http.StatusBadRequest)
+		return
+	}
+	if err := h.notes.MoveBooxNote(r.Context(), path, folder); err != nil {
+		h.logger.Error("move boox note", "path", path, "folder", folder, "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		// Row no longer belongs to current view (folder filter changed) —
+		// remove it from the table.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/files/boox", http.StatusSeeOther)
+}
+
+func (h *Handler) handleFilesMoveBulk(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	paths := r.Form["paths"]
+	folder := r.FormValue("folder")
+	if len(paths) == 0 {
+		http.Error(w, "no paths selected", http.StatusBadRequest)
+		return
+	}
+	moved, failed, err := h.notes.BulkMoveBooxNotes(r.Context(), paths, folder)
+	if err != nil && moved == 0 {
+		h.logger.Error("bulk move boox notes", "error", err)
+		http.Error(w, "all moves failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if failed > 0 {
+		h.logger.Warn("bulk move partial", "moved", moved, "failed", failed)
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/files/boox", http.StatusSeeOther)
+}
+
+func (h *Handler) handleMaintenanceBooxReconcileDates(w http.ResponseWriter, r *http.Request) {
+	n, err := h.notes.ReconcileBooxCreatedAt(r.Context())
+	if err != nil {
+		h.logger.Error("reconcile boox dates", "error", err)
+		http.Error(w, "failed to reconcile dates", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<p class="text-small">Reconciled %d row(s).</p>`, n)
+}
+
+func (h *Handler) handleMaintenanceBooxDeleteUntitled(w http.ResponseWriter, r *http.Request) {
+	rows, files, versions, err := h.notes.DeleteAutoNamedNotebooks(r.Context())
+	if err != nil {
+		h.logger.Error("delete auto-named notebooks", "error", err)
+		http.Error(w, "failed to delete auto-named notebooks", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<p class="text-small">Deleted %d row(s), %d file(s), %d versions dir(s).</p>`,
+		rows, files, versions)
+}
+
+func (h *Handler) handleMaintenanceBooxScanUntracked(w http.ResponseWriter, r *http.Request) {
+	scanned, enqueued, err := h.notes.ScanAndEnqueueUntracked(r.Context())
+	if err != nil {
+		h.logger.Error("scan untracked boox files", "error", err)
+		http.Error(w, "failed to scan untracked files", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<p class="text-small">Scanned %d file(s), enqueued %d previously untracked.</p>`,
+		scanned, enqueued)
 }
 
 func (h *Handler) handleSyncStatus(w http.ResponseWriter, r *http.Request) {

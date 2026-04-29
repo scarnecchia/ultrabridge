@@ -81,6 +81,26 @@ func TestExtractPathMetadata(t *testing.T) {
 				NoteName:    "",
 			},
 		},
+		{
+			name:  "legacy path without onyx prefix",
+			input: "/NoteMax/Notebooks/Moffitt/Weka Re-Intro.pdf",
+			expected: PathMetadata{
+				DeviceModel: "NoteMax",
+				NoteType:    "Notebooks",
+				Folder:      "Moffitt",
+				NoteName:    "Weka Re-Intro",
+			},
+		},
+		{
+			name:  "legacy path no-slash no-onyx",
+			input: "Go103_2Lumi/Notebooks/Samples/red only.pdf",
+			expected: PathMetadata{
+				DeviceModel: "Go103_2Lumi",
+				NoteType:    "Notebooks",
+				Folder:      "Samples",
+				NoteName:    "red only",
+			},
+		},
 	}
 
 	for _, tt := range tests {

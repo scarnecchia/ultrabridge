@@ -255,6 +255,17 @@ func (m *mockNoteService) MigrateImports(ctx context.Context) error {
 func (m *mockNoteService) HasSupernoteSource() bool { return m.pipelineConfigured }
 func (m *mockNoteService) HasBooxSource() bool { return m.booxEnabled }
 func (m *mockNoteService) ListVersions(ctx context.Context, path string) (interface{}, error) { return nil, nil }
+func (m *mockNoteService) ReconcileBooxCreatedAt(ctx context.Context) (int64, error) { return 0, nil }
+func (m *mockNoteService) DeleteAutoNamedNotebooks(ctx context.Context) (int64, int64, int64, error) {
+	return 0, 0, 0, nil
+}
+func (m *mockNoteService) ScanAndEnqueueUntracked(ctx context.Context) (int, int, error) {
+	return 0, 0, nil
+}
+func (m *mockNoteService) MoveBooxNote(ctx context.Context, path, destFolder string) error { return nil }
+func (m *mockNoteService) BulkMoveBooxNotes(ctx context.Context, paths []string, destFolder string) (int, int, error) {
+	return 0, 0, nil
+}
 
 // mockSearchService implements SearchService for testing
 type mockSearchService struct {

@@ -77,6 +77,9 @@ func (m *mockBooxStore) DeleteNote(ctx context.Context, path string) error    { 
 func (m *mockBooxStore) SkipNote(ctx context.Context, path, reason string) error { return nil }
 func (m *mockBooxStore) UnskipNote(ctx context.Context, path string) error       { return nil }
 func (m *mockBooxStore) GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error) { return booxpipeline.QueueStatus{}, nil }
+func (m *mockBooxStore) ReconcileCreatedAtFromFilename(ctx context.Context) (int64, error) { return 0, nil }
+func (m *mockBooxStore) ListAutoNamedNotebooks(ctx context.Context) ([]booxpipeline.BooxNote, error) { return nil, nil }
+func (m *mockBooxStore) MoveNote(ctx context.Context, oldPath, newPath, newFolder string) error { return nil }
 func (m *mockBooxStore) ListFolders(ctx context.Context) ([]booxpipeline.FolderCount, error) {
 	counts := map[string]int{}
 	for _, bn := range m.notes {
@@ -249,6 +252,70 @@ func TestNoteService_ListBooxNotes(t *testing.T) {
 		got, n, err := noneSvc.ListBooxNotes(context.Background(), "", "", "", "", 1, 10)
 		if err != nil || n != 0 || len(got) != 0 {
 			t.Errorf("expected empty result when booxStore is nil, got (%v, %d, %v)", got, n, err)
+		}
+	})
+
+	t.Run("compute_move_dest_path", func(t *testing.T) {
+		root := "/data/boox"
+		cases := []struct {
+			old, folder, want string
+			wantErr           bool
+		}{
+			// onyx-prefixed, move to existing folder
+			{"/data/boox/onyx/Palma/Notebooks/Personal/foo.note", "Moffitt", "/data/boox/onyx/Palma/Notebooks/Moffitt/foo.note", false},
+			// onyx-prefixed, move to unfiled
+			{"/data/boox/onyx/Palma/Notebooks/Personal/foo.note", "", "/data/boox/onyx/Palma/Notebooks/foo.note", false},
+			// legacy (no onyx), move to folder
+			{"/data/boox/NoteMax/Notebooks/foo.pdf", "Moffitt", "/data/boox/NoteMax/Notebooks/Moffitt/foo.pdf", false},
+			// already unfiled, moving to same → still computes to unfiled (no-op caller's responsibility)
+			{"/data/boox/NoteMax/Notebooks/foo.pdf", "", "/data/boox/NoteMax/Notebooks/foo.pdf", false},
+			// path outside root → error
+			{"/elsewhere/foo.note", "Moffitt", "", true},
+			// too short to re-parent
+			{"/data/boox/onyx/foo.note", "Moffitt", "", true},
+		}
+		for _, c := range cases {
+			got, err := computeBooxMoveDestPath(root, c.old, c.folder)
+			if (err != nil) != c.wantErr {
+				t.Errorf("%q→%q: err=%v wantErr=%v", c.old, c.folder, err, c.wantErr)
+			}
+			if got != c.want {
+				t.Errorf("%q→%q: got %q want %q", c.old, c.folder, got, c.want)
+			}
+		}
+	})
+
+	t.Run("unfiled_sentinel_filters_to_empty_folder", func(t *testing.T) {
+		bs := &mockBooxStore{
+			notes: []booxpipeline.BooxNoteEntry{
+				{Title: "Has folder", Path: "/boox/a.note", Folder: "Moffitt"},
+				{Title: "No folder 1", Path: "/boox/b.note", Folder: ""},
+				{Title: "No folder 2", Path: "/boox/c.note", Folder: ""},
+			},
+		}
+		svc := NewNoteService(ns, nil, bs, nil, nil, nil, nil, nil, "", "", nil)
+
+		// All (folder="") returns everything.
+		_, total, _ := svc.ListBooxNotes(context.Background(), "", "", "title", "asc", 1, 10)
+		if total != 3 {
+			t.Errorf("All filter expected 3, got %d", total)
+		}
+
+		// Unfiled sentinel returns only the 2 empty-folder notes.
+		rows, total, _ := svc.ListBooxNotes(context.Background(), "", FolderFilterUnfiled, "title", "asc", 1, 10)
+		if total != 2 {
+			t.Errorf("Unfiled filter expected 2, got %d", total)
+		}
+		for _, r := range rows {
+			if r.Folder != "" {
+				t.Errorf("Unfiled filter returned row with folder=%q", r.Folder)
+			}
+		}
+
+		// Specific folder returns only matching rows.
+		_, total, _ = svc.ListBooxNotes(context.Background(), "", "Moffitt", "title", "asc", 1, 10)
+		if total != 1 {
+			t.Errorf("Moffitt filter expected 1, got %d", total)
 		}
 	})
 }

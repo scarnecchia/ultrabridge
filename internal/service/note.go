@@ -37,6 +37,9 @@ type BooxStore interface {
 	GetQueueStatus(ctx context.Context) (booxpipeline.QueueStatus, error)
 	ListFolders(ctx context.Context) ([]booxpipeline.FolderCount, error)
 	ListDevices(ctx context.Context) ([]booxpipeline.DeviceCount, error)
+	ReconcileCreatedAtFromFilename(ctx context.Context) (int64, error)
+	ListAutoNamedNotebooks(ctx context.Context) ([]booxpipeline.BooxNote, error)
+	MoveNote(ctx context.Context, oldPath, newPath, newFolder string) error
 }
 
 // BooxImporter is the interface required by the NoteService for Boox imports.
@@ -215,6 +218,51 @@ func (s *noteService) ListSupernoteFiles(ctx context.Context, path, sortField, o
 	return paginateNoteFiles(files, page, perPage)
 }
 
+// computeBooxMoveDestPath returns the destination path when a Boox note at
+// oldPath is moved into newFolder. newFolder may be empty (move to device-
+// root, "unfiled") or a non-empty folder name. The path is computed by
+// stripping the existing folder component (if any) and inserting the new
+// one. Returns ("", error) if oldPath isn't under root or the structure
+// isn't recognizable.
+func computeBooxMoveDestPath(root, oldPath, newFolder string) (string, error) {
+	if root == "" {
+		return "", fmt.Errorf("boox notes root not configured")
+	}
+	rel, err := filepath.Rel(root, oldPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("path %q not under boox notes root %q", oldPath, root)
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	prefix := ""
+	if len(parts) > 0 && parts[0] == "onyx" {
+		prefix = "onyx"
+		parts = parts[1:]
+	}
+	// Need at minimum [model, type, file] (3 parts) — anything less and we
+	// can't safely re-parent into a folder.
+	if len(parts) < 3 {
+		return "", fmt.Errorf("path %q does not match {model}/{type}/[folder/]{file}", oldPath)
+	}
+	model, noteType, file := parts[0], parts[1], parts[len(parts)-1]
+	var newRel string
+	if newFolder == "" {
+		// Unfiled: model/type/file
+		newRel = filepath.Join(model, noteType, file)
+	} else {
+		newRel = filepath.Join(model, noteType, newFolder, file)
+	}
+	if prefix != "" {
+		newRel = filepath.Join(prefix, newRel)
+	}
+	return filepath.Join(root, newRel), nil
+}
+
+// FolderFilterUnfiled is the sentinel value the web layer passes to filter
+// to notes whose folder field is empty. URL semantics distinguish "no
+// folder param" (All) from "folder=" (which is ambiguous with All on the
+// HTTP side), so the Unfiled pill encodes itself as ?folder=__unfiled__.
+const FolderFilterUnfiled = "__unfiled__"
+
 // ListBooxNotes returns Boox-catalog rows with the richer per-note fields
 // (Title, Folder, DeviceModel, NoteType, PageCount) that NoteFile flattens.
 // Both device and folder are exact-match filters — empty means "all".
@@ -231,12 +279,20 @@ func (s *noteService) ListBooxNotes(ctx context.Context, device, folder, sortFie
 		return nil, 0, err
 	}
 	out := make([]BooxNoteSummary, 0, len(rows))
+	filterUnfiled := folder == FolderFilterUnfiled
 	for _, bn := range rows {
 		if device != "" && bn.DeviceModel != device {
 			continue
 		}
-		if folder != "" && bn.Folder != folder {
-			continue
+		switch {
+		case filterUnfiled:
+			if bn.Folder != "" {
+				continue
+			}
+		case folder != "":
+			if bn.Folder != folder {
+				continue
+			}
 		}
 		out = append(out, mapBooxSummary(bn))
 	}
@@ -514,6 +570,24 @@ func (s *noteService) DeleteNote(ctx context.Context, path string) error {
 		if noteID != "" && s.booxCachePath != "" {
 			os.RemoveAll(filepath.Join(s.booxCachePath, noteID))
 		}
+		// Remove the source file and its .versions archive directory.
+		// Leaving them on disk means the scan-untracked maintenance button
+		// would re-enqueue the note, undoing the delete.
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			s.logger.Warn("delete boox file", "path", path, "error", err)
+		}
+		if s.booxNotesPath != "" {
+			if rel, err := filepath.Rel(s.booxNotesPath, path); err == nil {
+				relDir := filepath.Dir(rel)
+				nameNoExt := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+				versionsDir := filepath.Join(s.booxNotesPath, ".versions", relDir, nameNoExt)
+				if _, statErr := os.Stat(versionsDir); statErr == nil {
+					if err := os.RemoveAll(versionsDir); err != nil {
+						s.logger.Warn("delete versions dir", "dir", versionsDir, "error", err)
+					}
+				}
+			}
+		}
 		return nil
 	}
 	return nil
@@ -524,6 +598,193 @@ func (s *noteService) BulkDelete(ctx context.Context, paths []string) error {
 		_ = s.DeleteNote(ctx, p)
 	}
 	return nil
+}
+
+func (s *noteService) ReconcileBooxCreatedAt(ctx context.Context) (int64, error) {
+	if s.booxStore == nil {
+		return 0, fmt.Errorf("boox store not available")
+	}
+	return s.booxStore.ReconcileCreatedAtFromFilename(ctx)
+}
+
+// MoveBooxNote moves a single Boox note to destFolder ("" means unfiled).
+// Renames the source file on disk, moves the .versions/ archive, and
+// updates the boox_notes / boox_jobs / note_content rows. Returns an
+// error if the source isn't a Boox path, the destination already exists,
+// or the rename fails.
+func (s *noteService) MoveBooxNote(ctx context.Context, path, destFolder string) error {
+	if !s.isBooxPath(path) {
+		return fmt.Errorf("not a boox path: %q", path)
+	}
+	if s.booxStore == nil {
+		return fmt.Errorf("boox store not available")
+	}
+	// Treat the unfiled sentinel coming from the form layer as "no folder."
+	if destFolder == FolderFilterUnfiled {
+		destFolder = ""
+	}
+	newPath, err := computeBooxMoveDestPath(s.booxNotesPath, path, destFolder)
+	if err != nil {
+		return err
+	}
+	if newPath == path {
+		return nil // already there, no-op
+	}
+	if _, err := os.Stat(newPath); err == nil {
+		return fmt.Errorf("destination already exists: %q", newPath)
+	}
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
+		return fmt.Errorf("create dest dir: %w", err)
+	}
+	if err := os.Rename(path, newPath); err != nil {
+		return fmt.Errorf("rename file: %w", err)
+	}
+	// Move the .versions archive directory if it exists. Best-effort: a
+	// failure here doesn't roll back the file rename, but is logged.
+	if rel, err := filepath.Rel(s.booxNotesPath, path); err == nil {
+		oldVersionsDir := filepath.Join(s.booxNotesPath, ".versions",
+			filepath.Dir(rel),
+			strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+		if _, statErr := os.Stat(oldVersionsDir); statErr == nil {
+			if newRel, err := filepath.Rel(s.booxNotesPath, newPath); err == nil {
+				newVersionsDir := filepath.Join(s.booxNotesPath, ".versions",
+					filepath.Dir(newRel),
+					strings.TrimSuffix(filepath.Base(newPath), filepath.Ext(newPath)))
+				if err := os.MkdirAll(filepath.Dir(newVersionsDir), 0o755); err == nil {
+					if err := os.Rename(oldVersionsDir, newVersionsDir); err != nil {
+						s.logger.Warn("move versions dir", "old", oldVersionsDir, "new", newVersionsDir, "error", err)
+					}
+				}
+			}
+		}
+	}
+	if err := s.booxStore.MoveNote(ctx, path, newPath, destFolder); err != nil {
+		// File moved on disk but DB update failed — log loudly. The next
+		// scan-untracked run will re-add the destination as a new row.
+		s.logger.Error("boox move: db update failed after file rename", "old", path, "new", newPath, "error", err)
+		return fmt.Errorf("update db: %w", err)
+	}
+	return nil
+}
+
+// BulkMoveBooxNotes moves multiple notes; returns counts and the first
+// error if any (other paths still attempted).
+func (s *noteService) BulkMoveBooxNotes(ctx context.Context, paths []string, destFolder string) (moved, failed int, err error) {
+	for _, p := range paths {
+		if e := s.MoveBooxNote(ctx, p, destFolder); e != nil {
+			s.logger.Warn("bulk move: skipping", "path", p, "error", e)
+			failed++
+			if err == nil {
+				err = e
+			}
+			continue
+		}
+		moved++
+	}
+	return moved, failed, err
+}
+
+// ScanAndEnqueueUntracked walks the Boox notes directory, finds .note/.pdf
+// files that have no corresponding boox_notes row, and enqueues a job for
+// each. Returns (scanned, enqueued, err). Files already tracked are left
+// alone — this is the recovery path for files that landed on disk via
+// something other than the WebDAV upload hook (rsync, manual copy, or
+// pre-fix WebDAV uploads).
+func (s *noteService) ScanAndEnqueueUntracked(ctx context.Context) (int, int, error) {
+	if s.booxStore == nil {
+		return 0, 0, fmt.Errorf("boox store not available")
+	}
+	if s.booxNotesPath == "" {
+		return 0, 0, fmt.Errorf("boox notes path not configured")
+	}
+
+	// Snapshot tracked paths into a set.
+	notes, err := s.booxStore.ListNotes(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("list tracked: %w", err)
+	}
+	tracked := make(map[string]struct{}, len(notes))
+	for _, n := range notes {
+		tracked[n.Path] = struct{}{}
+	}
+
+	var scanned, enqueued int
+	walkErr := filepath.Walk(s.booxNotesPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			if strings.HasPrefix(info.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(info.Name()))
+		if ext != ".note" && ext != ".pdf" {
+			return nil
+		}
+		scanned++
+		if _, ok := tracked[path]; ok {
+			return nil
+		}
+		if err := s.booxStore.EnqueueJob(ctx, path); err != nil {
+			s.logger.Warn("enqueue untracked", "path", path, "error", err)
+			return nil
+		}
+		enqueued++
+		return nil
+	})
+	if walkErr != nil {
+		return scanned, enqueued, fmt.Errorf("walk: %w", walkErr)
+	}
+	return scanned, enqueued, nil
+}
+
+// DeleteAutoNamedNotebooks deletes Boox firmware default-named notes
+// (e.g. "Notebook-3.note") — DB row, source file, .versions archive
+// directory, and rendered cache. Returns counts (deleted rows, deleted
+// files, deleted version dirs) and the first error encountered, but
+// continues past per-row errors so a single bad path doesn't block the
+// rest of the cleanup.
+func (s *noteService) DeleteAutoNamedNotebooks(ctx context.Context) (int64, int64, int64, error) {
+	if s.booxStore == nil {
+		return 0, 0, 0, fmt.Errorf("boox store not available")
+	}
+	notes, err := s.booxStore.ListAutoNamedNotebooks(ctx)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("list candidates: %w", err)
+	}
+	var rowsDeleted, filesDeleted, versionsDeleted int64
+	for _, n := range notes {
+		if err := os.Remove(n.Path); err == nil {
+			filesDeleted++
+		} else if !os.IsNotExist(err) {
+			s.logger.Warn("delete boox file", "path", n.Path, "error", err)
+		}
+		if s.booxNotesPath != "" {
+			if rel, err := filepath.Rel(s.booxNotesPath, n.Path); err == nil {
+				relDir := filepath.Dir(rel)
+				nameNoExt := strings.TrimSuffix(filepath.Base(n.Path), filepath.Ext(n.Path))
+				versionsDir := filepath.Join(s.booxNotesPath, ".versions", relDir, nameNoExt)
+				if _, statErr := os.Stat(versionsDir); statErr == nil {
+					if err := os.RemoveAll(versionsDir); err != nil {
+						s.logger.Warn("delete versions dir", "dir", versionsDir, "error", err)
+					} else {
+						versionsDeleted++
+					}
+				}
+			}
+		}
+		if err := s.booxStore.DeleteNote(ctx, n.Path); err != nil {
+			s.logger.Warn("delete boox row", "path", n.Path, "error", err)
+			continue
+		}
+		rowsDeleted++
+		if n.NoteID != "" && s.booxCachePath != "" {
+			os.RemoveAll(filepath.Join(s.booxCachePath, n.NoteID))
+		}
+	}
+	return rowsDeleted, filesDeleted, versionsDeleted, nil
 }
 
 func (s *noteService) StartProcessor(ctx context.Context) error {

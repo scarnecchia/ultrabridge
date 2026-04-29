@@ -2,6 +2,7 @@ package booxnote
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -87,9 +88,9 @@ func Open(r io.ReaderAt, size int64) (*Note, error) {
 
 	note := &Note{NoteID: noteID}
 
-	// Parse note_info for title and page name list.
+	// Parse note_info for title, page name list, and per-page dimensions.
 	noteInfoPath := noteID + "/note/pb/note_info"
-	pageNames, err := parseNoteInfo(entries, noteInfoPath, note)
+	pageNames, pageDimsByID, err := parseNoteInfo(entries, noteInfoPath, note)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +120,55 @@ func Open(r io.ReaderAt, size int64) (*Note, error) {
 			note.Pages = append(note.Pages, pg)
 		}
 	}
-	_ = pageNames // used in fallback path
+
+	// Backfill: some firmware writes a virtual/page/pb file for only one page
+	// even when pageNameList lists more (observed on Go103_2Lumi). Any pageName
+	// in pageNameList that didn't get a Page from the loop above gets one
+	// constructed from its shape/point data, with dimensions borrowed from a
+	// sibling page (or a sensible default if no sibling).
+	seen := make(map[string]bool, len(note.Pages))
+	for _, pg := range note.Pages {
+		seen[pg.PageID] = true
+	}
+	for i, pageName := range pageNames {
+		if seen[pageName] {
+			continue
+		}
+		shapes, err := parseShapes(entries, noteID, pageName)
+		if err != nil {
+			return nil, fmt.Errorf("booxnote: backfill page %s shapes: %w", pageName, err)
+		}
+		pointMap, err := readPagePoints(entries, noteID, pageName)
+		if err != nil {
+			return nil, fmt.Errorf("booxnote: backfill page %s points: %w", pageName, err)
+		}
+		for _, s := range shapes {
+			if len(s.Points) == 0 {
+				if pts, ok := pointMap[s.UniqueID]; ok {
+					s.Points = pts
+				}
+			}
+		}
+		// Don't materialize a page with no content at all — it's almost certainly
+		// a stale entry rather than a real missing page.
+		if len(shapes) == 0 && len(pointMap) == 0 {
+			continue
+		}
+		// Use the page's own dims from pageInfoMap. Skip the page if we don't
+		// have authoritative dimensions — guessing produces wrong-sized canvases
+		// when notebooks mix page sizes (which they often do).
+		dims, ok := pageDimsByID[pageName]
+		if !ok {
+			continue
+		}
+		note.Pages = append(note.Pages, &Page{
+			PageID:     pageName,
+			Width:      dims.Width,
+			Height:     dims.Height,
+			OrderIndex: float32(i),
+			Shapes:     shapes,
+		})
+	}
 
 	// Sort pages by orderIndex for consistent ordering.
 	sort.Slice(note.Pages, func(i, j int) bool {
@@ -129,21 +178,32 @@ func Open(r io.ReaderAt, size int64) (*Note, error) {
 	return note, nil
 }
 
+// pageDims holds per-page dimensions extracted from note_info's pageInfoMap.
+type pageDims struct {
+	Width  float64
+	Height float64
+}
+
 // parseNoteInfo reads the note_info protobuf using low-level wire parsing.
 // We avoid proto.Unmarshal because real Boox devices produce string fields
-// with non-UTF-8 bytes, which Go's proto3 unmarshaler rejects.
-func parseNoteInfo(entries map[string]*zip.File, path string, note *Note) ([]string, error) {
+// with non-UTF-8 bytes, which Go's proto3 unmarshaler rejects. Returns the
+// pageNameList plus a per-page-id dimensions map (extracted from the
+// pageInfoMap JSON blob, when present).
+func parseNoteInfo(entries map[string]*zip.File, path string, note *Note) ([]string, map[string]pageDims, error) {
 	data, err := readEntry(entries, path)
 	if err != nil {
-		return nil, fmt.Errorf("booxnote: read note_info: %w", err)
+		return nil, nil, fmt.Errorf("booxnote: read note_info: %w", err)
 	}
 
 	// The note_info file may contain a wrapper message with the actual NoteInfo
 	// nested in field 1. Unwrap if the top-level only contains field 1 bytes.
 	inner := unwrapField1(data)
 
-	// NoteInfo field numbers: title=6, pageNameList=20
+	// NoteInfo field numbers: title=6, pageNameList=20. Other fields hold JSON
+	// blobs whose schema isn't fixed in the protobuf — pageInfoMap is one of
+	// those, so we scan every BytesType field for a JSON object containing it.
 	var title, pageListJSON string
+	dims := make(map[string]pageDims)
 	for len(inner) > 0 {
 		num, typ, n := protowire.ConsumeTag(inner)
 		if n < 0 {
@@ -167,6 +227,10 @@ func parseNoteInfo(entries map[string]*zip.File, path string, note *Note) ([]str
 					title = string(v)
 				case 20: // pageNameList
 					pageListJSON = string(v)
+				default:
+					// Opportunistically extract pageInfoMap from any other
+					// JSON-blob field. Page sizes vary widely across notebooks.
+					mergePageInfoMap(dims, v)
 				}
 			}
 		default:
@@ -190,13 +254,37 @@ func parseNoteInfo(entries map[string]*zip.File, path string, note *Note) ([]str
 				PageNameList []string `json:"pageNameList"`
 			}
 			if err2 := json.Unmarshal([]byte(pageListJSON), &wrapped); err2 != nil {
-				return nil, fmt.Errorf("booxnote: parse pageNameList: %w", err)
+				return nil, nil, fmt.Errorf("booxnote: parse pageNameList: %w", err)
 			}
 			pageNames = wrapped.PageNameList
 		}
 	}
 
-	return pageNames, nil
+	return pageNames, dims, nil
+}
+
+// mergePageInfoMap inspects a JSON byte slice and, if it contains a
+// pageInfoMap object, merges its per-page width/height into dst.
+// Quietly returns on any parse failure — this is best-effort scanning of
+// fields whose schema we don't authoritatively know.
+func mergePageInfoMap(dst map[string]pageDims, raw []byte) {
+	if !bytes.Contains(raw, []byte(`"pageInfoMap"`)) {
+		return
+	}
+	var probe struct {
+		PageInfoMap map[string]struct {
+			Width  float64 `json:"width"`
+			Height float64 `json:"height"`
+		} `json:"pageInfoMap"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return
+	}
+	for id, d := range probe.PageInfoMap {
+		if d.Width > 0 && d.Height > 0 {
+			dst[id] = pageDims{Width: d.Width, Height: d.Height}
+		}
+	}
 }
 
 // unwrapField1 checks if the data is a wrapper message containing a single field 1

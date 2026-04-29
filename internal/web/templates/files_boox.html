@@ -64,10 +64,17 @@
          hx-target="#main-content" hx-push-url="true"
          class="pill{{if not .booxFolderFilter}} active{{end}}">All</a>
       {{range .booxFolders}}
+      {{if .Folder}}
       <a href="/files/boox?folder={{.Folder | urlquery}}{{if $.booxDeviceFilter}}&device={{$.booxDeviceFilter | urlquery}}{{end}}"
          hx-get="/files/boox?folder={{.Folder | urlquery}}{{if $.booxDeviceFilter}}&device={{$.booxDeviceFilter | urlquery}}{{end}}"
          hx-target="#main-content" hx-push-url="true"
-         class="pill{{if eq $.booxFolderFilter .Folder}} active{{end}}">{{if .Folder}}{{.Folder}}{{else}}(unfiled){{end}} <span class="text-small">({{.Count}})</span></a>
+         class="pill{{if eq $.booxFolderFilter .Folder}} active{{end}}">{{.Folder}} <span class="text-small">({{.Count}})</span></a>
+      {{else}}
+      <a href="/files/boox?folder={{$.unfiledFolderSentinel | urlquery}}{{if $.booxDeviceFilter}}&device={{$.booxDeviceFilter | urlquery}}{{end}}"
+         hx-get="/files/boox?folder={{$.unfiledFolderSentinel | urlquery}}{{if $.booxDeviceFilter}}&device={{$.booxDeviceFilter | urlquery}}{{end}}"
+         hx-target="#main-content" hx-push-url="true"
+         class="pill{{if eq $.booxFolderFilter $.unfiledFolderSentinel}} active{{end}}">(unfiled) <span class="text-small">({{.Count}})</span></a>
+      {{end}}
       {{end}}
     </div>
     {{end}}
@@ -99,9 +106,19 @@
       </tbody>
     </table>
     </div>
-    <div id="bulk-delete-bar" class="toolbar" style="display:none; margin-top: 1rem; padding: 0.5rem; background: var(--bg-color); border-radius: var(--radius);">
+    <div id="bulk-delete-bar" class="toolbar" style="display:none; margin-top: 1rem; padding: 0.5rem; background: var(--bg-color); border-radius: var(--radius); flex-wrap: wrap; gap: 0.5rem;">
       <button type="submit" class="btn-small" style="background: var(--status-text-failed);"
         onclick="return confirm('Delete selected notes?')">✗ Delete Selected</button>
+      <span style="display:inline-flex; align-items:center; gap:0.25rem;">
+        <label for="bulk-move-folder" class="text-small">Move to:</label>
+        <select id="bulk-move-folder" class="text-small">
+          <option value="{{.unfiledFolderSentinel}}">(unfiled)</option>
+          {{range .booxFolders}}{{if .Folder}}
+          <option value="{{.Folder}}">{{.Folder}}</option>
+          {{end}}{{end}}
+        </select>
+        <button type="button" class="btn-small" onclick="bulkMoveBoox()">Move Selected</button>
+      </span>
       <span id="bulk-delete-count" class="text-small"></span>
     </div>
     </form>
@@ -125,7 +142,78 @@
     document.addEventListener('DOMContentLoaded', function() {
         if (typeof updateBulkDeleteBar === 'function') updateBulkDeleteBar();
         if (typeof updateProcessorStatus === 'function') updateProcessorStatus();
+        populateRowMoveSelects();
     });
+
+    // Clone the bulk-move folder options into each row's per-row Move picker.
+    // The row template fragment ships the select empty; populating client-side
+    // avoids threading the folder list through every row render path.
+    function populateRowMoveSelects() {
+        var tpl = document.getElementById('bulk-move-folder');
+        if (!tpl) return;
+        document.querySelectorAll('.row-move-folder').forEach(function(sel) {
+            if (!sel.options.length) sel.innerHTML = tpl.innerHTML;
+        });
+    }
+
+    function rowMoveOpen(rowId) {
+        populateRowMoveSelects();
+        var span = document.getElementById('rmp-' + rowId);
+        if (span) span.style.display = 'inline-flex';
+    }
+    function rowMoveCancel(rowId) {
+        var span = document.getElementById('rmp-' + rowId);
+        if (span) span.style.display = 'none';
+    }
+    // Use URLSearchParams (application/x-www-form-urlencoded) to match the
+    // server's r.ParseForm() expectation. FormData would post multipart,
+    // which r.ParseForm doesn't decode without ParseMultipartForm first.
+    function rowMoveSubmit(rowId) {
+        var span = document.getElementById('rmp-' + rowId);
+        if (!span) return;
+        var sel = span.querySelector('.row-move-folder');
+        var body = new URLSearchParams();
+        body.append('path', sel.dataset.path);
+        body.append('folder', sel.value);
+        fetch('/files/move', {
+            method: 'POST',
+            body: body,
+            headers: { 'HX-Request': 'true', 'Content-Type': 'application/x-www-form-urlencoded' },
+        })
+            .then(function(r) {
+                if (r.ok) {
+                    var tr = document.getElementById(rowId);
+                    if (tr) tr.remove();
+                } else {
+                    r.text().then(function(t) { alert('Move failed: ' + t); });
+                }
+            });
+    }
+
+    function bulkMoveBoox() {
+        var sel = document.getElementById('bulk-move-folder');
+        if (!sel) return;
+        var folder = sel.value;
+        var checked = document.querySelectorAll('.file-checkbox:checked');
+        if (!checked.length) return;
+        if (!confirm('Move ' + checked.length + ' note(s) to ' + (folder === '__unfiled__' ? '(unfiled)' : folder) + '?')) return;
+        var body = new URLSearchParams();
+        body.append('folder', folder);
+        checked.forEach(function(cb) { body.append('paths', cb.value); });
+        fetch('/files/move-bulk', {
+            method: 'POST',
+            body: body,
+            headers: { 'HX-Request': 'true', 'Content-Type': 'application/x-www-form-urlencoded' },
+        })
+            .then(function(r) {
+                if (r.ok) {
+                    checked.forEach(function(cb) { cb.closest('tr').remove(); });
+                    if (typeof updateBulkDeleteBar === 'function') updateBulkDeleteBar();
+                } else {
+                    r.text().then(function(t) { alert('Bulk move failed: ' + t); });
+                }
+            });
+    }
     {{if .detailPath}}
     // Stash the detail path in a window global. Two cases call it:
     //

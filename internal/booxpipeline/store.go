@@ -6,9 +6,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// filenameDatePrefixRE matches a YYYYMMDD prefix at the start of a filename.
+var filenameDatePrefixRE = regexp.MustCompile(`^(\d{4})(\d{2})(\d{2})`)
+
+// autoNamedNotebookRE matches Boox firmware-default filenames: "Notebook-"
+// followed by a digit. Excludes user-renamed files like "Notebook-please
+// transcribe me.note" (no leading digit after the dash).
+var autoNamedNotebookRE = regexp.MustCompile(`^Notebook-\d`)
 
 // Store manages Boox notes and jobs in SQLite.
 type Store struct {
@@ -358,6 +368,42 @@ func (s *Store) UpdateNotePath(ctx context.Context, oldPath, newPath string) err
 	return tx.Commit()
 }
 
+// MoveNote atomically updates a note's path (across boox_notes, boox_jobs,
+// note_content) AND its folder field. Used by the Boox Move-to-folder
+// operation. The caller is responsible for moving the underlying file +
+// .versions archive on disk before calling this; this method only updates
+// database state.
+func (s *Store) MoveNote(ctx context.Context, oldPath, newPath, newFolder string) error {
+	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("disable fk: %w", err)
+	}
+	defer s.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UnixMilli()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE boox_notes SET path = ?, folder = ?, updated_at = ? WHERE path = ?`,
+		newPath, newFolder, now, oldPath); err != nil {
+		return fmt.Errorf("update boox_notes: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE boox_jobs SET note_path = ? WHERE note_path = ?`,
+		newPath, oldPath); err != nil {
+		return fmt.Errorf("update boox_jobs: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE note_content SET note_path = ? WHERE note_path = ?`,
+		newPath, oldPath); err != nil {
+		return fmt.Errorf("update note_content: %w", err)
+	}
+	return tx.Commit()
+}
+
 // SkipNote marks a note's latest job as skipped with a reason.
 func (s *Store) SkipNote(ctx context.Context, path, reason string) error {
 	_, err := s.db.ExecContext(ctx, `
@@ -616,4 +662,99 @@ func (s *Store) GetVersions(ctx context.Context, path string) ([]BooxVersion, er
 		})
 	}
 	return versions, nil
+}
+
+// ReconcileCreatedAtFromFilename updates boox_notes.created_at to match the
+// YYYYMMDD prefix in the filename, for any rows where the parsed date doesn't
+// already match the stored created_at's UTC date. Returns the number of rows
+// updated. Rows whose basename has no date prefix are left alone.
+func (s *Store) ReconcileCreatedAtFromFilename(ctx context.Context) (int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT path, created_at FROM boox_notes`)
+	if err != nil {
+		return 0, fmt.Errorf("query boox_notes: %w", err)
+	}
+	defer rows.Close()
+
+	type update struct {
+		path     string
+		targetMs int64
+	}
+	var updates []update
+	for rows.Next() {
+		var path string
+		var createdAt int64
+		if err := rows.Scan(&path, &createdAt); err != nil {
+			return 0, fmt.Errorf("scan: %w", err)
+		}
+		base := filepath.Base(path)
+		m := filenameDatePrefixRE.FindStringSubmatch(base)
+		if m == nil {
+			continue
+		}
+		y, _ := strconv.Atoi(m[1])
+		mo, _ := strconv.Atoi(m[2])
+		d, _ := strconv.Atoi(m[3])
+		if y < 1970 || y > 2999 || mo < 1 || mo > 12 || d < 1 || d > 31 {
+			continue
+		}
+		target := time.Date(y, time.Month(mo), d, 0, 0, 0, 0, time.UTC)
+		if createdAt > 0 {
+			cur := time.UnixMilli(createdAt).UTC()
+			if cur.Year() == target.Year() && cur.Month() == target.Month() && cur.Day() == target.Day() {
+				continue
+			}
+		}
+		updates = append(updates, update{path: path, targetMs: target.UnixMilli()})
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("rows: %w", err)
+	}
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	now := time.Now().UnixMilli()
+	var count int64
+	for _, u := range updates {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE boox_notes SET created_at = ?, updated_at = ? WHERE path = ?`,
+			u.targetMs, now, u.path)
+		if err != nil {
+			return 0, fmt.Errorf("update %s: %w", u.path, err)
+		}
+		n, _ := res.RowsAffected()
+		count += n
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+	return count, nil
+}
+
+// ListAutoNamedNotebooks returns rows whose basename matches the Boox firmware
+// auto-naming pattern ("Notebook-" followed by a digit). Only path and note_id
+// are populated.
+func (s *Store) ListAutoNamedNotebooks(ctx context.Context) ([]BooxNote, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT path, note_id FROM boox_notes WHERE path LIKE '%/Notebook-%'`)
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+	var out []BooxNote
+	for rows.Next() {
+		var bn BooxNote
+		if err := rows.Scan(&bn.Path, &bn.NoteID); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		if autoNamedNotebookRE.MatchString(filepath.Base(bn.Path)) {
+			out = append(out, bn)
+		}
+	}
+	return out, rows.Err()
 }

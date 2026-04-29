@@ -324,6 +324,41 @@
     {{end}}
   </div>
 
+  <div class="card{{if not .BooxActive}} settings-inactive{{end}}">
+    <h2>Boox Database Maintenance</h2>
+    {{if not .BooxActive}}
+      <p class="text-small">Add a Boox source in Settings to enable maintenance tools.</p>
+    {{else}}
+      <div class="form-group">
+        <p class="device-info" style="margin-bottom: 0.5rem;">Walk the Boox notes directory and enqueue any <code>.note</code> or <code>.pdf</code> files that aren't tracked in <code>boox_notes</code>. Recovers files that landed on disk via something other than the WebDAV upload hook (rsync, manual copy, pre-fix uploads). Already-tracked files are left alone.</p>
+        <form hx-post="/maintenance/boox/scan-untracked" hx-target="#boox-maint-status" hx-swap="innerHTML">
+          <button type="submit" class="btn-small">Scan disk and enqueue untracked files</button>
+        </form>
+      </div>
+
+      <hr>
+
+      <div class="form-group">
+        <p class="device-info" style="margin-bottom: 0.5rem;">Update <code>boox_notes.created_at</code> to match the <code>YYYYMMDD</code> prefix in filenames where the stored date doesn't match. Files without a date prefix are left alone.</p>
+        <form hx-post="/maintenance/boox/reconcile-dates" hx-target="#boox-maint-status" hx-swap="innerHTML">
+          <button type="submit" class="btn-small">Reconcile created_at with filename dates</button>
+        </form>
+      </div>
+
+      <hr>
+
+      <div class="form-group">
+        <p class="device-info" style="margin-bottom: 0.5rem;">Permanently delete files whose name matches <code>Notebook-</code> followed by a digit (Boox firmware default-named files, e.g. <code>Notebook-1.note</code>, <code>Notebook-12-46_03.note</code>). Removes the <code>boox_notes</code> row, the <code>.note</code> file, the <code>.versions</code> archive, and the rendered cache. Files like <code>Notebook-please transcribe me.note</code> are excluded.</p>
+        <form hx-post="/maintenance/boox/delete-untitled" hx-target="#boox-maint-status" hx-swap="innerHTML"
+              hx-confirm="Permanently delete all auto-named Notebook-N files? This removes both DB rows AND files on disk.">
+          <button type="submit" class="btn-small" style="background: var(--brand-hover);">Delete auto-named Notebook files</button>
+        </form>
+      </div>
+
+      <div id="boox-maint-status" style="margin-top: 1rem;"></div>
+    {{end}}
+  </div>
+
   {{if .MCPEnabled}}
   <div class="card" id="mcp-connection">
     <h2>MCP Connection</h2>
