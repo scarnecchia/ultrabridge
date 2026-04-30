@@ -8,24 +8,17 @@ doc can be triaged as a punch list.
 
 ## Pre-existing, unrelated to HTMX branch
 
-### 1. `TestSyncEngine_RemoteHardDelete` failing in `internal/tasksync/`
-- **Source:** Phase 2 reviewer; reconfirmed by Phase 3, 5, 6, and final reviewers at branch base `ab9099b`. Also reconfirmed 2026-04-14 during Files-tab-split work at `87113a1`.
-- **Priority:** Investigate immediately after the current release ships. Real user-visible bug if the engine code is the source: "I deleted a task on my device and it came back" on the next sync cycle.
-- **Severity:** Unknown — failure at `engine_test.go:606` on `is_deleted="N"`. Test expects `store.List` to return 0 active tasks after a remote hard-delete (empty Pull); gets 1.
-- **Hypothesis for investigation (not verified):** commit `f954022` ("skip hard-delete detection for tasks never seen in Pull") may have over-broadened the predicate so that legitimate deletions are also suppressed. Suggested first step: `git revert f954022` locally, re-run the test. If it passes, narrow the condition; if it still fails, look at whether `sync_map.LastPulled` is being advanced on the intermediate sync.
-- **Fix shape:** Investigate whether the test expectation or the engine code is wrong. Either fix the regression in the sync engine or repair the test.
+### 1. ~~`TestSyncEngine_RemoteHardDelete` failing in `internal/tasksync/`~~ (FIXED 2026-04-28, commit `70184dd`)
+- **Resolution:** Test was correct; engine had a real bug. `processRemoteTask` returned early on unchanged-ETag remote tasks without bumping `sync_map.LastPulled`, so any task we pushed-then-pulled-back-unchanged stayed at `LastPulled=0`. The hard-delete loop in `reconcile` explicitly skips entries with `LastPulled==0`, which meant remote hard-deletes for those tasks were silently suppressed forever. Fix bumps `LastPulled` to "now" whenever the task is observed in a Pull, regardless of ETag match, restoring the invariant the hard-delete detector assumes.
+- **User-visible impact before fix:** "I deleted a task on my device and it came back" — exactly the failure mode the original report predicted.
 
 ## Documentation drift from the prior decoupled-architecture refactor
 
-### 2. `internal/service/` has no domain CLAUDE.md
-- **Source:** Librarian pass during HTMX branch.
-- **Severity:** Medium — entire service layer (`TaskService`, `NoteService`, `SearchService`, `ConfigService`) has no domain docs. The HTMX branch's `Get`/`GetFile` additions made the gap slightly more visible.
-- **Fix shape:** Create `internal/service/CLAUDE.md` documenting the four interfaces, their concrete implementations, the Store interfaces (`TaskStore`, `BooxStore`, etc.), and testing conventions.
+### 2. ~~`internal/service/` has no domain CLAUDE.md~~ (FIXED 2026-04-28)
+- **Resolution:** Wrote `internal/service/CLAUDE.md` (90 lines) covering the four service interfaces, the Store/pipeline interfaces they depend on, key decisions (`interface{}` cross-domain returns, `TaskPatch` semantics), and current invariants. Includes a gotcha pointing at follow-up #17 (Supernote-side RetryFailed gap).
 
-### 3. Root `CLAUDE.md` Project Structure omits `internal/service/`
-- **Source:** Librarian pass.
-- **Severity:** Low — paired with item 2.
-- **Fix shape:** Add a one-line entry under "Core Components" or a new "Service Layer" section. Land in the same PR as item 2.
+### 3. ~~Root `CLAUDE.md` Project Structure omits `internal/service/`~~ (FIXED 2026-04-28)
+- **Resolution:** Added a new "Service Layer" section to the Project Structure listing, between "RAG & Chat" and "Web UI & API". Bumped the file's "Last verified" date to 2026-04-28.
 
 ### 4. ~~`internal/web/CLAUDE.md` handler-signature section is stale~~ (FIXED 2026-04-14)
 - **Resolution:** Rewritten during Files-tab split cleanup (step 5). The Handler contract section now matches `NewHandler` in `internal/web/handler.go`: 9 args (tasks, notes, search, config, noteDB, notesPathPrefix, booxNotesPath, logger, broadcaster). Items 2 and 3 (service/ domain CLAUDE.md and root Project Structure mention) remain open.
@@ -145,29 +138,25 @@ doc can be triaged as a punch list.
 
 ---
 
-### 18. Legacy-import rows with `device_model=".."` in boox_notes
-- **Source:** 2026-04-14 investigation while wiring the Boox device
-  filter. Surfaced by `SELECT device_model, folder, COUNT(*)
-  FROM boox_notes GROUP BY device_model, folder`.
-- **Severity:** Low — the content is indexed and searchable; only the
-  per-device attribution is garbage.
-- **Scope:** 60 rows (observed on the production DB), all under
-  `/mnt/supernote/boox-notes/<Device>/...` paths. The `device_model`
-  column reads literally `..` and the real device name lives in the
-  `folder` column (e.g. `device_model=..`, `folder=Go103`).
-- **Likely cause:** A legacy import run where the configured import
-  path didn't share a prefix with the files being walked, so
-  `filepath.Rel` returned a `..`-prefixed relative path and
-  `ExtractImportMetadata` / `ExtractPathMetadata` populated the
-  fields from the wrong segments. The device filter (step 18.1) hides
-  these rows from the pill UI via a `WHERE device_model != '..'`
-  clause, but the rows themselves remain.
-- **Fix shape:** one-shot migration that walks `boox_notes.path` for
-  rows with `device_model='..'`, re-runs path metadata extraction
-  against the current notes path, and UPDATEs in place. If the path
-  prefix still doesn't match, fall back to heuristic: split the path
-  on notesPath, take the first segment as device_model, second as
-  note_type, third as folder.
+### 18. ~~Legacy-import rows with `device_model=".."` in boox_notes~~ (FIXED 2026-04-28)
+- **Resolution:** All 60 affected rows shared the flat path shape
+  `/mnt/supernote/boox-notes/<Device>/Notebooks/<file>` with no
+  user folder, and the bad extractor had stuffed the actual device
+  name into `folder` while leaving `device_model='..'` and
+  `note_type='onyx'`. One-shot SQL migration (run against the
+  production DB after a backup):
+  ```sql
+  UPDATE boox_notes
+  SET device_model = folder,
+      note_type    = 'Notebooks',
+      folder       = ''
+  WHERE device_model = '..';
+  ```
+  Verified afterward: 0 rows remaining with `device_model='..'`;
+  60 rows redistributed across the legitimate device labels
+  (NoteMax +48, Go7 +9, plus single-row touch-ups to Go103,
+  NoteAir5C, NoteAir4C). The code path that produced this was
+  already corrected; only the legacy data needed cleanup.
 
 ### 17. "Retry Failed" has no Supernote-side implementation
 - **Source:** 2026-04-14 during Files-tab split (step 4). Surfaced

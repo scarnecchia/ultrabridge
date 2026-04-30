@@ -75,6 +75,9 @@ type Config struct {
 	WebEnabled  bool
 	SocketIOURL string
 
+	// MCP
+	MCPPort int // 0 hides the Settings "MCP Connection" helper card
+
 	// MariaDB / SPC connection
 	DBHost    string
 	DBPort    string
@@ -161,6 +164,7 @@ func loadConfigFromDB(ctx context.Context, db *sql.DB, applyEnv bool) (*Config, 
 		DBPort:               dbVals[KeyDBPort],
 		DBEnvPath:            dbVals[KeyDBEnvPath],
 		UserID:               parseInt64(dbVals[KeyUserID]),
+		MCPPort:              parseIntWithDefault(dbVals[KeyMCPPort], 8081),
 	}
 
 	return cfg, nil
@@ -287,6 +291,7 @@ func configToMap(cfg *Config) map[string]string {
 		KeyDBPort:    cfg.DBPort,
 		KeyDBEnvPath: cfg.DBEnvPath,
 		KeyUserID:    strconv.FormatInt(cfg.UserID, 10),
+		KeyMCPPort:   strconv.Itoa(cfg.MCPPort),
 	}
 	return m
 }

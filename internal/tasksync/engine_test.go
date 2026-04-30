@@ -3,8 +3,10 @@ package tasksync
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +44,7 @@ type mockAdapter struct {
 	id        string
 	tasks     map[string]RemoteTask
 	startCnt  int
+	startErrs []error // returned from Start by index; nil/out-of-range means success
 	stopCnt   int
 	pulls     []mockPull
 	pushes    [][]Change
@@ -65,7 +68,11 @@ func newMockAdapter(id string) *mockAdapter {
 func (m *mockAdapter) ID() string { return m.id }
 
 func (m *mockAdapter) Start(ctx context.Context) error {
+	idx := m.startCnt
 	m.startCnt++
+	if idx < len(m.startErrs) {
+		return m.startErrs[idx]
+	}
 	return nil
 }
 
@@ -656,6 +663,64 @@ func TestSyncEngine_StatusReporting(t *testing.T) {
 	}
 	if status.LastError != "" {
 		t.Errorf("LastError should be empty on success: %s", status.LastError)
+	}
+}
+
+// TestSyncEngine_AdapterStartRetry verifies that when adapter.Start() fails
+// at engine-start time (e.g. cold-start race against a remote service), the
+// engine still launches its run loop, surfaces the failure via LastError,
+// and retries adapter.Start() on the next cycle — succeeding once the
+// remote becomes reachable.
+func TestSyncEngine_AdapterStartRetry(t *testing.T) {
+	db := openTestDB(t)
+	store := taskdb.NewStore(db)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	engine := NewSyncEngine(store, db, logger, 1*time.Hour)
+
+	adapter := newMockAdapter("retry-adapter")
+	adapter.startErrs = []error{errors.New("dial tcp: lookup remote: no such host")}
+	adapter.setInitialTasks([]RemoteTask{{
+		RemoteID: "remote-1",
+		Title:    "After retry",
+		Status:   "needsAction",
+		ETag:     "e1",
+	}})
+	engine.RegisterAdapter(adapter)
+
+	ctx := context.Background()
+	if err := engine.Start(ctx); err != nil {
+		t.Fatalf("engine Start should not surface adapter start failure: %v", err)
+	}
+	defer engine.Stop()
+
+	// First Start() attempt consumed the seeded error; LastError reflects it.
+	if status := engine.Status(); !strings.Contains(status.LastError, "adapter start") {
+		t.Errorf("expected LastError to mention adapter start failure, got %q", status.LastError)
+	}
+	if adapter.startCnt != 1 {
+		t.Errorf("expected 1 Start call before retry, got %d", adapter.startCnt)
+	}
+
+	// Next cycle should retry Start (which now succeeds) and then reconcile.
+	beforeTs := engine.Status().LastSyncAt
+	engine.TriggerSync()
+	waitForSync(t, engine, beforeTs)
+
+	if adapter.startCnt != 2 {
+		t.Errorf("expected Start to be retried (2 total calls), got %d", adapter.startCnt)
+	}
+	status := engine.Status()
+	if status.LastError != "" {
+		t.Errorf("LastError should be cleared after successful cycle, got %q", status.LastError)
+	}
+
+	// Verify reconcile actually ran by checking the task imported.
+	tasks, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(tasks) != 1 || taskstore.NullStr(tasks[0].Title) != "After retry" {
+		t.Errorf("expected imported task after retry, got %v", tasks)
 	}
 }
 

@@ -179,6 +179,15 @@ type NoteService interface {
 	// Import (Boox specific)
 	ImportFiles(ctx context.Context) error
 	MigrateImports(ctx context.Context) error
+
+	// Maintenance (Boox specific)
+	ReconcileBooxCreatedAt(ctx context.Context) (int64, error)
+	DeleteAutoNamedNotebooks(ctx context.Context) (rows, files, versions int64, err error)
+	ScanAndEnqueueUntracked(ctx context.Context) (scanned, enqueued int, err error)
+
+	// Move (Boox specific)
+	MoveBooxNote(ctx context.Context, path, destFolder string) error
+	BulkMoveBooxNotes(ctx context.Context, paths []string, destFolder string) (moved, failed int, err error)
 }
 
 // SearchResult represents a single search match.

@@ -7,15 +7,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_PORT="8443"
+DEFAULT_MCP_PORT="8081"
 DEFAULT_USERNAME="admin"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<EOF
 Usage: install.sh [OPTIONS]
 
-Minimal installer for UltraBridge. Prompts for port, username, and password,
-then starts the container. All other configuration is done via the Settings UI
-on first boot.
+Minimal installer for UltraBridge. Prompts for ports, username, and password,
+then starts the ultrabridge and ub-mcp containers. All other configuration is
+done via the Settings UI on first boot.
 
 Safe to re-run: overwrites generated config files each time.
 
@@ -25,7 +26,8 @@ Options:
   --nuke          Delete ALL UltraBridge data before installing
                   (removes entire ultrabridge-data/ directory)
   -y, --unattended  Non-interactive mode. Reads port, username, password from
-                    environment variables: UB_PORT, UB_USERNAME, UB_PASSWORD
+                    environment variables: UB_PORT, UB_MCP_PORT, UB_USERNAME,
+                    UB_PASSWORD
   -h, --help      Show this help message
 
 Prerequisites:
@@ -128,8 +130,8 @@ echo
 
 DATA_DIR="./ultrabridge-data"
 if [[ "$NUKE_INSTALL" == true ]] || [[ "$FRESH_INSTALL" == true ]]; then
-    # Stop container if running
-    docker stop ultrabridge 2>/dev/null || true
+    # Stop containers if running
+    docker stop ultrabridge ub-mcp 2>/dev/null || true
     if [[ "$NUKE_INSTALL" == true ]]; then
         warn "NUKE: deleting ALL UltraBridge data"
         rm -rf "$DATA_DIR"
@@ -153,17 +155,19 @@ echo
 
 prompt UB_USERNAME "Username" "${UB_USERNAME:-$DEFAULT_USERNAME}"
 prompt_password UB_PASSWORD "Password"
-prompt UB_PORT "Port to expose on host" "${UB_PORT:-$DEFAULT_PORT}"
+prompt UB_PORT "UltraBridge port to expose on host" "${UB_PORT:-$DEFAULT_PORT}"
+prompt UB_MCP_PORT "MCP server port to expose on host" "${UB_MCP_PORT:-$DEFAULT_MCP_PORT}"
 
 echo
 
 # --- build image ---
 
-info "Building UltraBridge Docker image..."
+info "Building UltraBridge Docker images..."
 
-docker build -t ultrabridge:latest "$SCRIPT_DIR" || fail "Docker build failed"
+docker build --target ultrabridge -t ultrabridge:latest "$SCRIPT_DIR" || fail "ultrabridge image build failed"
+docker build --target ub-mcp -t ub-mcp:latest "$SCRIPT_DIR" || fail "ub-mcp image build failed"
 
-ok "Image built"
+ok "Images built"
 
 # --- generate docker-compose.yml ---
 
@@ -210,6 +214,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: ultrabridge
     container_name: ultrabridge
     ports:
       - "${UB_PORT}:8443"
@@ -217,8 +222,29 @@ services:
       - UB_DB_PATH=/data/ultrabridge.db
       - UB_LISTEN_ADDR=:8443
       - UB_TASK_DB_PATH=/data/ultrabridge-tasks.db
+      - UB_MCP_PORT=${UB_MCP_PORT}
     volumes:
 $VOLUMES_BLOCK$JOIN_NETWORKS
+    restart: unless-stopped
+  ub-mcp:
+    image: ub-mcp:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ub-mcp
+    container_name: ub-mcp
+    ports:
+      - "${UB_MCP_PORT}:8081"
+    environment:
+      - UB_MCP_API_URL=http://ultrabridge:8443
+      - UB_MCP_API_USER=${UB_USERNAME}
+      - UB_MCP_API_PASS=${UB_PASSWORD}
+      - UB_DB_PATH=/data/ultrabridge.db
+    volumes:
+      - ./ultrabridge-data:/data
+    depends_on:
+      - ultrabridge
+    command: ["--http", ":8081"]
     restart: unless-stopped$NETWORKS_BLOCK
 EOF
 
@@ -230,10 +256,10 @@ echo
 
 info "Starting UltraBridge..."
 
-# Remove any existing container with this name (from prior install or manual docker run)
-docker rm -f ultrabridge 2>/dev/null || true
+# Remove any existing containers with these names (from prior install or manual docker run)
+docker rm -f ultrabridge ub-mcp 2>/dev/null || true
 
-docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --force-recreate ultrabridge || fail "Failed to start container"
+docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --force-recreate || fail "Failed to start containers"
 
 # --- verify ---
 
@@ -286,6 +312,15 @@ echo "  Password: (the one you just entered)"
 echo
 echo "  Complete configuration in the Settings UI."
 echo
+info "MCP server is running!"
+echo
+echo "  HTTP SSE:         http://localhost:${UB_MCP_PORT}/sse"
+echo "  Stdio command:    docker exec -i ub-mcp ub-mcp"
+echo
+echo "  Create a bearer token in the Settings UI under \"MCP Tokens\" before"
+echo "  connecting clients. Settings also displays copy-pasteable client"
+echo "  configs for Claude Desktop, Gemini CLI, and similar."
+echo
 echo "  To reconfigure, just run this script again."
-echo "  To view logs: docker logs -f ultrabridge"
+echo "  To view logs: docker logs -f ultrabridge  (or ub-mcp)"
 echo

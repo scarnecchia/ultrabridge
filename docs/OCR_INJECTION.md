@@ -1,5 +1,25 @@
 # Standalone OCR Injection with sninject
 
+> **Status as of 2026-04-28: in-pipeline RECOGNTEXT injection is experimental and not currently confirmed working on-device.**
+>
+> The JIIX-compatible injection that UB writes back into `.note` files
+> after OCR (RTR notes only — see "RTR gate" below) is built and
+> merged, but on-device acceptance hasn't been verified — the injected
+> text doesn't yet appear in the device UI as searchable content the
+> way the device's own MyScript-derived text does. We're in touch with
+> Ratta about this; resolution timeline is open-ended.
+>
+> What still works regardless of this:
+> - OCR runs on every note (Standard and RTR alike)
+> - Extracted text is indexed in UltraBridge's FTS5 full-text search
+> - RAG / chat / MCP search all surface the OCR'd text
+> - The standalone `sninject` tool below works for one-off files (it
+>   uses the same code path; same caveat about device display)
+>
+> Practical guidance: treat UltraBridge as the search-and-retrieval
+> layer for your notes. Do **not** rely on injected text appearing in
+> the device's own search UI yet.
+
 UltraBridge's Supernote OCR pipeline runs automatically when notes
 change on the device. If you need to process a `.note` file outside
 the pipeline — to debug a specific injection, test OCR quality on a

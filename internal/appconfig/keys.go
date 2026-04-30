@@ -51,6 +51,12 @@ const (
 	KeyWebEnabled  = "web_enabled"
 	KeySocketIOURL = "socketio_url"
 
+	// MCP
+	// KeyMCPPort is the host-exposed port of the sibling ub-mcp container.
+	// Used by the Settings UI to render copy-pasteable client configs
+	// (HTTP SSE URL, stdio docker exec command). 0 hides the helper card.
+	KeyMCPPort = "mcp_port"
+
 	// MariaDB / SPC connection
 	KeyDBHost    = "db_host"
 	KeyDBPort    = "db_port"
@@ -117,6 +123,7 @@ var envVarForKey = map[string]string{
 	KeyDBPort:               "UB_DB_PORT",
 	KeyDBEnvPath:            "UB_SUPERNOTE_DBENV_PATH",
 	KeyUserID:               "UB_USER_ID",
+	KeyMCPPort:              "UB_MCP_PORT",
 }
 
 // defaultValues provides the default for each setting key when neither DB nor env var is set.
@@ -143,6 +150,7 @@ var defaultValues = map[string]string{
 	KeyDBHost:                "mariadb",
 	KeyDBPort:                "3306",
 	KeyDBEnvPath:             "/run/secrets/dbenv",
+	KeyMCPPort:               "8081",
 }
 
 // restartRequired is the set of keys whose changes require a restart to take effect.

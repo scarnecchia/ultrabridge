@@ -29,12 +29,13 @@ type SyncEngine struct {
 	logger   *slog.Logger
 	interval time.Duration
 
-	mu        sync.Mutex
-	adapter   DeviceAdapter
-	cancel    context.CancelFunc
-	done      chan struct{}
-	trigger   chan struct{}
-	status    SyncStatus
+	mu             sync.Mutex
+	adapter        DeviceAdapter
+	adapterStarted bool
+	cancel         context.CancelFunc
+	done           chan struct{}
+	trigger        chan struct{}
+	status         SyncStatus
 }
 
 // NewSyncEngine creates a sync engine.
@@ -69,6 +70,11 @@ func (e *SyncEngine) UnregisterAdapter() {
 }
 
 // Start begins the background sync loop. Follows processor pattern.
+//
+// adapter.Start() failure is non-fatal: the run loop still launches and
+// retries adapter init at the top of each cycle. This keeps the engine
+// resilient to cold-start races where the remote endpoint (e.g. SPC over
+// Docker DNS) isn't reachable at the exact moment the binary boots.
 func (e *SyncEngine) Start(ctx context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -79,7 +85,10 @@ func (e *SyncEngine) Start(ctx context.Context) error {
 		return fmt.Errorf("no adapter registered")
 	}
 	if err := e.adapter.Start(ctx); err != nil {
-		return fmt.Errorf("adapter start: %w", err)
+		e.logger.Warn("adapter start failed, will retry in sync loop", "adapter", e.adapter.ID(), "error", err)
+		e.status.LastError = fmt.Sprintf("adapter start: %s", err)
+	} else {
+		e.adapterStarted = true
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	e.cancel = cancel
@@ -143,6 +152,7 @@ func (e *SyncEngine) run(ctx context.Context) {
 func (e *SyncEngine) runCycle(ctx context.Context) {
 	e.mu.Lock()
 	adapter := e.adapter
+	started := e.adapterStarted
 	e.status.InProgress = true
 	e.mu.Unlock()
 
@@ -154,6 +164,20 @@ func (e *SyncEngine) runCycle(ctx context.Context) {
 
 	if adapter == nil {
 		return
+	}
+
+	if !started {
+		if err := adapter.Start(ctx); err != nil {
+			e.mu.Lock()
+			e.status.LastError = fmt.Sprintf("adapter start: %s", err)
+			e.mu.Unlock()
+			e.logger.Warn("adapter start retry failed", "adapter", adapter.ID(), "error", err)
+			return
+		}
+		e.mu.Lock()
+		e.adapterStarted = true
+		e.mu.Unlock()
+		e.logger.Info("adapter started on retry", "adapter", adapter.ID())
 	}
 
 	err := e.reconcile(ctx, adapter)
@@ -309,7 +333,18 @@ func (e *SyncEngine) processRemoteTask(ctx context.Context, adapterID string, rt
 
 	// Existing task — check if remote changed
 	if entry.RemoteETag == rt.ETag {
-		return nil // No remote change
+		// Remote unchanged, but seeing it in Pull is proof of life:
+		// bump LastPulled so the next cycle's hard-delete detector
+		// doesn't ignore this entry as "never pulled".
+		now := time.Now().UnixMilli()
+		return e.syncMap.Upsert(ctx, &SyncMapEntry{
+			TaskID:     entry.TaskID,
+			AdapterID:  adapterID,
+			RemoteID:   rt.RemoteID,
+			RemoteETag: rt.ETag,
+			LastPushed: entry.LastPushed,
+			LastPulled: now,
+		})
 	}
 
 	// Remote changed — check if local also changed (conflict)

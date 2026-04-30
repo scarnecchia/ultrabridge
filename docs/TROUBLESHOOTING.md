@@ -150,3 +150,36 @@ curl http://your-vllm-host:8000/v1/models
 
 Match the model ID returned there with **Settings > Chat > Chat
 Model**.
+
+### vLLM dies with CUDA OOM and doesn't auto-restart
+
+Symptom: vLLM serves fine for hours or days, then OCR jobs and chat
+both start failing with `connect: connection refused` to the vLLM
+host. `journalctl -u vllm.service` shows
+`torch.OutOfMemoryError: CUDA out of memory` deep inside the model
+forward pass (often `qwen3_vl.visual`), preceded by a sustained
+stream of normal `POST /v1/chat/completions` lines.
+
+This is usually allocator fragmentation under steady multimodal
+traffic, not a single oversized request. The OOM message will note
+hundreds of MiB "reserved but unallocated" alongside ~95% of the
+card allocated — the GPU has free memory but no contiguous slab
+large enough for the next image tensor.
+
+Two mitigations on the vLLM host's systemd unit:
+
+```ini
+[Service]
+Environment="PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+Restart=always
+RestartSec=10
+```
+
+- `expandable_segments=True` lets the CUDA allocator grow existing
+  segments instead of refusing fragmented free space.
+- `Restart=always` (rather than `on-failure`) catches the case
+  where vLLM's API server gracefully shuts down after the engine
+  process dies. systemd sees `exit 0` and `on-failure` will not
+  restart the service.
+
+After editing: `sudo systemctl daemon-reload && sudo systemctl restart vllm.service`.

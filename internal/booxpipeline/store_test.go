@@ -654,3 +654,149 @@ func TestReclaimStuckJobs(t *testing.T) {
 		t.Errorf("status = %q, want pending", status)
 	}
 }
+
+// TestHasDoneJobWithHash verifies the dedup check used by the worker to
+// short-circuit re-uploads of unchanged Boox notes.
+func TestHasDoneJobWithHash(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	notePath := "/tmp/dedup.note"
+	hash := "abc123"
+
+	// Empty hash always returns false.
+	if got, _ := s.HasDoneJobWithHash(ctx, notePath, ""); got {
+		t.Error("empty hash should return false")
+	}
+
+	// No row yet — should be false.
+	if got, _ := s.HasDoneJobWithHash(ctx, notePath, hash); got {
+		t.Error("missing row should return false")
+	}
+
+	// Row exists with matching hash but only a pending job — should be false.
+	if err := s.UpsertNote(ctx, notePath, "nid", "Title", "dev", "Notebooks", "f", 1, hash, 0); err != nil {
+		t.Fatalf("UpsertNote: %v", err)
+	}
+	if err := s.EnqueueJob(ctx, notePath); err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	if got, _ := s.HasDoneJobWithHash(ctx, notePath, hash); got {
+		t.Error("pending job should not count as done")
+	}
+
+	// Mark job done — should now return true.
+	job, _ := s.ClaimNextJob(ctx)
+	if err := s.CompleteJob(ctx, job.ID, "api", "test-model"); err != nil {
+		t.Fatalf("CompleteJob: %v", err)
+	}
+	if got, _ := s.HasDoneJobWithHash(ctx, notePath, hash); !got {
+		t.Error("done job with matching hash should return true")
+	}
+
+	// Different hash should not match.
+	if got, _ := s.HasDoneJobWithHash(ctx, notePath, "different"); got {
+		t.Error("non-matching hash should return false")
+	}
+}
+
+func TestReconcileCreatedAtFromFilename(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	// Helper to convert YYYY-MM-DD to ms since epoch (UTC midnight).
+	dayMs := func(y int, m time.Month, d int) int64 {
+		return time.Date(y, m, d, 0, 0, 0, 0, time.UTC).UnixMilli()
+	}
+
+	cases := []struct {
+		path         string
+		storedCreate int64
+		wantCreate   int64
+		wantUpdated  bool
+	}{
+		// YYYYMMDD prefix matches stored date — no update.
+		{"/notes/20260406 RFP.note", dayMs(2026, 4, 6) + 12345, dayMs(2026, 4, 6) + 12345, false},
+		// YYYYMMDD prefix differs — update.
+		{"/notes/20260405 Other.note", dayMs(2026, 4, 6), dayMs(2026, 4, 5), true},
+		// 12-digit prefix YYYYMMDDHHMM — only first 8 used.
+		{"/notes/202409231002 Long.pdf", dayMs(2026, 4, 7), dayMs(2024, 9, 23), true},
+		// No date prefix — left alone.
+		{"/notes/Notebook-1.note", dayMs(2026, 4, 18), dayMs(2026, 4, 18), false},
+		// Garbage prefix (zeros) — rejected, left alone.
+		{"/notes/00000000 weird.note", dayMs(2026, 4, 18), dayMs(2026, 4, 18), false},
+	}
+
+	for _, c := range cases {
+		if err := s.UpsertNote(ctx, c.path, "id-"+c.path, "title", "device", "type", "folder", 1, "hash", c.storedCreate); err != nil {
+			t.Fatalf("UpsertNote %s: %v", c.path, err)
+		}
+	}
+
+	n, err := s.ReconcileCreatedAtFromFilename(ctx)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	wantUpdates := int64(0)
+	for _, c := range cases {
+		if c.wantUpdated {
+			wantUpdates++
+		}
+	}
+	if n != wantUpdates {
+		t.Errorf("Reconcile returned %d, want %d", n, wantUpdates)
+	}
+
+	for _, c := range cases {
+		var got int64
+		if err := s.db.QueryRowContext(ctx, "SELECT created_at FROM boox_notes WHERE path = ?", c.path).Scan(&got); err != nil {
+			t.Fatalf("query %s: %v", c.path, err)
+		}
+		// For unchanged rows, expect storedCreate; for updated rows, expect wantCreate (midnight UTC).
+		want := c.storedCreate
+		if c.wantUpdated {
+			want = c.wantCreate
+		}
+		if got != want {
+			t.Errorf("%s: created_at = %d, want %d", c.path, got, want)
+		}
+	}
+}
+
+func TestListAutoNamedNotebooks(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	// Mix of auto-named (Notebook-<digit>...) and user-named files.
+	paths := []struct {
+		path string
+		auto bool
+	}{
+		{"/notes/Notebook-1.note", true},
+		{"/notes/Notebook-12.note", true},
+		{"/notes/Notebook-12-46_03.note", true},
+		{"/notes/Notebook-1pen.note", true},
+		{"/notes/Notebook-please transcribe me.note", false},
+		{"/notes/Notebook-Personal.note", false},
+		{"/notes/20260406 RFP.note", false},
+		{"/notes/sub/Notebook-3.note", true},
+	}
+	for _, p := range paths {
+		if err := s.UpsertNote(ctx, p.path, "id-"+p.path, "t", "d", "t", "f", 1, "h", 0); err != nil {
+			t.Fatalf("UpsertNote: %v", err)
+		}
+	}
+
+	got, err := s.ListAutoNamedNotebooks(ctx)
+	if err != nil {
+		t.Fatalf("ListAutoNamedNotebooks: %v", err)
+	}
+	gotPaths := map[string]bool{}
+	for _, n := range got {
+		gotPaths[n.Path] = true
+	}
+	for _, p := range paths {
+		if got, want := gotPaths[p.path], p.auto; got != want {
+			t.Errorf("path %s: auto-named = %v, want %v", p.path, got, want)
+		}
+	}
+}

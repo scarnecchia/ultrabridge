@@ -32,8 +32,14 @@
       {{else if ne .JobStatus "in_progress"}}
         <button type="button" hx-post="/files/skip?path={{.Path | urlquery}}" hx-target="closest tr" hx-swap="outerHTML" class="btn-small">Skip</button>
       {{end}}
+      <button type="button" class="btn-small" onclick="rowMoveOpen('{{ fileRowID .Path }}')">Move…</button>
       <button type="button" class="btn-small" onclick="showHistory('{{.Path}}')">Details</button>
     </div>
+    <span class="row-move-picker" id="rmp-{{ fileRowID .Path }}" style="display:none; margin-left:0.5rem;">
+      <select class="row-move-folder" data-path="{{.Path}}"></select>
+      <button type="button" class="btn-small" onclick="rowMoveSubmit('{{ fileRowID .Path }}')">Go</button>
+      <button type="button" class="btn-small" onclick="rowMoveCancel('{{ fileRowID .Path }}')" style="background: var(--text-secondary);">Cancel</button>
+    </span>
   </td>
 </tr>
 {{end}}

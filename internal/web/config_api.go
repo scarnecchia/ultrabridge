@@ -46,6 +46,7 @@ type RedactedConfig struct {
 	DBPort                string `json:"db_port"`
 	DBEnvPath             string `json:"db_env_path"`
 	UserID                int64  `json:"user_id"`
+	MCPPort               int    `json:"mcp_port"`
 }
 
 // redactConfig returns a copy of cfg with secrets replaced with "[set]" or "[not set]".
@@ -89,6 +90,7 @@ func redactConfig(cfg *appconfig.Config) *RedactedConfig {
 		DBPort:      cfg.DBPort,
 		DBEnvPath:   cfg.DBEnvPath,
 		UserID:      cfg.UserID,
+		MCPPort:     cfg.MCPPort,
 	}
 }
 
@@ -138,6 +140,7 @@ type IncomingConfig struct {
 	DBPort                string `json:"db_port"`
 	DBEnvPath             string `json:"db_env_path"`
 	UserID                int64  `json:"user_id"`
+	MCPPort               int    `json:"mcp_port"`
 }
 
 // handleGetConfig handles GET /api/config — returns current config with secrets redacted.
@@ -214,6 +217,7 @@ func (h *Handler) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	if _, ok := rawMap["db_port"]; ok { cfg.DBPort = incoming.DBPort }
 	if _, ok := rawMap["db_env_path"]; ok { cfg.DBEnvPath = incoming.DBEnvPath }
 	if _, ok := rawMap["user_id"]; ok { cfg.UserID = incoming.UserID }
+	if _, ok := rawMap["mcp_port"]; ok { cfg.MCPPort = incoming.MCPPort }
 
 	if pw, ok := rawMap["password"]; ok {
 		var password string

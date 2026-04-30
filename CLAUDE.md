@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Last verified: 2026-04-10
+Last verified: 2026-04-28
 
 Platform-neutral note management and task synchronization service supporting Supernote (via Supernote Private Cloud) and Onyx Boox devices. Six subsystems:
 1. **CalDAV task sync** -- CalDAV VTODO over local SQLite task store
@@ -56,6 +56,9 @@ Instead: `git -C /path`, `go -C /path build`, or absolute paths.
 ### RAG & Chat
 - `internal/rag/` -- RAG embedding infrastructure: Ollama embedder, embedding store with in-memory cache, hybrid FTS5+vector retriever, backfill (see domain CLAUDE.md)
 - `internal/chat/` -- Chat subsystem: session/message store (SQLite), vLLM streaming handler with RAG context injection (see domain CLAUDE.md)
+
+### Service Layer
+- `internal/service/` -- Service interfaces (`TaskService`, `NoteService`, `SearchService`, `ConfigService`) that decouple HTTP handlers from concrete stores and pipelines; plus the store/pipeline interfaces (`TaskStore`, `BooxStore`, `BooxImporter`, `BooxProcessor`, `FileScanner`, `SyncNotifier`, `SyncStatusProvider`) that adapters implement (see domain CLAUDE.md)
 
 ### Web UI & API
 - `internal/web/` -- HTML UI: setup wizard, settings, task list, Files tab, Search tab, Chat tab, processor C&C, sync status, Boox render/versions, JSON API, config/sources API, MCP token management, SSE log stream (see domain CLAUDE.md)
